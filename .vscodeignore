@@ -9,3 +9,5 @@ dist/extension.js.map
 artifacts/
 justfile
 Justfile
+TODOS_LISTS/
+TODOS_LISTS/**
