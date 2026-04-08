@@ -126,7 +126,8 @@ function createWorkspaceRootNode( folder )
         fsPath: folder.uri.scheme === 'file' ? folder.uri.fsPath : ( folder.uri.authority + folder.uri.fsPath ),
         id: id,
         visible: true,
-        isFolder: true
+        isFolder: true,
+        parent: undefined
     };
     return node;
 }
@@ -145,7 +146,8 @@ function createPathNode( folder, pathElements, isFolder, subTag )
         id: id,
         visible: true,
         isFolder: isFolder,
-        subTag: subTag
+        subTag: subTag,
+        parent: undefined
     };
 }
 
@@ -161,7 +163,8 @@ function createFlatNode( fsPath, rootNode )
         pathLabel: pathLabel === '.' ? '' : '(' + pathLabel + ')',
         nodes: [],
         id: id,
-        visible: true
+        visible: true,
+        parent: undefined
     };
 }
 
@@ -177,7 +180,8 @@ function createTagNode( fsPath, tag )
         nodes: [],
         id: id,
         tag: tag,
-        visible: true
+        visible: true,
+        parent: undefined
     };
 }
 
@@ -194,7 +198,8 @@ function createSubTagNode( subTag )
         id: id,
         subTag: subTag,
         visible: true,
-        isFolder: true
+        isFolder: true,
+        parent: undefined
     };
 }
 
@@ -242,7 +247,8 @@ function createTodoNode( result )
         before: extracted.before ? extracted.before.trim() : "",
         id: id,
         visible: true,
-        extraLines: []
+        extraLines: [],
+        parent: undefined
     };
 
     if( result.extraLines )
@@ -297,6 +303,7 @@ function locateFlatChildNode( rootNode, result, tag, subTag )
             parentNode = createPathNode( rootNode ? rootNode.fsPath : JSON.stringify( result ), [ tagPath ], subTag );
             parentNode.tag = tagPath;
             parentNode.isRootTagNode = true;
+            parentNode.parent = rootNode;
             parentNodes.push( parentNode );
         }
         parentNodes = parentNode.nodes;
@@ -309,6 +316,7 @@ function locateFlatChildNode( rootNode, result, tag, subTag )
         {
             parentNode = createPathNode( rootNode ? rootNode.fsPath : JSON.stringify( result ), [ subTagPath ], subTag );
             parentNode.subTag = subTagPath;
+            parentNode.parent = rootNode;
             parentNodes.push( parentNode );
         }
         parentNodes = parentNode.nodes;
@@ -320,6 +328,7 @@ function locateFlatChildNode( rootNode, result, tag, subTag )
     if( childNode === undefined )
     {
         childNode = createFlatNode( nodePath, rootNode );
+        childNode.parent = parentNode ? parentNode : rootNode;
         parentNodes.push( childNode );
     }
 
@@ -347,6 +356,7 @@ function locateTreeChildNode( rootNode, pathElements, tag, subTag )
             parentNode = createPathNode( rootNode ? rootNode.fsPath : JSON.stringify( result ), tagPathList, subTag );
             parentNode.isRootTagNode = true;
             parentNode.tag = tag;
+            parentNode.parent = rootNode;
             parentNodes.push( parentNode );
         }
         parentNodes = parentNode.nodes;
@@ -360,6 +370,7 @@ function locateTreeChildNode( rootNode, pathElements, tag, subTag )
             subTagPathList.push( subTag );
             parentNode = createPathNode( rootNode ? rootNode.fsPath : JSON.stringify( result ), subTagPathList, subTag );
             parentNode.subTag = subTag;
+            parentNode.parent = rootNode;
             parentNodes.push( parentNode );
         }
         parentNodes = parentNode.nodes;
@@ -371,12 +382,15 @@ function locateTreeChildNode( rootNode, pathElements, tag, subTag )
         if( childNode === undefined )
         {
             childNode = createPathNode( rootNode.fsPath, pathElements.slice( 0, level + 1 ), level < pathElements.length - 1, subTag );
+            childNode.parent = parentNode ? parentNode : rootNode;
             parentNodes.push( childNode );
             parentNodes = childNode.nodes;
+            parentNode = childNode;
         }
         else
         {
             parentNodes = childNode.nodes;
+            parentNode = childNode;
         }
     } );
 
@@ -427,6 +441,38 @@ function countChildTags( children, tagCounts, forStatusBar, fileFilter )
     return tagCounts;
 }
 
+function cloneTagCounts( counts )
+{
+    return Object.assign( {}, counts );
+}
+
+function addTagCounts( target, counts )
+{
+    Object.keys( counts ).forEach( function( tag )
+    {
+        target[ tag ] = ( target[ tag ] || 0 ) + counts[ tag ];
+        if( target[ tag ] === 0 )
+        {
+            delete target[ tag ];
+        }
+    } );
+}
+
+function subtractTagCounts( target, counts )
+{
+    Object.keys( counts ).forEach( function( tag )
+    {
+        if( target[ tag ] !== undefined )
+        {
+            target[ tag ] -= counts[ tag ];
+            if( target[ tag ] <= 0 )
+            {
+                delete target[ tag ];
+            }
+        }
+    } );
+}
+
 function addWorkspaceFolders()
 {
     if( workspaceFolders && config.shouldShowTagsOnly() === false )
@@ -453,6 +499,13 @@ class TreeNodeProvider
 
         buildCounter = _context.workspaceState.get( 'buildCounter', 1 );
         expandedNodes = _context.workspaceState.get( 'expandedNodes', {} );
+        this._documentEntries = new Map();
+        this._statusBarCounts = {};
+        this._activityBarCounts = {};
+        this._statusBarCountsByFile = new Map();
+        this._pendingCountUris = new Set();
+        this._dirtyRoots = new Set();
+        this._rootListDirty = false;
     }
 
     getChildren( node )
@@ -775,6 +828,268 @@ class TreeNodeProvider
         return treeItem;
     }
 
+    _uriKey( uri )
+    {
+        return uri.toString();
+    }
+
+    _getDocumentEntry( uri )
+    {
+        var key = this._uriKey( uri );
+        var entry = this._documentEntries.get( key );
+        if( entry === undefined )
+        {
+            entry = {
+                uri: uri,
+                filePath: uri.fsPath,
+                todos: [],
+                statusBarCounts: {},
+                activityBarCounts: {}
+            };
+            this._documentEntries.set( key, entry );
+        }
+        return entry;
+    }
+
+    _findRootNode( node )
+    {
+        var current = node;
+        while( current && current.parent !== undefined )
+        {
+            current = current.parent;
+        }
+        return current;
+    }
+
+    _markRootDirty( node )
+    {
+        if( node === undefined )
+        {
+            this._rootListDirty = true;
+            return;
+        }
+
+        var root = this._findRootNode( node );
+        if( root === undefined || root.type === TODO )
+        {
+            this._rootListDirty = true;
+        }
+        else
+        {
+            this._dirtyRoots.add( root );
+        }
+    }
+
+    _removeNodeFromParent( node )
+    {
+        if( node.parent && node.parent.nodes )
+        {
+            node.parent.nodes = node.parent.nodes.filter( function( child )
+            {
+                return child !== node;
+            } );
+            this._markRootDirty( node.parent );
+        }
+        else
+        {
+            nodes = nodes.filter( function( child )
+            {
+                return child !== node;
+            } );
+            this._rootListDirty = true;
+        }
+    }
+
+    _pruneEmptyAncestors( node )
+    {
+        var current = node;
+        while( current && current.nodes !== undefined && current.nodes.length === 0 && current.isWorkspaceNode !== true )
+        {
+            var parent = current.parent;
+            delete expandedNodes[ current.fsPath ];
+            this._context.workspaceState.update( 'expandedNodes', expandedNodes );
+            this._removeNodeFromParent( current );
+            current = parent;
+        }
+        if( current )
+        {
+            this._markRootDirty( current );
+        }
+    }
+
+    _subtractDocumentCounts( entry )
+    {
+        subtractTagCounts( this._statusBarCounts, entry.statusBarCounts );
+        subtractTagCounts( this._activityBarCounts, entry.activityBarCounts );
+        if( entry.filePath )
+        {
+            this._statusBarCountsByFile.delete( entry.filePath );
+        }
+    }
+
+    _countTodoTag( todoNode, forStatusBar )
+    {
+        if( isVisible( todoNode ) !== true )
+        {
+            return undefined;
+        }
+
+        var tag = todoNode.tag ? todoNode.tag : "TODO";
+        if( forStatusBar && config.shouldHideFromStatusBar( tag ) )
+        {
+            return undefined;
+        }
+        if( !forStatusBar && config.shouldHideFromActivityBar( tag ) )
+        {
+            return undefined;
+        }
+        return tag;
+    }
+
+    _recalculateDocumentCounts( uriKey )
+    {
+        var entry = this._documentEntries.get( uriKey );
+        if( entry === undefined )
+        {
+            return;
+        }
+
+        this._subtractDocumentCounts( entry );
+
+        var statusBarCounts = {};
+        var activityBarCounts = {};
+
+        entry.todos.forEach( function( todoNode )
+        {
+            var statusTag = this._countTodoTag( todoNode, true );
+            if( statusTag )
+            {
+                statusBarCounts[ statusTag ] = ( statusBarCounts[ statusTag ] || 0 ) + 1;
+            }
+
+            var activityTag = this._countTodoTag( todoNode, false );
+            if( activityTag )
+            {
+                activityBarCounts[ activityTag ] = ( activityBarCounts[ activityTag ] || 0 ) + 1;
+            }
+        }, this );
+
+        entry.statusBarCounts = statusBarCounts;
+        entry.activityBarCounts = activityBarCounts;
+
+        addTagCounts( this._statusBarCounts, statusBarCounts );
+        addTagCounts( this._activityBarCounts, activityBarCounts );
+
+        if( entry.filePath )
+        {
+            this._statusBarCountsByFile.set( entry.filePath, cloneTagCounts( statusBarCounts ) );
+        }
+    }
+
+    _markDocumentCountsDirty( uri )
+    {
+        this._pendingCountUris.add( this._uriKey( uri ) );
+    }
+
+    _markAllDocumentCountsDirty()
+    {
+        this._documentEntries.forEach( function( entry )
+        {
+            this._pendingCountUris.add( this._uriKey( entry.uri ) );
+        }, this );
+    }
+
+    _recalculatePendingCounts()
+    {
+        Array.from( this._pendingCountUris ).forEach( function( uriKey )
+        {
+            this._recalculateDocumentCounts( uriKey );
+        }, this );
+        this._pendingCountUris.clear();
+    }
+
+    _clearBranchVisibility( roots )
+    {
+        if( roots.length === 0 )
+        {
+            return;
+        }
+
+        roots.forEach( function( root )
+        {
+            if( root === undefined )
+            {
+                this.clearTreeFilter();
+            }
+            else
+            {
+                this.clearTreeFilter( [ root ] );
+            }
+        }, this );
+    }
+
+    _applyBranchFilter( filterText, roots )
+    {
+        if( roots.length === 0 )
+        {
+            return;
+        }
+
+        roots.forEach( function( root )
+        {
+            if( root === undefined )
+            {
+                this.filter( filterText );
+            }
+            else
+            {
+                this.filter( filterText, [ root ] );
+            }
+        }, this );
+    }
+
+    _removeDocumentNodes( uri )
+    {
+        var key = this._uriKey( uri );
+        var entry = this._documentEntries.get( key );
+        if( entry === undefined )
+        {
+            return;
+        }
+
+        this._subtractDocumentCounts( entry );
+
+        var affectedParents = new Set();
+        entry.todos.forEach( function( todoNode )
+        {
+            if( todoNode.parent )
+            {
+                todoNode.parent.nodes = todoNode.parent.nodes.filter( function( child )
+                {
+                    return child !== todoNode;
+                } );
+                affectedParents.add( todoNode.parent );
+            }
+            else
+            {
+                nodes = nodes.filter( function( child )
+                {
+                    return child !== todoNode;
+                } );
+                this._rootListDirty = true;
+            }
+        }, this );
+
+        affectedParents.forEach( function( parent )
+        {
+            this._pruneEmptyAncestors( parent );
+        }, this );
+
+        this._documentEntries.delete( key );
+        this._statusBarCountsByFile.delete( entry.filePath );
+        this._pendingCountUris.delete( key );
+    }
+
     clear( folders )
     {
         nodes = [];
@@ -782,6 +1097,13 @@ class TreeNodeProvider
         workspaceFolders = folders;
 
         addWorkspaceFolders();
+        this._documentEntries.clear();
+        this._statusBarCounts = {};
+        this._activityBarCounts = {};
+        this._statusBarCountsByFile.clear();
+        this._pendingCountUris.clear();
+        this._dirtyRoots.clear();
+        this._rootListDirty = false;
     }
 
     rebuild()
@@ -792,9 +1114,6 @@ class TreeNodeProvider
     refresh()
     {
         treeHasSubTags = false;
-
-        this.sort();
-
         this._onDidChangeTreeData.fire();
     }
 
@@ -854,6 +1173,60 @@ class TreeNodeProvider
         }, this );
     }
 
+    finalizePendingChanges( filterText, options )
+    {
+        options = options || {};
+
+        if( options.refilterAll === true )
+        {
+            if( filterText )
+            {
+                this.filter( filterText );
+            }
+            else
+            {
+                this.clearTreeFilter();
+            }
+            this._markAllDocumentCountsDirty();
+        }
+        else
+        {
+            var roots = Array.from( this._dirtyRoots );
+            if( this._rootListDirty === true )
+            {
+                roots.unshift( undefined );
+            }
+
+            if( filterText )
+            {
+                this._applyBranchFilter( filterText, roots );
+            }
+            else
+            {
+                this._clearBranchVisibility( roots );
+            }
+        }
+
+        if( options.fullSort === true || this._rootListDirty === true )
+        {
+            this.sort();
+        }
+        else
+        {
+            this._dirtyRoots.forEach( function( root )
+            {
+                if( root && root.nodes )
+                {
+                    this.sort( root.nodes );
+                }
+            }, this );
+        }
+
+        this._recalculatePendingCounts();
+        this._dirtyRoots.clear();
+        this._rootListDirty = false;
+    }
+
     add( result )
     {
         if( nodes.length === 0 )
@@ -884,12 +1257,19 @@ class TreeNodeProvider
                     if( childNode === undefined )
                     {
                         childNode = createTagNode( todoNode.fsPath, tagPath );
+                        childNode.parent = undefined;
                         nodes.push( childNode );
+                        this._rootListDirty = true;
                     }
                 }
                 else if( nodes.find( findTodoNode, todoNode ) === undefined )
                 {
+                    todoNode.parent = undefined;
                     nodes.push( todoNode );
+                    this._rootListDirty = true;
+                    this._getDocumentEntry( result.uri ).todos.push( todoNode );
+                    this._markDocumentCountsDirty( result.uri );
+                    return todoNode;
                 }
             }
             else if( config.shouldGroupBySubTag() )
@@ -900,19 +1280,31 @@ class TreeNodeProvider
                     if( childNode === undefined )
                     {
                         childNode = createSubTagNode( todoNode.subTag );
+                        childNode.parent = undefined;
                         nodes.unshift( childNode );
+                        this._rootListDirty = true;
                     }
                 }
                 else if( nodes.find( findTodoNode, todoNode ) === undefined )
                 {
+                    todoNode.parent = undefined;
                     nodes.push( todoNode );
+                    this._rootListDirty = true;
+                    this._getDocumentEntry( result.uri ).todos.push( todoNode );
+                    this._markDocumentCountsDirty( result.uri );
+                    return todoNode;
                 }
             }
             else
             {
                 if( nodes.find( findTodoNode, todoNode ) === undefined )
                 {
+                    todoNode.parent = undefined;
                     nodes.push( todoNode );
+                    this._rootListDirty = true;
+                    this._getDocumentEntry( result.uri ).todos.push( todoNode );
+                    this._markDocumentCountsDirty( result.uri );
+                    return todoNode;
                 }
             }
         }
@@ -953,123 +1345,39 @@ class TreeNodeProvider
                 todoNode.parent = childNode;
                 childNode.nodes.push( todoNode );
                 childNode.showCount = true;
+                this._getDocumentEntry( result.uri ).todos.push( todoNode );
+                this._markDocumentCountsDirty( result.uri );
+                this._markRootDirty( childNode );
+                return todoNode;
             }
         }
+
+        return undefined;
     }
 
-    reset( uri, children )
+    replaceDocument( uri, results )
     {
-        var fullPath = uri.scheme === 'file' ? uri.fsPath : path.join( uri.authority, uri.fsPath );
+        this._removeDocumentNodes( uri );
 
-        var root = children === undefined;
-        if( children === undefined )
+        results.forEach( function( result )
         {
-            children = nodes;
-        }
-        children = children.filter( function( child )
-        {
-            var keep = true;
-            if( child.nodes !== undefined )
-            {
-                this.reset( uri, child.nodes );
-            }
-            if( child.type === TODO && !child.tag && child.fsPath == fullPath ) // no tag (e.g. markdown)
-            {
-                keep = false;
-            }
-            else if( child.type === TODO && child.parent === undefined && child.fsPath == fullPath ) // top level todo node
-            {
-                keep = false;
-            }
-            else if( child.fsPath === fullPath || child.isRootTagNode )
-            {
-                if( config.shouldShowTagsOnly() )
-                {
-                    if( child.nodes )
-                    {
-                        child.nodes = child.nodes.filter( function( node )
-                        {
-                            return isTodoNode( node ) && node.fsPath !== fullPath;
-                        } );
-                    }
-                }
-                else
-                {
-                    child.nodes = [];
-                }
-            }
-            return keep;
+            this.add( result );
         }, this );
 
-        if( root )
-        {
-            nodes = children;
-        }
+        this._markDocumentCountsDirty( uri );
     }
 
     remove( callback, uri, children )
     {
-        var fullPath = uri.scheme === 'file' ? uri.fsPath : path.join( uri.authority, uri.fsPath );
+        this._removeDocumentNodes( uri );
+        this.finalizePendingChanges( currentFilter, { fullSort: false, refilterAll: false } );
 
-        function removeNodesByFilename( children, me )
+        if( callback )
         {
-            return children.filter( function( child )
-            {
-                if( child.nodes !== undefined )
-                {
-                    child.nodes = me.remove( callback, uri, child.nodes );
-                }
-                var shouldRemove = ( child.fsPath === fullPath );
-                if( shouldRemove )
-                {
-                    delete expandedNodes[ child.fsPath ];
-                    me._context.workspaceState.update( 'expandedNodes', expandedNodes );
-                    if( callback )
-                    {
-                        callback( child.fsPath );
-                    }
-                }
-                return shouldRemove === false;
-            }, me );
+            callback( uri.fsPath );
         }
 
-        function removeEmptyNodes( children, me )
-        {
-            return children.filter( function( child )
-            {
-                if( child.nodes !== undefined )
-                {
-                    child.nodes = me.remove( callback, uri, child.nodes );
-                }
-                var shouldRemove = ( child.nodes && child.nodes.length === 0 && child.isWorkspaceNode !== true );
-                if( shouldRemove )
-                {
-                    delete expandedNodes[ child.fsPath ];
-                    me._context.workspaceState.update( 'expandedNodes', expandedNodes );
-                    if( callback )
-                    {
-                        callback( child.fsPath );
-                    }
-                }
-                return shouldRemove !== true;
-            }, me );
-        }
-
-        var root = children === undefined;
-        if( children === undefined )
-        {
-            children = nodes;
-        }
-
-        children = removeNodesByFilename( children, this );
-        children = removeEmptyNodes( children, this );
-
-        if( root )
-        {
-            nodes = children;
-        }
-
-        return children;
+        return children === undefined ? nodes : children;
     }
 
     getElement( filename, found, children )
@@ -1105,14 +1413,16 @@ class TreeNodeProvider
 
     getTagCountsForStatusBar( fileFilter )
     {
-        var tagCounts = {};
-        return countChildTags( nodes, tagCounts, true, fileFilter );
+        if( fileFilter )
+        {
+            return cloneTagCounts( this._statusBarCountsByFile.get( fileFilter ) || {} );
+        }
+        return cloneTagCounts( this._statusBarCounts );
     }
 
     getTagCountsForActivityBar()
     {
-        var tagCounts = {};
-        return countChildTags( nodes, tagCounts, false );
+        return cloneTagCounts( this._activityBarCounts );
     }
 
     exportChildren( parent, children )

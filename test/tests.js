@@ -559,16 +559,18 @@ QUnit.test( "utils.isCodicon", function( assert )
 
 QUnit.test( "searchResults can be added and removed", function( assert )
 {
-    searchResults.add( { uri: "uri" } );
+    searchResults.clear();
+    searchResults.add( { uri: { fsPath: "/tmp/file1.js", toString: function() { return "uri"; } }, line: 1, column: 1, match: "TODO" } );
     assert.equal( searchResults.count(), 1 );
-    searchResults.remove( "uri" );
+    searchResults.remove( { fsPath: "/tmp/file1.js", toString: function() { return "uri"; } } );
     assert.equal( searchResults.count(), 0 );
 } );
 
 QUnit.test( "searchResults can be cleared", function( assert )
 {
-    searchResults.add( { uri: "uri1" } );
-    searchResults.add( { uri: "uri2" } );
+    searchResults.clear();
+    searchResults.add( { uri: { fsPath: "/tmp/file1.js", toString: function() { return "uri1"; } }, line: 1, column: 1, match: "TODO" } );
+    searchResults.add( { uri: { fsPath: "/tmp/file2.js", toString: function() { return "uri2"; } }, line: 2, column: 2, match: "FIXME" } );
     assert.equal( searchResults.count(), 2 );
     searchResults.clear();
     assert.equal( searchResults.count(), 0 );

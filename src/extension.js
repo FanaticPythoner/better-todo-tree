@@ -21,8 +21,8 @@ var searchList = [];
 var currentFilter;
 var interrupted = false;
 var selectedDocument;
-var refreshTimeout;
-var fileRefreshTimeout;
+var treeRefreshTimeout;
+var rescanTimeout;
 var hideTimeout;
 var autoGitRefreshTimer;
 var periodicRefreshTimer;
@@ -31,6 +31,15 @@ var openDocuments = {};
 var provider;
 var ignoreMarkdownUpdate = false;
 var markdownUpdatePopupOpen = false;
+var scanGeneration = 0;
+var activeScanGeneration = 0;
+var scanInFlight = false;
+var pendingRescan = false;
+var cancelledScanGenerations = new Set();
+var documentRefreshTimers = new Map();
+var documentVersions = new Map();
+var pendingDocumentRefreshes = new Map();
+var gitHeadCheckInFlight = new Set();
 
 var SCAN_MODE_WORKSPACE_AND_OPEN_FILES = 'workspace';
 var SCAN_MODE_OPEN_FILES = 'open files';
@@ -124,30 +133,12 @@ function activate( context )
 
     function refreshTree()
     {
-        clearTimeout( refreshTimeout );
-        refreshTimeout = setTimeout( function()
+        clearTimeout( treeRefreshTimeout );
+        treeRefreshTimeout = setTimeout( function()
         {
             provider.refresh();
             setButtonsAndContext();
         }, 200 );
-    }
-
-    function addResultsToTree()
-    {
-        if( searchResults.containsMarkdown() )
-        {
-            checkForMarkdownUpgrade();
-        }
-
-        searchResults.addToTree( provider );
-
-        if( interrupted === false )
-        {
-            updateInformation();
-        }
-
-        provider.filter( currentFilter );
-        refreshTree();
     }
 
     function updateInformation()
@@ -320,33 +311,101 @@ function activate( context )
         }
     }
 
+    function createCancelledError( message )
+    {
+        var error = new Error( message || "Search cancelled" );
+        error.cancelled = true;
+        return error;
+    }
+
+    function isCancelledError( error )
+    {
+        return error && error.cancelled === true;
+    }
+
+    function isGenerationActive( generation )
+    {
+        return activeScanGeneration === generation && cancelledScanGenerations.has( generation ) !== true;
+    }
+
+    function assertGenerationActive( generation )
+    {
+        if( isGenerationActive( generation ) !== true )
+        {
+            throw createCancelledError();
+        }
+    }
+
+    function beginScan()
+    {
+        scanGeneration += 1;
+        activeScanGeneration = scanGeneration;
+        scanInFlight = true;
+        pendingRescan = false;
+        interrupted = false;
+        cancelledScanGenerations.delete( activeScanGeneration );
+
+        statusBarIndicator.text = "Todo-Tree: Scanning...";
+        statusBarIndicator.show();
+        statusBarIndicator.command = "todo-tree.stopScan";
+        statusBarIndicator.tooltip = "Click to interrupt scan";
+
+        return activeScanGeneration;
+    }
+
+    function finishScan( generation )
+    {
+        cancelledScanGenerations.delete( generation );
+
+        if( activeScanGeneration === generation )
+        {
+            activeScanGeneration = 0;
+            scanInFlight = false;
+        }
+
+        if( scanInFlight !== true && pendingRescan === true )
+        {
+            pendingRescan = false;
+            triggerRescan( 0 );
+        }
+    }
+
+    function cancelScan()
+    {
+        if( activeScanGeneration !== 0 )
+        {
+            cancelledScanGenerations.add( activeScanGeneration );
+        }
+
+        activeScanGeneration = 0;
+        scanInFlight = false;
+
+        ripgrep.kill();
+    }
+
     function search( options )
     {
-        debug( "Searching " + options.filename + "..." );
+        var target = options.filename ? options.filename : ".";
+        debug( "Searching " + target + "..." );
 
-        return ripgrep.search( "/", options ).then( matches =>
+        return ripgrep.search( "/", options ).then( function( matches )
         {
-            if( matches.length > 0 )
-            {
-                matches.forEach( match =>
-                {
-                    match.uri = vscode.Uri.file( match.fsPath );
-                    debug( " Match (File): " + JSON.stringify( match ) );
-                    searchResults.add( match );
-                } );
-            }
-            else if( options.filename )
-            {
-                searchResults.remove( vscode.Uri.file( options.filename ) );
-            }
-        } ).catch( e =>
+            debug( "Search returned " + matches.length + " matches for " + target );
+            return matches;
+        } ).catch( function( error )
         {
-            var message = e.message;
-            if( e.stderr )
+            if( isCancelledError( error ) )
             {
-                message += " (" + e.stderr + ")";
+                throw error;
+            }
+
+            var message = error.message;
+            if( error.stderr )
+            {
+                message += " (" + error.stderr + ")";
             }
             vscode.window.showErrorMessage( "Todo-Tree: " + message );
+            throw error;
         } );
     }
 
@@ -398,7 +457,7 @@ function activate( context )
         var submoduleExcludeGlobs = context.workspaceState.get( 'submoduleExcludeGlobs' ) || [];
 
         var options = {
-            regex: "\"" + utils.getRegexSource() + "\"",
+            regex: utils.getRegexSource(),
             unquotedRegex: utils.getRegexSource(),
             rgPath: config.ripgrepPath()
         };
@@ -468,15 +527,196 @@ function activate( context )
         }
     }
 
-    function refreshOpenFiles()
+    function isFileInSearchRoots( filename, roots )
     {
-        if( config.scanMode() !== SCAN_MODE_WORKSPACE_ONLY )
+        return roots.some( function( root )
         {
-            Object.keys( openDocuments ).map( function( document )
+            var prefix = root.endsWith( path.sep ) ? root : root + path.sep;
+            return filename === root || filename.indexOf( prefix ) === 0;
+        } );
+    }
+
+    function getWorkspaceSearchRoots()
+    {
+        var roots = getRootFolders();
+
+        if( roots === undefined )
+        {
+            return [];
+        }
+
+        if( roots.length === 0 )
+        {
+            searchWorkspaces( roots );
+        }
+
+        return roots;
+    }
+
+    function getOpenDocumentsForScan( workspaceRoots )
+    {
+        var scanMode = config.scanMode();
+        var documents = Object.keys( openDocuments ).map( function( key )
+        {
+            return openDocuments[ key ];
+        } ).filter( function( document )
+        {
+            return document && config.isValidScheme( document.uri ) && isIncluded( document.uri );
+        } );
+
+        if( scanMode === SCAN_MODE_CURRENT_FILE )
+        {
+            if( vscode.window.activeTextEditor && vscode.window.activeTextEditor.document && config.isValidScheme( vscode.window.activeTextEditor.document.uri ) && isIncluded( vscode.window.activeTextEditor.document.uri ) )
             {
-                refreshFile( openDocuments[ document ] );
+                return [ vscode.window.activeTextEditor.document ];
+            }
+            return [];
+        }
+
+        if( scanMode === SCAN_MODE_OPEN_FILES )
+        {
+            return documents;
+        }
+
+        if( scanMode === SCAN_MODE_WORKSPACE_AND_OPEN_FILES )
+        {
+            return documents.filter( function( document )
+            {
+                return document.fileName === undefined || isFileInSearchRoots( document.fileName, workspaceRoots ) !== true;
             } );
         }
+
+        return [];
+    }
+
+    function createEditorSearchResult( document, offset, removeLeadingComments )
+    {
+        var position = document.positionAt( offset );
+        var line = document.lineAt( position.line ).text;
+        if( removeLeadingComments === true )
+        {
+            line = utils.removeLineComments( line, document.fileName );
+        }
+
+        return {
+            uri: document.uri,
+            line: position.line + 1,
+            column: position.character + 1,
+            match: line
+        };
+    }
+
+    function parseDocumentResults( document )
+    {
+        var results = [];
+
+        if( !document || !config.isValidScheme( document.uri ) || isIncluded( document.uri ) !== true )
+        {
+            return results;
+        }
+
+        if( config.scanMode() === SCAN_MODE_CURRENT_FILE )
+        {
+            if( !vscode.window.activeTextEditor || vscode.window.activeTextEditor.document.fileName !== document.fileName )
+            {
+                return results;
+            }
+        }
+
+        var text = document.getText();
+        var regex = utils.getRegexForEditorSearch( true );
+        var match;
+
+        while( ( match = regex.exec( text ) ) !== null )
+        {
+            if( match[ 0 ].length === 0 )
+            {
+                regex.lastIndex++;
+                continue;
+            }
+
+            var matchText = match[ 0 ];
+            var offset = match.index;
+
+            while( text[ offset ] === '\n' || text[ offset ] === '\r' )
+            {
+                offset++;
+                matchText = matchText.substring( 1 );
+            }
+
+            var sections = matchText.split( "\n" );
+            var result = createEditorSearchResult( document, offset, false );
+
+            if( sections.length > 1 )
+            {
+                result.extraLines = [];
+                offset += sections[ 0 ].length + 1;
+                sections.shift();
+                sections.forEach( function( section )
+                {
+                    result.extraLines.push( createEditorSearchResult( document, offset, true ) );
+                    offset += section.length + 1;
+                } );
+            }
+
+            results.push( result );
+        }
+
+        return results;
+    }
+
+    function refreshDocumentResults( document )
+    {
+        searchResults.replaceUriResults( document.uri, parseDocumentResults( document ) );
+    }
+
+    function applyDirtyResultsToTree( options )
+    {
+        options = options || {};
+
+        if( searchResults.containsMarkdown() )
+        {
+            checkForMarkdownUpgrade();
+        }
+
+        searchResults.drainDirtyResults().forEach( function( entry )
+        {
+            provider.replaceDocument( entry.uri, entry.results );
+        } );
+
+        provider.finalizePendingChanges( currentFilter, {
+            refilterAll: options.refilterAll === true,
+            fullSort: options.fullSort === true
+        } );
+
+        updateInformation();
+        refreshTree();
+        setButtonsAndContext();
+    }
+
+    function flushPendingDocumentRefreshes()
+    {
+        if( pendingRescan === true || pendingDocumentRefreshes.size === 0 )
+        {
+            pendingDocumentRefreshes.clear();
+            return;
+        }
+
+        pendingDocumentRefreshes.forEach( function( document )
+        {
+            refreshDocumentResults( document );
+        } );
+
+        pendingDocumentRefreshes.clear();
+        applyDirtyResultsToTree();
+    }
+
+    function refreshOpenFiles( workspaceRoots )
+    {
+        getOpenDocumentsForScan( workspaceRoots ).forEach( function( document )
+        {
+            refreshDocumentResults( document );
+        } );
     }
 
     function applyGlobs()
@@ -500,28 +740,34 @@ function activate( context )
         }
     }
 
-    function iterateSearchList()
+    function iterateSearchList( generation )
     {
-        if( searchList.length > 0 )
+        return searchList.reduce( function( promise, entry )
         {
-            return searchList.reduce( ( p, entry ) => p.finally( () => search( getOptions( entry ) ) ), Promise.resolve() )
-                .finally( () =>
+            return promise.then( function()
+            {
+                assertGenerationActive( generation );
+
+                return search( getOptions( entry ) ).then( function( matches )
                 {
-                    debug( "Found " + searchResults.count() + " items" );
-                    if( vscode.workspace.getConfiguration( 'todo-tree.ripgrep' ).get( 'passGlobsToRipgrep' ) !== true )
+                    assertGenerationActive( generation );
+
+                    matches.forEach( function( match )
                     {
-                        applyGlobs();
-                    }
-                    addResultsToTree();
-                    setButtonsAndContext();
+                        match.uri = vscode.Uri.file( match.fsPath );
+                        searchResults.add( match );
+                    } );
                 } );
-        }
-        else
+            } );
+        }, Promise.resolve() ).then( function()
         {
-            addResultsToTree();
-            setButtonsAndContext();
-            return Promise.resolve();
-        }
+            debug( "Found " + searchResults.count() + " items" );
+
+            if( vscode.workspace.getConfiguration( 'todo-tree.filtering' ).get( 'passGlobsToRipgrep' ) !== true )
+            {
+                applyGlobs();
+            }
+        } );
     }
 
     function getRootFolders()
@@ -551,9 +797,9 @@ function activate( context )
             rootFolders.push( vscode.Uri.file( rootFolder ).fsPath );
         }
 
-        rootFolders.forEach( function( rootFolder )
+        rootFolders = rootFolders.map( function( folder )
         {
-            rootFolder = utils.replaceEnvironmentVariables( rootFolder );
+            return utils.replaceEnvironmentVariables( folder );
         } );
 
         var includes = vscode.workspace.getConfiguration( 'todo-tree.filtering' ).get( 'includedWorkspaces', [] );
@@ -570,32 +816,23 @@ function activate( context )
         return valid === true ? rootFolders : undefined;
     }
 
-    function rebuild()
+    function executeRebuild()
     {
+        var generation = beginScan();
+        var needsFullFilter = currentFilter !== undefined && currentFilter !== "";
+
         todoTreeView.message = "";
 
         searchResults.clear();
         searchList = [];
-
         provider.clear( vscode.workspace.workspaceFolders );
+        provider.rebuild();
 
-        interrupted = false;
-
-        statusBarIndicator.text = "Todo-Tree: Scanning...";
-        statusBarIndicator.show();
-        statusBarIndicator.command = "todo-tree.stopScan";
-        statusBarIndicator.tooltip = "Click to interrupt scan";
-
-        searchList = getRootFolders();
-
-        if( searchList.length === 0 )
-        {
-            searchWorkspaces( searchList );
-        }
+        searchList = getWorkspaceSearchRoots();
 
         if( config.shouldIgnoreGitSubmodules() )
         {
-            submoduleExcludeGlobs = [];
+            var submoduleExcludeGlobs = [];
             searchList.forEach( function( rootPath )
             {
                 submoduleExcludeGlobs = submoduleExcludeGlobs.concat( utils.getSubmoduleExcludeGlobs( rootPath ) );
@@ -603,19 +840,52 @@ function activate( context )
             context.workspaceState.update( 'submoduleExcludeGlobs', submoduleExcludeGlobs );
         }
 
-        iterateSearchList()
-            .finally( refreshOpenFiles )
-            .then( addResultsToTree );
+        return iterateSearchList( generation ).then( function()
+        {
+            assertGenerationActive( generation );
+            refreshOpenFiles( searchList );
+            assertGenerationActive( generation );
+            applyDirtyResultsToTree( { fullSort: true, refilterAll: needsFullFilter } );
+        } ).catch( function( error )
+        {
+            if( isCancelledError( error ) !== true )
+            {
+                applyDirtyResultsToTree( { fullSort: true, refilterAll: needsFullFilter } );
+            }
+        } ).finally( function()
+        {
+            finishScan( generation );
+            flushPendingDocumentRefreshes();
+        } );
     }
 
-            function triggerRescan()
+    function rebuild()
+    {
+        clearTimeout( rescanTimeout );
+
+        if( scanInFlight === true )
+        {
+            pendingRescan = true;
+            return;
+        }
+
+        executeRebuild();
+    }
+
+    function triggerRescan( delay )
+    {
+        clearTimeout( rescanTimeout );
+        rescanTimeout = setTimeout( function()
+        {
+            if( scanInFlight === true )
             {
-                clearTimeout( refreshTimeout );
-                refreshTimeout = setTimeout( function()
-                {
-                    rebuild();
-                }, 1000 );
+                pendingRescan = true;
+                return;
             }
+
+            executeRebuild();
+        }, delay === undefined ? 1000 : delay );
+    }
 
     function resetGitWatcher()
     {
@@ -625,9 +895,24 @@ function activate( context )
             {
                 vscode.workspace.workspaceFolders.map( function( folder )
                 {
-                    child_process.exec( "git rev-parse HEAD", { cwd: folder.uri.fsPath }, ( err, stdout, stderr ) =>
+                    if( gitHeadCheckInFlight.has( folder.uri.fsPath ) )
                     {
-                        var gitHead = stdout.toString();
+                        return;
+                    }
+
+                    gitHeadCheckInFlight.add( folder.uri.fsPath );
+
+                    child_process.execFile( "git", [ "rev-parse", "HEAD" ], { cwd: folder.uri.fsPath }, function( err, stdout, stderr )
+                    {
+                        gitHeadCheckInFlight.delete( folder.uri.fsPath );
+
+                        if( err )
+                        {
+                            debug( "git rev-parse HEAD failed for " + folder.uri.fsPath + ": " + stderr.toString().trim() );
+                            return;
+                        }
+
+                        var gitHead = stdout.toString().trim();
                         if( lastGitHead[ folder.uri.fsPath ] !== undefined && gitHead != lastGitHead[ folder.uri.fsPath ] )
                         {
                             debug( 'Rescan triggered by change to git repository' );
@@ -776,88 +1061,56 @@ function activate( context )
 
     function refreshFile( document )
     {
-        function addResult( offset, removeLeadingComments )
+        if( !document )
         {
-            var position = document.positionAt( offset );
-            var line = document.lineAt( position.line ).text;
-            if( removeLeadingComments === true )
+            return;
+        }
+
+        refreshDocumentResults( document );
+        applyDirtyResultsToTree();
+    }
+
+    function queueDocumentRefresh( document, reason )
+    {
+        if( !document || !config.isValidScheme( document.uri ) || path.basename( document.fileName ) === "settings.json" || shouldRefreshFile() !== true )
+        {
+            return;
+        }
+
+        var key = document.uri.toString();
+        var delay = reason === 'change' ? 500 : 200;
+
+        openDocuments[ key ] = document;
+        documentVersions.set( key, document.version );
+
+        if( documentRefreshTimers.has( key ) )
+        {
+            clearTimeout( documentRefreshTimers.get( key ) );
+        }
+
+        documentRefreshTimers.set( key, setTimeout( function()
+        {
+            documentRefreshTimers.delete( key );
+
+            var currentDocument = openDocuments[ key ];
+            if( !currentDocument )
             {
-                line = utils.removeLineComments( line, document.fileName );
+                return;
             }
 
-            return {
-                uri: document.uri,
-                line: position.line + 1,
-                column: position.character + 1,
-                match: line
-            };
-        }
-
-        var matchesFound = false;
-
-        searchResults.remove( document.uri );
-
-        if( config.isValidScheme( document.uri ) && isIncluded( document.uri ) === true )
-        {
-            if( config.scanMode() !== SCAN_MODE_CURRENT_FILE || ( vscode.window.activeTextEditor && document.fileName === vscode.window.activeTextEditor.document.fileName ) )
+            if( currentDocument.version !== documentVersions.get( key ) )
             {
-                var extractExtraLines = function( section )
-                {
-                    result.extraLines.push( addResult( offset, true ) );
-                    offset += section.length + 1;
-                };
-                var isMatch = function( s )
-                {
-                    if( s.uri === result.uri && s.line == result.line && s.column == result.column )
-                    {
-                        found = true;
-                    }
-                };
-
-                var text = document.getText();
-                var regex = utils.getRegexForEditorSearch( true );
-
-                var match;
-                while( ( match = regex.exec( text ) ) !== null )
-                {
-                    while( text[ match.index ] === '\n' || text[ match.index ] === '\r' )
-                    {
-                        match.index++;
-                        match[ 0 ] = match[ 0 ].substring( 1 );
-                    }
-
-                    var offset = match.index;
-                    var sections = match[ 0 ].split( "\n" );
-
-                    var result = addResult( offset, false );
-
-                    if( sections.length > 1 )
-                    {
-                        result.extraLines = [];
-                        offset += sections[ 0 ].length + 1;
-                        sections.shift();
-                        sections.map( extractExtraLines );
-                    }
-
-                    if( !searchResults.contains( result ) )
-                    {
-                        searchResults.add( result );
-                        matchesFound = true;
-                    }
-                }
+                return;
             }
-        }
 
-        if( matchesFound === true )
-        {
-            provider.reset( document.uri );
-        }
-        else
-        {
-            provider.remove( null, document.uri );
-        }
+            if( scanInFlight === true )
+            {
+                pendingDocumentRefreshes.set( key, currentDocument );
+                return;
+            }
 
-        addResultsToTree();
+            refreshFile( currentDocument );
+        }, delay ) );
     }
 
     function refresh()
@@ -866,11 +1119,7 @@ function activate( context )
 
         provider.clear( vscode.workspace.workspaceFolders );
         provider.rebuild();
-
-        refreshOpenFiles();
-
-        addResultsToTree();
-        setButtonsAndContext();
+        applyDirtyResultsToTree( { fullSort: true, refilterAll: currentFilter !== undefined && currentFilter !== "" } );
     }
 
     function clearExpansionStateAndRefresh()
@@ -909,7 +1158,8 @@ function activate( context )
         currentFilter = undefined;
         context.workspaceState.update( 'filtered', false );
         context.workspaceState.update( 'currentFilter', undefined );
-        provider.clearTreeFilter();
+        provider.finalizePendingChanges( undefined, { refilterAll: true } );
+        updateInformation();
         refreshTree();
     }
 
@@ -1199,8 +1449,7 @@ function activate( context )
                 {
                     if( shouldRefreshFile() )
                     {
-                        clearTimeout( fileRefreshTimeout );
-                        fileRefreshTimeout = setTimeout( refreshFile, 500, document );
+                        queueDocumentRefresh( document, 'change' );
                     }
                 }
             }
@@ -1280,7 +1529,8 @@ function activate( context )
                     {
                         context.workspaceState.update( 'filtered', true );
                         context.workspaceState.update( 'currentFilter', currentFilter );
-                        provider.filter( currentFilter );
+                        provider.finalizePendingChanges( currentFilter, { refilterAll: true } );
+                        updateInformation();
                         refreshTree();
                     }
                 } );
@@ -1288,7 +1538,8 @@ function activate( context )
 
         context.subscriptions.push( vscode.commands.registerCommand( 'todo-tree.stopScan', function()
         {
-            ripgrep.kill();
+            pendingRescan = false;
+            cancelScan();
             statusBarIndicator.text = "Todo-Tree: Scanning interrupted.";
             statusBarIndicator.tooltip = "Click to restart";
             statusBarIndicator.command = "todo-tree.refresh";
@@ -1702,8 +1953,7 @@ function activate( context )
 
                 if( config.scanMode() === SCAN_MODE_CURRENT_FILE )
                 {
-                    provider.clear( vscode.workspace.workspaceFolders );
-                    refreshFile( e.document );
+                    rebuild();
                 }
 
                 if( vscode.workspace.getConfiguration( 'todo-tree.tree' ).autoRefresh === true && vscode.workspace.getConfiguration( 'todo-tree.tree' ).trackFile === true )
@@ -1723,7 +1973,10 @@ function activate( context )
                     updateInformation();
                 }
 
-                documentChanged( e.document );
+                if( config.scanMode() !== SCAN_MODE_CURRENT_FILE )
+                {
+                    documentChanged( e.document );
+                }
             }
         } ) );
 
@@ -1733,7 +1986,7 @@ function activate( context )
             {
                 if( shouldRefreshFile() )
                 {
-                    refreshFile( document );
+                    queueDocumentRefresh( document, 'save' );
                 }
             }
         } ) );
@@ -1745,53 +1998,49 @@ function activate( context )
                 if( config.isValidScheme( document.uri ) )
                 {
                     openDocuments[ document.uri.toString() ] = document;
-                    refreshFile( document );
+                    queueDocumentRefresh( document, 'open' );
                 }
             }
         } ) );
 
         context.subscriptions.push( vscode.workspace.onDidCloseTextDocument( document =>
         {
-            function removeFromTree( uri )
-            {
-                searchResults.remove( uri );
-                provider.remove( function()
-                {
-                    refreshTree();
-                    updateInformation();
-                }, uri );
-            }
-
             delete openDocuments[ document.uri.toString() ];
+            documentVersions.delete( document.uri.toString() );
+            pendingDocumentRefreshes.delete( document.uri.toString() );
+
+            if( documentRefreshTimers.has( document.uri.toString() ) )
+            {
+                clearTimeout( documentRefreshTimers.get( document.uri.toString() ) );
+                documentRefreshTimers.delete( document.uri.toString() );
+            }
 
             if( vscode.workspace.getConfiguration( 'todo-tree.tree' ).autoRefresh === true && config.scanMode() !== SCAN_MODE_WORKSPACE_ONLY )
             {
                 if( config.isValidScheme( document.uri ) )
                 {
-                    if( config.scanMode() !== SCAN_MODE_WORKSPACE_AND_OPEN_FILES )
-                    {
-                        removeFromTree( document.uri );
-                    }
-                    else
-                    {
-                        var keep = false;
-                        var tempSearchList = getRootFolders();
+                    var keep = false;
 
-                        if( tempSearchList.length === 0 )
+                    if( config.scanMode() === SCAN_MODE_WORKSPACE_AND_OPEN_FILES || config.scanMode() === SCAN_MODE_WORKSPACE_ONLY )
+                    {
+                        var workspaceRoots = getWorkspaceSearchRoots();
+                        if( document.fileName )
                         {
-                            searchWorkspaces( tempSearchList );
+                            keep = isFileInSearchRoots( document.fileName, workspaceRoots );
                         }
+                    }
 
-                        tempSearchList.map( function( p )
+                    if( !keep )
+                    {
+                        searchResults.remove( document.uri );
+
+                        if( scanInFlight === true )
                         {
-                            if( document.fileName === p || document.fileName.indexOf( p + path.sep ) === 0 )
-                            {
-                                keep = true;
-                            }
-                        } );
-                        if( !keep )
+                            pendingDocumentRefreshes.delete( document.uri.toString() );
+                        }
+                        else
                         {
-                            removeFromTree( document.uri );
+                            applyDirtyResultsToTree();
                         }
                     }
                 }
@@ -1874,8 +2123,6 @@ function activate( context )
 
         context.subscriptions.push( vscode.workspace.onDidChangeWorkspaceFolders( function()
         {
-            provider.clear( vscode.workspace.workspaceFolders );
-            provider.rebuild();
             rebuild();
         } ) );
 
@@ -1899,8 +2146,6 @@ function activate( context )
 
         if( vscode.workspace.getConfiguration( 'todo-tree.tree' ).scanAtStartup === true )
         {
-            rebuild();
-
             var editors = vscode.window.visibleTextEditors;
             editors.map( function( editor )
             {
@@ -1908,12 +2153,13 @@ function activate( context )
                 {
                     openDocuments[ editor.document.uri.toString() ] = editor.document;
                 }
-                refreshOpenFiles();
             } );
+
+            rebuild();
 
             if( vscode.window.activeTextEditor )
             {
-                documentChanged( vscode.window.activeTextEditor.document );
+                documentChanged();
             }
         }
         else
@@ -1928,7 +2174,10 @@ function activate( context )
 function deactivate()
 {
     ripgrep.kill();
-    provider.clear( [] );
+    if( provider )
+    {
+        provider.clear( [] );
+    }
 }
 
 exports.activate = activate;

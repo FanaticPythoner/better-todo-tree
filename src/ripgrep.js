@@ -14,72 +14,290 @@ const fs = require( 'fs' );
 const utils = require( './utils' );
 
 var currentProcess;
+var currentCancellationRequested = false;
 
-function RipgrepError( error, stderr )
+var MAX_DEBUG_PREVIEW_LINES = 10;
+var MAX_DEBUG_TEXT_LENGTH = 2048;
+
+function RipgrepError( error, stderr, cancelled )
 {
     this.message = error;
     this.stderr = stderr;
+    this.cancelled = cancelled === true;
 }
 
-function formatResults( stdout, multiline )
+function debugWithChannel( options, text )
 {
-    stdout = stdout.trim();
-
-    if( !stdout )
+    if( options.outputChannel )
     {
-        return [];
+        var now = new Date();
+        options.outputChannel.appendLine( now.toLocaleTimeString( 'en', { hour12: false } ) + "." + String( now.getMilliseconds() ).padStart( 3, '0' ) + " " + text );
+    }
+}
+
+function cleanupPatternFile( patternFilePath, options )
+{
+    if( !patternFilePath )
+    {
+        return;
     }
 
+    if( fs.existsSync( patternFilePath ) )
+    {
+        try
+        {
+            fs.unlinkSync( patternFilePath );
+        }
+        catch( error )
+        {
+            debugWithChannel( options, "Failed to remove pattern file " + patternFilePath + ": " + error.message );
+        }
+    }
+}
+
+function stripTrailingCarriageReturn( line )
+{
+    if( line.endsWith( '\r' ) )
+    {
+        return line.slice( 0, -1 );
+    }
+    return line;
+}
+
+function appendBoundedText( text, addition, maxLength )
+{
+    if( !addition )
+    {
+        return text;
+    }
+
+    var combined = text + addition;
+    if( combined.length <= maxLength )
+    {
+        return combined;
+    }
+
+    return combined.slice( 0, maxLength );
+}
+
+function addPreviewLine( state, line )
+{
+    if( state.previewLines.length < MAX_DEBUG_PREVIEW_LINES )
+    {
+        state.previewLines.push( line );
+    }
+}
+
+function parseArgumentString( input )
+{
+    var args = [];
+    var current = "";
+    var quote;
+    var escaped = false;
+
+    if( !input )
+    {
+        return args;
+    }
+
+    Array.from( input ).forEach( function( character )
+    {
+        if( escaped )
+        {
+            current += character;
+            escaped = false;
+            return;
+        }
+
+        if( character === '\\' )
+        {
+            escaped = true;
+            return;
+        }
+
+        if( quote )
+        {
+            if( character === quote )
+            {
+                quote = undefined;
+            }
+            else
+            {
+                current += character;
+            }
+            return;
+        }
+
+        if( character === '"' || character === "'" )
+        {
+            quote = character;
+            return;
+        }
+
+        if( /\s/.test( character ) )
+        {
+            if( current.length > 0 )
+            {
+                args.push( current );
+                current = "";
+            }
+            return;
+        }
+
+        current += character;
+    } );
+
+    if( escaped )
+    {
+        current += '\\';
+    }
+
+    if( current.length > 0 )
+    {
+        args.push( current );
+    }
+
+    return args;
+}
+
+function buildArgs( options )
+{
+    var args = [
+        '--no-messages',
+        '--vimgrep',
+        '-H',
+        '--column',
+        '--line-number',
+        '--color',
+        'never'
+    ].concat( parseArgumentString( options.additional ) );
+
+    if( options.multiline )
+    {
+        args.push( '-U' );
+    }
+
+    if( options.patternFilePath )
+    {
+        debugWithChannel( options, "Writing pattern file: " + options.patternFilePath );
+        fs.writeFileSync( options.patternFilePath, options.unquotedRegex + '\n' );
+        args.push( '-f', options.patternFilePath );
+        debugWithChannel( options, "Pattern: " + options.unquotedRegex );
+    }
+    else
+    {
+        args.push( '-e', options.regex );
+    }
+
+    ( options.globs || [] ).forEach( function( glob )
+    {
+        args.push( '-g', glob );
+    } );
+
+    if( options.filename )
+    {
+        args.push( options.filename );
+    }
+    else
+    {
+        args.push( '.' );
+    }
+
+    return args;
+}
+
+function Match( matchText )
+{
+    var regex = RegExp( /^(?<file>.*):(?<line>\d+):(?<column>\d+):(?<todo>.*)/ );
+    var match = regex.exec( matchText );
+
+    if( match && match.groups )
+    {
+        this.fsPath = match.groups.file;
+        this.line = parseInt( match.groups.line );
+        this.column = parseInt( match.groups.column );
+        this.match = match.groups.todo;
+    }
+    else
+    {
+        this.fsPath = "";
+
+        if( matchText.length > 1 && matchText[ 1 ] === ':' )
+        {
+            this.fsPath = matchText.substr( 0, 2 );
+            matchText = matchText.substr( 2 );
+        }
+
+        var parts = matchText.split( ':' );
+        var hasColumn = ( parts.length === 4 );
+        this.fsPath += parts.shift();
+        this.line = parseInt( parts.shift() );
+        this.column = hasColumn === true ? parseInt( parts.shift() ) : 1;
+        this.match = parts.join( ':' );
+    }
+}
+
+function createLineProcessor( multiline, results )
+{
     if( multiline === true )
     {
-        var results = [];
         var regex = utils.getRegexForEditorSearch( true );
-        var lines = stdout.split( '\n' );
-
-        var buffer = [];
         var matches = [];
         var text = "";
 
-        lines.map( function( line )
+        return function( line )
         {
+            if( !line )
+            {
+                return;
+            }
+
             var resultMatch = new Match( line );
-            buffer.push( line );
             matches.push( resultMatch );
+            text = text === "" ? resultMatch.match : text + '\n' + resultMatch.match;
+            regex.lastIndex = 0;
 
-            text = ( text === "" ) ? resultMatch.match : text + '\n' + resultMatch.match;
-
-            var fullMatch = text.match( regex );
-            if( fullMatch )
+            if( regex.test( text ) )
             {
                 resultMatch = matches[ 0 ];
-                matches.shift();
-                resultMatch.extraLines = matches;
+                resultMatch.extraLines = matches.slice( 1 );
                 results.push( resultMatch );
-                buffer = [];
                 matches = [];
                 text = "";
+                regex.lastIndex = 0;
             }
-        } );
-
-        return results;
+        };
     }
 
-    return stdout
-        .split( '\n' )
-        .map( ( line ) => new Match( line ) );
+    return function( line )
+    {
+        if( !line )
+        {
+            return;
+        }
+
+        results.push( new Match( line ) );
+    };
+}
+
+function processStdoutChunk( chunk, state )
+{
+    var combined = state.stdoutTail + chunk.toString();
+    var lines = combined.split( '\n' );
+
+    state.stdoutTail = lines.pop();
+
+    lines.forEach( function( line )
+    {
+        var cleanLine = stripTrailingCarriageReturn( line );
+        addPreviewLine( state, cleanLine );
+        state.outputLineCount++;
+        state.processLine( cleanLine );
+    } );
 }
 
 module.exports.search = function ripGrep( cwd, options )
 {
-    function debug( text )
-    {
-        if( options.outputChannel )
-        {
-            var now = new Date();
-            options.outputChannel.appendLine( now.toLocaleTimeString( 'en', { hour12: false } ) + "." + String( now.getMilliseconds() ).padStart( 3, '0' ) + " " + text );
-        }
-    }
-
     if( !cwd )
     {
         return Promise.reject( { error: 'No `cwd` provided' } );
@@ -93,105 +311,93 @@ module.exports.search = function ripGrep( cwd, options )
     options.regex = options.regex || '';
     options.globs = options.globs || [];
 
-    var rgPath = options.rgPath;
-    var isWin = /^win/.test( process.platform );
-
-    if( !fs.existsSync( rgPath ) )
+    if( !fs.existsSync( options.rgPath ) )
     {
-        return Promise.reject( { error: "ripgrep executable not found (" + rgPath + ")" } );
+        return Promise.reject( { error: "ripgrep executable not found (" + options.rgPath + ")" } );
     }
+
     if( !fs.existsSync( cwd ) )
     {
         return Promise.reject( { error: "root folder not found (" + cwd + ")" } );
     }
 
-    if( isWin )
-    {
-        rgPath = '"' + rgPath + '"';
-    }
-    else
-    {
-        rgPath = rgPath.replace( / /g, '\\ ' );
-    }
-
-    let execString = rgPath + ' --no-messages --vimgrep -H --column --line-number --color never ' + options.additional;
-    if( options.multiline )
-    {
-        execString += " -U ";
-    }
-
-    if( options.patternFilePath )
-    {
-        debug( "Writing pattern file:" + options.patternFilePath );
-        fs.writeFileSync( options.patternFilePath, options.unquotedRegex + '\n' );
-    }
-
-    if( !fs.existsSync( options.patternFilePath ) )
-    {
-        debug( "No pattern file found - passing regex in command" );
-        execString = `${execString} -e ${options.regex}`;
-    }
-    else
-    {
-        execString = `${execString} -f \"${options.patternFilePath}\"`;
-        debug( "Pattern:" + options.unquotedRegex );
-    }
-
-    execString = options.globs.reduce( ( command, glob ) =>
-    {
-        return `${command} -g \"${glob}\"`;
-    }, execString );
-
-    if( options.filename )
-    {
-        var filename = options.filename;
-        if( isWin && filename.slice( -1 ) === "\\" )
-        {
-            filename = filename.substr( 0, filename.length - 1 );
-        }
-        execString += " \"" + filename + "\"";
-    }
-    else
-    {
-        execString += " .";
-    }
-
-    debug( "Command: " + execString );
+    var args = buildArgs( options );
+    debugWithChannel( options, "Command: " + [ options.rgPath ].concat( args ).join( ' ' ) );
 
     return new Promise( function( resolve, reject )
     {
-        // The default for omitting maxBuffer, according to Node docs, is 200kB.
-        // We'll explicitly give that here if a custom value is not provided.
-        // Note that our options value is in KB, so we have to convert to bytes.
-        const maxBuffer = ( options.maxBuffer || 200 ) * 1024;
-        var currentProcess = child_process.exec( execString, { cwd, maxBuffer } );
-        var results = "";
+        var results = [];
+        var state = {
+            outputLineCount: 0,
+            previewLines: [],
+            stderr: "",
+            stdoutTail: "",
+            processLine: createLineProcessor( options.multiline, results )
+        };
+
+        currentCancellationRequested = false;
+        currentProcess = child_process.spawn( options.rgPath, args, { cwd: cwd, windowsHide: true } );
 
         currentProcess.stdout.on( 'data', function( data )
         {
-            debug( "Search results:\n" + data );
-            results += data;
+            processStdoutChunk( data, state );
         } );
 
         currentProcess.stderr.on( 'data', function( data )
         {
-            debug( "Search failed:\n" + data );
-            if( fs.existsSync( options.patternFilePath ) === true )
-            {
-                fs.unlinkSync( options.patternFilePath );
-            }
-            reject( new RipgrepError( data, "" ) );
+            state.stderr = appendBoundedText( state.stderr, data.toString(), MAX_DEBUG_TEXT_LENGTH );
         } );
 
-        currentProcess.on( 'close', function( code )
+        currentProcess.on( 'error', function( error )
         {
-            if( fs.existsSync( options.patternFilePath ) === true )
+            cleanupPatternFile( options.patternFilePath, options );
+
+            if( currentProcess )
             {
-                fs.unlinkSync( options.patternFilePath );
+                currentProcess = undefined;
             }
-            resolve( formatResults( results, options.multiline ) );
+
+            reject( new RipgrepError( error.message, state.stderr, false ) );
         } );
 
+        currentProcess.on( 'close', function( code, signal )
+        {
+            if( state.stdoutTail.length > 0 )
+            {
+                var trailingLine = stripTrailingCarriageReturn( state.stdoutTail );
+                addPreviewLine( state, trailingLine );
+                state.outputLineCount++;
+                state.processLine( trailingLine );
+            }
+
+            cleanupPatternFile( options.patternFilePath, options );
+
+            if( currentProcess )
+            {
+                currentProcess = undefined;
+            }
+
+            if( state.previewLines.length > 0 )
+            {
+                debugWithChannel( options, "Search preview:\n" + state.previewLines.join( '\n' ) );
+            }
+
+            debugWithChannel( options, "Search produced " + results.length + " matches from " + state.outputLineCount + " output lines" );
+
+            if( currentCancellationRequested === true || signal === 'SIGINT' )
+            {
+                reject( new RipgrepError( "Search cancelled", state.stderr, true ) );
+                return;
+            }
+
+            if( code === 0 || code === 1 )
+            {
+                resolve( results );
+                return;
+            }
+
+            reject( new RipgrepError( "ripgrep failed with exit code " + code, state.stderr, false ) );
+        } );
     } );
 };
 
@@ -199,51 +405,11 @@ module.exports.kill = function()
 {
     if( currentProcess !== undefined )
     {
+        currentCancellationRequested = true;
         currentProcess.kill( 'SIGINT' );
     }
 };
 
-class Match
-{
-    constructor( matchText )
-    {
-        // Detect file, line number and column which is formatted in the
-        // following format: {file}:{line}:{column}:{code match}
-        var regex = RegExp( /^(?<file>.*):(?<line>\d+):(?<column>\d+):(?<todo>.*)/ );
-
-        var match = regex.exec( matchText );
-        if( match && match.groups )
-        {
-            this.fsPath = match.groups.file;
-            this.line = parseInt( match.groups.line );
-            this.column = parseInt( match.groups.column );
-            this.match = match.groups.todo;
-        }
-        else // Fall back to old method
-        {
-            this.fsPath = "";
-
-            if( matchText.length > 1 && matchText[ 1 ] === ':' )
-            {
-                this.fsPath = matchText.substr( 0, 2 );
-                matchText = matchText.substr( 2 );
-            }
-            var parts = matchText.split( ':' );
-            var hasColumn = ( parts.length === 4 );
-            this.fsPath += parts.shift();
-            this.line = parseInt( parts.shift() );
-            if( hasColumn === true )
-            {
-                this.column = parseInt( parts.shift() );
-            }
-            else
-            {
-                this.column = 1;
-            }
-            this.match = parts.join( ':' );
-
-        }
-    }
-}
-
 module.exports.Match = Match;
+module.exports.buildArgs = buildArgs;
+module.exports.parseArgumentString = parseArgumentString;

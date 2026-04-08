@@ -19,6 +19,7 @@ var lanes =
 
 var decorations = {};
 var highlightTimer = {};
+var highlightVersions = {};
 var context;
 var debug;
 
@@ -369,16 +370,26 @@ function triggerHighlight( editor )
     if( editor )
     {
         var id = editorId( editor );
+        var version = editor.document ? editor.document.version : undefined;
 
         if( highlightTimer[ id ] )
         {
             clearTimeout( highlightTimer[ id ] );
         }
-        highlightTimer[ id ] = setTimeout( highlight, vscode.workspace.getConfiguration( 'todo-tree.highlights' ).highlightDelay, editor );
+
+        highlightVersions[ id ] = version;
+        highlightTimer[ id ] = setTimeout( function( scheduledEditor, scheduledVersion )
+        {
+            if( scheduledEditor.document && scheduledVersion !== undefined && scheduledEditor.document.version !== scheduledVersion )
+            {
+                return;
+            }
+
+            highlight( scheduledEditor );
+        }, vscode.workspace.getConfiguration( 'todo-tree.highlights' ).highlightDelay, editor, version );
     }
 }
 
 module.exports.init = init;
 module.exports.getDecoration = getDecoration;
 module.exports.triggerHighlight = triggerHighlight;
-
