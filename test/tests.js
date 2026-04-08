@@ -60,6 +60,25 @@ QUnit.test( "utils.removeBlockComments strips block comments based on filename",
     assert.equal( utils.removeBlockComments( "{- a\nb -}", "x.hs" ), " a\nb " );
 } );
 
+QUnit.test( "utils.getCommentPattern resolves basename matched languages from full paths", function( assert )
+{
+    assert.equal( utils.getCommentPattern( "/tmp/Makefile" ).name, "Make" );
+    assert.equal( utils.getCommentPattern( "/tmp/Cakefile" ).name, "CoffeeScript" );
+} );
+
+QUnit.test( "utils.getCommentPattern and getCommentPatternRegex apply alias mappings", function( assert )
+{
+    assert.equal( utils.getCommentPattern( "/tmp/file.jsonc" ).name, "JavaScript" );
+    assert.equal( utils.getCommentPattern( "/tmp/component.vue" ).name, "HTML" );
+    assert.ok( utils.getCommentPatternRegex( "/tmp/component.vue" ).regex instanceof RegExp );
+} );
+
+QUnit.test( "utils.getCommentPattern returns undefined for unknown languages", function( assert )
+{
+    assert.equal( utils.getCommentPattern( "/tmp/file.unknown" ), undefined );
+    assert.equal( utils.getCommentPatternRegex( "/tmp/file.unknown" ), undefined );
+} );
+
 QUnit.test( "utils.extractTag removes everything including tag", function( assert )
 {
     var testConfig = stubs.getTestConfig();
@@ -289,6 +308,42 @@ QUnit.test( "utils.getRegexForRipGrep can remove the case insensitive flag", fun
     testConfig.shouldBeCaseSensitive = true;
     utils.init( testConfig );
     assert.equal( utils.getRegexForRipGrep().flags, "gm" );
+} );
+
+QUnit.test( "utils.getResourceConfig honours uri specific regex overrides", function( assert )
+{
+    var testConfig = stubs.getTestConfig();
+    var uri = { toString: function() { return "/tmp/override.js"; } };
+
+    stubs.setUriOverride( testConfig, uri, {
+        regexSource: '(XXX)',
+        shouldBeCaseSensitive: true,
+        enableMultiLineFlag: true,
+        subTagRegexString: '^:\\s*'
+    } );
+    utils.init( testConfig );
+
+    var resourceConfig = utils.getResourceConfig( uri );
+
+    assert.equal( resourceConfig.regex, '(XXX)' );
+    assert.equal( resourceConfig.regexCaseSensitive, true );
+    assert.equal( resourceConfig.enableMultiLine, true );
+    assert.equal( resourceConfig.subTagRegex, '^:\\s*' );
+} );
+
+QUnit.test( "utils.getRegexForEditorSearch applies uri specific flags", function( assert )
+{
+    var testConfig = stubs.getTestConfig();
+    var uri = { toString: function() { return "/tmp/override.js"; } };
+
+    stubs.setUriOverride( testConfig, uri, {
+        regexSource: '(TODO)',
+        shouldBeCaseSensitive: true,
+        enableMultiLineFlag: true
+    } );
+    utils.init( testConfig );
+
+    assert.equal( utils.getRegexForEditorSearch( true, uri ).flags, "gms" );
 } );
 
 QUnit.test( "utils.isIncluded returns true when no includes or excludes are specified", function( assert )

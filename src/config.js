@@ -7,6 +7,11 @@ var context;
 
 var tagGroupLookup = {};
 
+function getConfiguration( section, uri )
+{
+    return uri ? vscode.workspace.getConfiguration( section, uri ) : vscode.workspace.getConfiguration( section );
+}
+
 function init( c )
 {
     context = c;
@@ -56,7 +61,7 @@ function showFilterCaseSensitive()
 
 function isRegexCaseSensitive()
 {
-    return vscode.workspace.getConfiguration( 'todo-tree.regex' ).get( 'regexCaseSensitive', true );
+    return getConfiguration( 'todo-tree.regex' ).get( 'regexCaseSensitive', true );
 }
 
 function showBadges()
@@ -64,19 +69,20 @@ function showBadges()
     return vscode.workspace.getConfiguration( 'todo-tree.tree' ).get( 'showBadges', false );
 }
 
-function regex()
+function regex( uri )
 {
+    var regexConfiguration = getConfiguration( 'todo-tree.regex', uri );
     return {
         tags: tags(),
-        regex: vscode.workspace.getConfiguration( 'todo-tree.regex' ).get( 'regex' ),
-        caseSensitive: vscode.workspace.getConfiguration( 'todo-tree.regex' ).get( 'regexCaseSensitive' ),
-        multiLine: vscode.workspace.getConfiguration( 'todo-tree.regex' ).get( 'enableMultiLine' )
+        regex: regexConfiguration.get( 'regex' ),
+        caseSensitive: regexConfiguration.get( 'regexCaseSensitive' ),
+        multiLine: regexConfiguration.get( 'enableMultiLine' )
     };
 }
 
-function subTagRegex()
+function subTagRegex( uri )
 {
-    return vscode.workspace.getConfiguration( 'todo-tree.regex' ).get( 'subTagRegex' );
+    return getConfiguration( 'todo-tree.regex', uri ).get( 'subTagRegex' );
 }
 
 function ripgrepPath()

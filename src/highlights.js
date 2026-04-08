@@ -1,10 +1,10 @@
 var vscode = require( 'vscode' );
-var execWithIndices = require( "regexp-match-indices" ).shim();
 
 var config = require( './config.js' );
 var utils = require( './utils.js' );
 var attributes = require( './attributes.js' );
 var icons = require( './icons.js' );
+var detection = require( './detection.js' );
 
 var captureGroupArgument = "capture-groups";
 
@@ -122,7 +122,7 @@ function getDecoration( tag )
         fontWeight: getFontWeight( tag ),
         fontStyle: getFontStyle( tag ),
         textDecoration: getTextDecoration( tag ),
-        gutterIconPath: showInGutter( tag ) ? icons.getIcon( context, tag, debug ).dark : undefined
+        gutterIconPath: showInGutter( tag ) ? icons.getGutterIcon( context, tag, debug ).dark : undefined
     };
 
     if( lane !== undefined )
@@ -215,8 +215,22 @@ function editorId( editor )
 
 function highlight( editor )
 {
-    function addDecoration( startPos, endPos )
+    function addDecoration( tag, startOffset, endOffset )
     {
+        if( startOffset === undefined || endOffset === undefined )
+        {
+            return;
+        }
+
+        if( endOffset < startOffset )
+        {
+            var previousStart = startOffset;
+            startOffset = endOffset;
+            endOffset = previousStart;
+        }
+
+        var startPos = editor.document.positionAt( startOffset );
+        var endPos = editor.document.positionAt( endOffset );
         var decoration = { range: new vscode.Range( startPos, endPos ) };
         if( documentHighlights[ tag ] === undefined )
         {
@@ -245,108 +259,70 @@ function highlight( editor )
 
         if( vscode.workspace.getConfiguration( 'todo-tree.highlights' ).get( 'enabled', true ) )
         {
-            var text = editor.document.getText();
-            var regex = utils.getRegexForEditorSearch( true );
-            var subTagRegex = new RegExp( config.subTagRegex() );
-
-            var match;
-            while( ( match = regex.exec( text ) ) !== null )
+            detection.scanDocument( editor.document ).forEach( function( match )
             {
-                var tag = match[ 0 ];
-                var offsetStart = match.index;
-                var offsetEnd = offsetStart + match[ 0 ].length;
-                var extracted = utils.extractTag( match[ 0 ] );
-                if( extracted.tag )
-                {
-                    var line = editor.document.lineAt( editor.document.positionAt( match.index ) );
-                    utils.updateBeforeAndAfter( extracted, text.substring( offsetStart, editor.document.offsetAt( line.range.end ) ) );
-                }
-                if( extracted.tag && extracted.tag.length > 0 )
-                {
-                    var tagGroup = config.tagGroup( extracted.tag );
-                    tag = tagGroup ? tagGroup : extracted.tag;
-                    offsetStart = match.index + extracted.tagOffset;
-                    offsetEnd = offsetStart + extracted.tag.length;
-                }
-                else
-                {
-                    offsetStart += match[ 0 ].search( /\S|$/ );
-                }
+                var tag = config.tagGroup( match.actualTag ) || match.actualTag;
                 var type = getType( tag );
                 if( type !== 'none' )
                 {
-                    var startPos = editor.document.positionAt( offsetStart );
-                    var endPos = editor.document.positionAt( offsetEnd );
-                    var fullEndPos = editor.document.positionAt( match.index + match[ 0 ].length );
-
                     if( type === 'text-and-comment' )
                     {
-                        addDecoration(
-                            editor.document.positionAt( match.index ),
-                            new vscode.Position( fullEndPos.line, editor.document.lineAt( fullEndPos.line ).range.end.character ) );
+                        addDecoration( tag, match.commentStartOffset, match.commentEndOffset );
                     }
                     else if( type === 'text' )
                     {
-                        addDecoration(
-                            startPos,
-                            new vscode.Position( fullEndPos.line, editor.document.lineAt( fullEndPos.line ).range.end.character ) );
+                        addDecoration( tag, match.matchStartOffset, match.matchEndOffset );
                     }
                     else if( type !== undefined && type.indexOf( captureGroupArgument + ":" ) === 0 )
                     {
                         type.substring( type.indexOf( ':' ) + 1 ).split( ',' ).map( function( groupText )
                         {
                             var group = parseInt( groupText );
-                            if( match.indices && match.indices[ group ] )
+                            if( match.captureGroupOffsets && match.captureGroupOffsets[ group ] )
                             {
-                                addDecoration(
-                                    editor.document.positionAt( match.indices[ group ][ 0 ] ),
-                                    editor.document.positionAt( match.indices[ group ][ 1 ] ) );
+                                addDecoration( tag, match.captureGroupOffsets[ group ][ 0 ], match.captureGroupOffsets[ group ][ 1 ] );
                             }
                         } );
                     }
                     else if( type === 'tag-and-subTag' || type === 'tag-and-subtag' )
                     {
-                        addDecoration( startPos, endPos );
+                        addDecoration( tag, match.tagStartOffset, match.tagEndOffset );
 
-                        var endOfLineOffset = editor.document.offsetAt( new vscode.Position( fullEndPos.line, editor.document.lineAt( fullEndPos.line ).range.end.character ) );
-                        var todoText = text.substring( offsetEnd, endOfLineOffset );
-                        var subTagMatch = todoText.match( subTagRegex );
-                        if( subTagMatch !== null && subTagMatch.length > 1 )
+                        if( match.subTag && customHighlight[ match.subTag ] !== undefined && match.subTagStartOffset !== undefined && match.subTagEndOffset !== undefined )
                         {
-                            var subTag = subTagMatch[ 1 ];
-                            if( customHighlight[ subTag ] !== undefined )
+                            var subTagDecoration = {
+                                range: new vscode.Range(
+                                    editor.document.positionAt( match.subTagStartOffset ),
+                                    editor.document.positionAt( match.subTagEndOffset ) )
+                            };
+                            if( subTagHighlights[ match.subTag ] === undefined )
                             {
-                                var subTagOffset = todoText.indexOf( subTag );
-                                if( subTagOffset !== -1 )
-                                {
-                                    var subTagStartPos = editor.document.positionAt( offsetEnd + subTagOffset );
-                                    var subTagEndPos = editor.document.positionAt( offsetEnd + subTagOffset + subTagMatch[ 1 ].length );
-                                    var subTagDecoration = { range: new vscode.Range( subTagStartPos, subTagEndPos ) };
-                                    if( subTagHighlights[ subTag ] === undefined )
-                                    {
-                                        subTagHighlights[ subTag ] = [];
-                                    }
-                                    subTagHighlights[ subTag ].push( subTagDecoration );
-                                }
+                                subTagHighlights[ match.subTag ] = [];
                             }
+                            subTagHighlights[ match.subTag ].push( subTagDecoration );
                         }
                     }
                     else if( type === 'tag-and-comment' )
                     {
-                        addDecoration( editor.document.positionAt( match.index ), endPos );
+                        addDecoration( tag, match.commentStartOffset, match.tagEndOffset );
                     }
                     else if( type === 'line' || type === 'whole-line' )
                     {
-                        addDecoration(
-                            new vscode.Position( fullEndPos.line, editor.document.lineAt( fullEndPos.line ).range.end.character ),
-                            new vscode.Position( startPos.line, 0 ) );
+                        var lineStart = new vscode.Position( editor.document.positionAt( match.commentStartOffset ).line, 0 );
+                        var lineEnd = editor.document.lineAt( editor.document.positionAt( match.commentEndOffset ).line ).range.end;
+                        var lineDecoration = { range: new vscode.Range( lineStart, lineEnd ) };
+                        if( documentHighlights[ tag ] === undefined )
+                        {
+                            documentHighlights[ tag ] = [];
+                        }
+                        documentHighlights[ tag ].push( lineDecoration );
                     }
                     else
                     {
-                        addDecoration( startPos, endPos );
+                        addDecoration( tag, match.tagStartOffset, match.tagEndOffset );
                     }
                 }
-            }
+            } );
 
             Object.keys( documentHighlights ).forEach( function( tag )
             {
@@ -392,4 +368,5 @@ function triggerHighlight( editor )
 
 module.exports.init = init;
 module.exports.getDecoration = getDecoration;
+module.exports.highlight = highlight;
 module.exports.triggerHighlight = triggerHighlight;

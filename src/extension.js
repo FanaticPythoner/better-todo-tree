@@ -16,6 +16,7 @@ var config = require( './config.js' );
 var utils = require( './utils.js' );
 var attributes = require( './attributes.js' );
 var searchResults = require( './searchResults.js' );
+var detection = require( './detection.js' );
 
 var searchList = [];
 var currentFilter;
@@ -83,9 +84,6 @@ function activate( context )
             outputChannel.appendLine( now.toLocaleTimeString( 'en', { hour12: false } ) + "." + String( now.getMilliseconds() ).padStart( 3, '0' ) + " " + text );
         }
     }
-
-    var buildCounter = context.workspaceState.get( 'buildCounter', 1 );
-    context.workspaceState.update( 'buildCounter', ++buildCounter );
 
     currentFilter = context.workspaceState.get( 'currentFilter' );
 
@@ -448,17 +446,19 @@ function activate( context )
         return globs;
     }
 
-    function getOptions( filename )
+    function getOptions( filename, uri, overrideRegexSource )
     {
         var c = vscode.workspace.getConfiguration( 'todo-tree' );
+        var resourceConfig = detection.resolveResourceConfig( uri );
+        var regexSource = overrideRegexSource || utils.getRegexSource( uri );
 
         var tempIncludeGlobs = context.workspaceState.get( 'includeGlobs' ) || [];
         var tempExcludeGlobs = context.workspaceState.get( 'excludeGlobs' ) || [];
         var submoduleExcludeGlobs = context.workspaceState.get( 'submoduleExcludeGlobs' ) || [];
 
         var options = {
-            regex: utils.getRegexSource(),
-            unquotedRegex: utils.getRegexSource(),
+            regex: regexSource,
+            unquotedRegex: regexSource,
             rgPath: config.ripgrepPath()
         };
 
@@ -487,7 +487,7 @@ function activate( context )
         options.outputChannel = outputChannel;
         options.additional = c.get( 'ripgrep.ripgrepArgs' );
         options.maxBuffer = c.get( 'ripgrep.ripgrepMaxBuffer' );
-        options.multiline = utils.getRegexSource().indexOf( "\\n" ) > -1 || c.get( 'regex.enableMultiLine' ) === true;
+        options.multiline = regexSource.indexOf( "\\n" ) > -1 || resourceConfig.enableMultiLine === true;
 
         if( fs.existsSync( context.storageUri.fsPath ) === true && c.get( 'ripgrep.usePatternFile' ) === true )
         {
@@ -499,7 +499,7 @@ function activate( context )
         {
             options.additional += ' --hidden ';
         }
-        if( c.get( 'regex.regexCaseSensitive' ) === false )
+        if( resourceConfig.regexCaseSensitive === false )
         {
             options.additional += ' -i ';
         }
@@ -589,85 +589,24 @@ function activate( context )
         return [];
     }
 
-    function createEditorSearchResult( document, offset, removeLeadingComments )
+    function refreshDocumentResults( document )
     {
-        var position = document.positionAt( offset );
-        var line = document.lineAt( position.line ).text;
-        if( removeLeadingComments === true )
-        {
-            line = utils.removeLineComments( line, document.fileName );
-        }
-
-        return {
-            uri: document.uri,
-            line: position.line + 1,
-            column: position.character + 1,
-            match: line
-        };
-    }
-
-    function parseDocumentResults( document )
-    {
-        var results = [];
-
         if( !document || !config.isValidScheme( document.uri ) || isIncluded( document.uri ) !== true )
         {
-            return results;
+            searchResults.replaceUriResults( document.uri, [] );
+            return;
         }
 
         if( config.scanMode() === SCAN_MODE_CURRENT_FILE )
         {
             if( !vscode.window.activeTextEditor || vscode.window.activeTextEditor.document.fileName !== document.fileName )
             {
-                return results;
+                searchResults.replaceUriResults( document.uri, [] );
+                return;
             }
         }
 
-        var text = document.getText();
-        var regex = utils.getRegexForEditorSearch( true );
-        var match;
-
-        while( ( match = regex.exec( text ) ) !== null )
-        {
-            if( match[ 0 ].length === 0 )
-            {
-                regex.lastIndex++;
-                continue;
-            }
-
-            var matchText = match[ 0 ];
-            var offset = match.index;
-
-            while( text[ offset ] === '\n' || text[ offset ] === '\r' )
-            {
-                offset++;
-                matchText = matchText.substring( 1 );
-            }
-
-            var sections = matchText.split( "\n" );
-            var result = createEditorSearchResult( document, offset, false );
-
-            if( sections.length > 1 )
-            {
-                result.extraLines = [];
-                offset += sections[ 0 ].length + 1;
-                sections.shift();
-                sections.forEach( function( section )
-                {
-                    result.extraLines.push( createEditorSearchResult( document, offset, true ) );
-                    offset += section.length + 1;
-                } );
-            }
-
-            results.push( result );
-        }
-
-        return results;
-    }
-
-    function refreshDocumentResults( document )
-    {
-        searchResults.replaceUriResults( document.uri, parseDocumentResults( document ) );
+        searchResults.replaceUriResults( document.uri, detection.scanDocument( document ) );
     }
 
     function applyDirtyResultsToTree( options )
@@ -719,6 +658,78 @@ function activate( context )
         } );
     }
 
+    function getCandidateSearchRegex()
+    {
+        return '(' + utils.getTagRegexSource() + ')';
+    }
+
+    function readWorkspaceFile( filePath )
+    {
+        return fs.readFileSync( filePath, 'utf8' );
+    }
+
+    function scanWorkspaceCandidates( rootPath )
+    {
+        var seenFiles = new Set();
+
+        return search( getOptions( rootPath, undefined, getCandidateSearchRegex() ) ).then( function( matches )
+        {
+            matches.forEach( function( match )
+            {
+                seenFiles.add( match.fsPath );
+            } );
+
+            Array.from( seenFiles ).forEach( function( filePath )
+            {
+                var uri = vscode.Uri.file( filePath );
+                if( isIncluded( uri ) !== true )
+                {
+                    return;
+                }
+
+                var text = readWorkspaceFile( filePath );
+                searchResults.replaceUriResults( uri, detection.scanText( uri, text ) );
+            } );
+        } );
+    }
+
+    function scanWorkspaceRegexMatches( rootPath )
+    {
+        return search( getOptions( rootPath ) ).then( function( matches )
+        {
+            var matchesByFile = new Map();
+
+            matches.forEach( function( match )
+            {
+                if( matchesByFile.has( match.fsPath ) !== true )
+                {
+                    matchesByFile.set( match.fsPath, [] );
+                }
+                matchesByFile.get( match.fsPath ).push( match );
+            } );
+
+            matchesByFile.forEach( function( fileMatches, filePath )
+            {
+                var uri = vscode.Uri.file( filePath );
+                if( isIncluded( uri ) !== true )
+                {
+                    return;
+                }
+
+                var text = readWorkspaceFile( filePath );
+                var normalized = fileMatches.map( function( match )
+                {
+                    return detection.normalizeRegexMatch( uri, text, match );
+                } ).filter( function( result )
+                {
+                    return result !== undefined;
+                } );
+
+                searchResults.replaceUriResults( uri, normalized );
+            } );
+        } );
+    }
+
     function applyGlobs()
     {
         var includeGlobs = vscode.workspace.getConfiguration( 'todo-tree.filtering' ).get( 'includeGlobs' );
@@ -742,21 +753,21 @@ function activate( context )
 
     function iterateSearchList( generation )
     {
+        var workspaceConfig = detection.resolveResourceConfig();
+
         return searchList.reduce( function( promise, entry )
         {
             return promise.then( function()
             {
                 assertGenerationActive( generation );
 
-                return search( getOptions( entry ) ).then( function( matches )
+                var scanPromise = workspaceConfig.isDefaultRegex === true ?
+                    scanWorkspaceCandidates( entry ) :
+                    scanWorkspaceRegexMatches( entry );
+
+                return scanPromise.then( function()
                 {
                     assertGenerationActive( generation );
-
-                    matches.forEach( function( match )
-                    {
-                        match.uri = vscode.Uri.file( match.fsPath );
-                        searchResults.add( match );
-                    } );
                 } );
             } );
         }, Promise.resolve() ).then( function()
@@ -1258,7 +1269,7 @@ function activate( context )
                         ignoreMarkdownUpdate = true;
                         addTag( '[ ]' );
                         addTag( '[x]' );
-                        c.update( 'regex.regex', '(//|#|<!--|;|/\\*|^|^[ \\t]*(-|\\d+.))\\s*($TAGS)', true );
+                        c.update( 'regex.regex', '(^|//|#|<!--|;|/\\*|^[ \\t]*(-|\\d+.))\\s*(?=\\[x\\]|\\[ \\]|[A-Za-z0-9_])($TAGS)(?![A-Za-z0-9_])', true );
                     }
                     else if( button === MORE_INFO_BUTTON )
                     {
@@ -1419,13 +1430,14 @@ function activate( context )
             }
         }
 
-        function showInTree( uri )
+        function showInTree( uri, options )
         {
+            options = options || {};
             provider.getElement( uri.fsPath, function( element )
             {
                 if( todoTreeView.visible === true )
                 {
-                    todoTreeView.reveal( element, { focus: false, select: true } );
+                    todoTreeView.reveal( element, { focus: false, select: options.select !== false } );
                 }
             } );
         }
@@ -1746,7 +1758,6 @@ function activate( context )
             context.workspaceState.update( 'excludeGlobs', [] );
             context.workspaceState.update( 'expandedNodes', {} );
             context.workspaceState.update( 'submoduleExcludeGlobs', [] );
-            context.workspaceState.update( 'buildCounter', undefined );
             context.workspaceState.update( 'currentFilter', undefined );
             context.workspaceState.update( 'filtered', undefined );
             context.workspaceState.update( 'tagsOnly', undefined );
@@ -1773,7 +1784,7 @@ function activate( context )
         {
             if( vscode.window.activeTextEditor )
             {
-                showInTree( vscode.window.activeTextEditor.document.uri );
+                showInTree( vscode.window.activeTextEditor.document.uri, { select: true } );
             }
         } ) );
 
@@ -1962,7 +1973,10 @@ function activate( context )
                     {
                         if( selectedDocument !== e.document.fileName )
                         {
-                            setTimeout( showInTree, 500, e.document.uri );
+                            setTimeout( function()
+                            {
+                                showInTree( e.document.uri, { select: false } );
+                            }, 500 );
                         }
                         selectedDocument = undefined;
                     }

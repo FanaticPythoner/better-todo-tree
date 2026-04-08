@@ -112,4 +112,33 @@ QUnit.module( "ripgrep streaming search", function( hooks )
 
         return promise;
     } );
+
+    QUnit.test( "search passes filenames with spaces and parentheses as a single spawn argument", function( assert )
+    {
+        var seenArgs;
+        childProcess.spawn = function( executable, args )
+        {
+            seenArgs = args;
+
+            var fakeProcess = createFakeProcess();
+            process.nextTick( function()
+            {
+                fakeProcess.emit( 'close', 1, null );
+            } );
+            return fakeProcess;
+        };
+
+        return ripgrep.search( '/', {
+            rgPath: fakeRgPath,
+            regex: '(TODO)',
+            unquotedRegex: '(TODO)',
+            additional: '',
+            globs: [],
+            multiline: false,
+            filename: '/tmp/project (feature branch)/file name.js'
+        } ).then( function()
+        {
+            assert.equal( seenArgs[ seenArgs.length - 1 ], '/tmp/project (feature branch)/file name.js' );
+        } );
+    } );
 } );

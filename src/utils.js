@@ -10,6 +10,8 @@ var themeColourNames = require( './themeColourNames.js' );
 
 var config;
 
+var DEFAULT_REGEX_SOURCE = '(^|//|#|<!--|;|/\\*|^[ \\t]*(-|\\d+.))\\s*(?=\\[x\\]|\\[ \\]|[A-Za-z0-9_])($TAGS)(?![A-Za-z0-9_])';
+
 var envRegex = new RegExp( "\\$\\{(.*?)\\}", "g" );
 var rgbRegex = new RegExp( "^rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*(\\d+(?:\\.\\d+)?))?\\)$", "gi" );
 var placeholderRegex = new RegExp( "(\\$\\{.*\\})" );
@@ -73,41 +75,81 @@ function hexToRgba( hex, opacity )
     return '#0F0';
 }
 
-function removeBlockComments( text, fileName )
+function normaliseCommentPatternFileName( fileName )
 {
-    var extension = path.extname( fileName );
+    var baseName = path.basename( fileName );
+    var extension = path.extname( baseName );
 
     if( extension === ".jsonc" )
     {
-        fileName = path.join( path.dirname( fileName ), path.basename( fileName, extension ) ) + ".js";
+        return path.basename( baseName, extension ) + ".js";
     }
-    else if( extension === ".vue" )
+    if( extension === ".vue" )
     {
-        fileName = path.join( path.dirname( fileName ), path.basename( fileName, extension ) ) + ".html";
-    }
-    else if( extension === ".hs" )
-    {
-        fileName = path.join( path.dirname( fileName ), path.basename( fileName, extension ) ) + ".cpp";
+        return path.basename( baseName, extension ) + ".html";
     }
 
-    var commentPattern;
+    return baseName || fileName;
+}
+
+function getCommentPattern( fileName )
+{
+    var normalisedFileName = normaliseCommentPatternFileName( fileName );
+
     try
     {
-        commentPattern = commentPatterns( fileName );
+        return commentPatterns( normalisedFileName );
     }
-    catch( e )
+    catch( error )
     {
-    }
+        if( /Cannot find language definition/.test( error.message ) )
+        {
+            return undefined;
+        }
 
-    if( commentPattern && commentPattern.name === 'Markdown' )
+        throw error;
+    }
+}
+
+function getCommentPatternRegex( fileName )
+{
+    var normalisedFileName = normaliseCommentPatternFileName( fileName );
+
+    try
     {
-        commentPattern = commentPatterns( ".html" );
-        fileName = ".html";
+        return commentPatterns.regex( normalisedFileName );
+    }
+    catch( error )
+    {
+        if( /Cannot find language definition/.test( error.message ) )
+        {
+            return undefined;
+        }
+
+        throw error;
+    }
+}
+
+function removeBlockComments( text, fileName )
+{
+    var extension = path.extname( fileName );
+    var normalisedFileName = normaliseCommentPatternFileName( fileName );
+    var commentPattern = getCommentPattern( fileName );
+
+    if( extension == ".hs" )
+    {
+        commentPattern = getCommentPattern( ".cpp" );
+        normalisedFileName = ".cpp";
+    }
+    else if( commentPattern && commentPattern.name === 'Markdown' )
+    {
+        commentPattern = getCommentPattern( ".html" );
+        normalisedFileName = ".html";
     }
 
     if( commentPattern && commentPattern.multiLineComment && commentPattern.multiLineComment.length > 0 )
     {
-        commentPattern = commentPatterns.regex( fileName );
+        commentPattern = getCommentPatternRegex( normalisedFileName );
         if( commentPattern && commentPattern.regex )
         {
             var regex = commentPattern.regex;
@@ -152,19 +194,7 @@ function removeLineComments( text, fileName )
 {
     var result = text.trim();
 
-    if( path.extname( fileName ) === ".jsonc" )
-    {
-        fileName = path.join( path.dirname( fileName ), path.basename( fileName, path.extname( fileName ) ) ) + ".js";
-    }
-
-    var commentPattern;
-    try
-    {
-        commentPattern = commentPatterns( fileName );
-    }
-    catch( e )
-    {
-    }
+    var commentPattern = getCommentPattern( fileName );
 
     if( commentPattern && commentPattern.singleLineComment )
     {
@@ -182,7 +212,12 @@ function removeLineComments( text, fileName )
 
 function getTagRegex()
 {
-    var tags = config.tags().slice().sort().reverse();
+    return getTagRegexSource();
+}
+
+function getTagRegexSource( uri, tagList )
+{
+    var tags = ( tagList || config.tags() ).slice().sort().reverse();
     tags = tags.map( function( tag )
     {
         tag = tag.replace( /\\/g, '\\\\\\' );
@@ -190,24 +225,38 @@ function getTagRegex()
         return tag;
     } );
     tags = tags.join( '|' );
-    return '(' + tags + ')';
+    return tags;
 }
 
-function extractTag( text, matchOffset )
+function getResourceConfig( uri )
 {
-    var c = config.regex();
-    var flags = c.caseSensitive ? '' : 'i';
+    var regexSettings = config.regex( uri );
+    return {
+        tags: regexSettings.tags,
+        regex: regexSettings.regex,
+        regexCaseSensitive: regexSettings.caseSensitive !== false,
+        enableMultiLine: regexSettings.multiLine === true,
+        subTagRegex: config.subTagRegex( uri ),
+        isDefaultRegex: regexSettings.regex === DEFAULT_REGEX_SOURCE
+    };
+}
+
+function extractTag( text, matchOffset, uri )
+{
+    var resourceConfig = getResourceConfig( uri );
+    var flags = resourceConfig.regexCaseSensitive ? '' : 'i';
     var tagMatch = null;
     var tagOffset;
     var originalTag;
     var before = text;
     var after = text;
     var subTag;
+    var subTagOffset;
 
-    if( c.regex.indexOf( "$TAGS" ) > -1 )
+    if( resourceConfig.regex.indexOf( "$TAGS" ) > -1 )
     {
-        var tagRegex = new RegExp( getTagRegex(), flags );
-        var subTagRegex = new RegExp( config.subTagRegex(), flags );
+        var tagRegex = new RegExp( '(' + getTagRegexSource( uri, resourceConfig.tags ) + ')', flags );
+        var subTagRegex = new RegExp( resourceConfig.subTagRegex, flags );
         tagMatch = tagRegex.exec( text );
         if( tagMatch )
         {
@@ -217,8 +266,9 @@ function extractTag( text, matchOffset )
             if( subTagMatch && subTagMatch.length > 1 )
             {
                 subTag = subTagMatch[ 1 ];
+                subTagOffset = tagMatch.index + tagMatch[ 0 ].length + rightOfTagText.indexOf( subTag );
             }
-            rightOfTag = rightOfTagText.replace( subTagRegex, "" );
+            var rightOfTag = rightOfTagText.replace( subTagRegex, "" );
             if( rightOfTag.length === 0 )
             {
                 text = text.substr( 0, matchOffset ? matchOffset - 1 : tagMatch.index ).trim();
@@ -231,9 +281,9 @@ function extractTag( text, matchOffset )
                 text = rightOfTag;
                 after = rightOfTag;
             }
-            c.tags.map( function( tag )
+            resourceConfig.tags.map( function( tag )
             {
-                if( config.isRegexCaseSensitive() )
+                if( resourceConfig.regexCaseSensitive )
                 {
                     if( tag === tagMatch[ 0 ] )
                     {
@@ -247,10 +297,10 @@ function extractTag( text, matchOffset )
             } );
         }
     }
-    if( tagMatch === null && c.regex.trim() !== "" )
+    if( tagMatch === null && resourceConfig.regex.trim() !== "" )
     {
-        var regex = new RegExp( c.regex, flags );
-        match = regex.exec( text );
+        var regex = new RegExp( resourceConfig.regex, flags );
+        var match = regex.exec( text );
         if( match !== null )
         {
             tagMatch = true;
@@ -267,18 +317,19 @@ function extractTag( text, matchOffset )
         before: before,
         after: after,
         tagOffset: tagOffset,
-        subTag: subTag
+        subTag: subTag,
+        subTagOffset: subTagOffset
     };
 }
 
-function updateBeforeAndAfter( result, text, matchOffset )
+function updateBeforeAndAfter( result, text, matchOffset, uri )
 {
-    var c = config.regex();
-    var flags = c.caseSensitive ? '' : 'i';
+    var resourceConfig = getResourceConfig( uri );
+    var flags = resourceConfig.regexCaseSensitive ? '' : 'i';
     var tagMatch = null;
 
-    var tagRegex = new RegExp( getTagRegex(), flags );
-    var subTagRegex = new RegExp( config.subTagRegex(), flags );
+    var tagRegex = new RegExp( '(' + getTagRegexSource( uri, resourceConfig.tags ) + ')', flags );
+    var subTagRegex = new RegExp( resourceConfig.subTagRegex, flags );
     tagMatch = tagRegex.exec( text );
     if( tagMatch )
     {
@@ -289,7 +340,7 @@ function updateBeforeAndAfter( result, text, matchOffset )
         {
             result.subTag = subTagMatch[ 1 ];
         }
-        rightOfTag = rightOfTagText.replace( subTagRegex, "" );
+        var rightOfTag = rightOfTagText.replace( subTagRegex, "" );
         if( rightOfTag.length === 0 )
         {
             result.text = text.substr( 0, matchOffset ? matchOffset - 1 : tagMatch.index ).trim();
@@ -307,46 +358,51 @@ function updateBeforeAndAfter( result, text, matchOffset )
     return result;
 }
 
-function getRegexSource()
+function getRegexSource( uri )
 {
-    var regex = config.regex().regex;
+    var regex = getResourceConfig( uri ).regex;
     if( regex.indexOf( "($TAGS)" ) > -1 )
     {
-        regex = regex.split( "($TAGS)" ).join( getTagRegex() );
+        regex = regex.split( "($TAGS)" ).join( '(' + getTagRegexSource( uri ) + ')' );
     }
 
     return regex;
 }
 
-function getRegexForEditorSearch( global )
+function getRegexForEditorSearch( global, uri, options )
 {
     var flags = 'm';
+    options = options || {};
     if( global )
     {
         flags += 'g';
     }
-    if( config.regex().caseSensitive === false )
+    if( getResourceConfig( uri ).regexCaseSensitive === false )
     {
         flags += 'i';
     }
-    if( config.regex().multiLine === true )
+    if( getResourceConfig( uri ).enableMultiLine === true )
     {
         flags += 's';
     }
+    if( options.includeIndices === true )
+    {
+        flags += 'd';
+    }
 
-    var source = getRegexSource();
+    var source = getRegexSource( uri );
     return RegExp( source, flags );
 }
 
-function getRegexForRipGrep()
+function getRegexForRipGrep( uri )
 {
     var flags = 'gm';
-    if( config.regex().caseSensitive === false )
+    if( getResourceConfig( uri ).regexCaseSensitive === false )
     {
         flags += 'i';
     }
 
-    return RegExp( getRegexSource(), flags );
+    return RegExp( getRegexSource( uri ), flags );
 }
 
 function isIncluded( name, includes, excludes )
@@ -553,6 +609,11 @@ module.exports.isThemeColour = isThemeColour;
 module.exports.hexToRgba = hexToRgba;
 module.exports.removeBlockComments = removeBlockComments;
 module.exports.removeLineComments = removeLineComments;
+module.exports.getCommentPattern = getCommentPattern;
+module.exports.getCommentPatternRegex = getCommentPatternRegex;
+module.exports.getResourceConfig = getResourceConfig;
+module.exports.getTagRegexSource = getTagRegexSource;
+module.exports.DEFAULT_REGEX_SOURCE = DEFAULT_REGEX_SOURCE;
 module.exports.extractTag = extractTag;
 module.exports.updateBeforeAndAfter = updateBeforeAndAfter;
 module.exports.getRegexSource = getRegexSource;
