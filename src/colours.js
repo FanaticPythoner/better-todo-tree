@@ -1,11 +1,12 @@
 var vscode = require( 'vscode' );
 var utils = require( './utils.js' );
+var identity = require( './extensionIdentity.js' );
 
 function validateColours( workspace )
 {
     function check( setting )
     {
-        var definedColour = workspace.getConfiguration( 'todo-tree.highlights' ).get( setting );
+        var definedColour = identity.getSetting( 'highlights.' + setting, undefined );
         if( definedColour !== undefined && !utils.isValidColour( definedColour ) )
         {
             invalidColours.push( setting + ' (' + definedColour + ')' );
@@ -18,7 +19,9 @@ function validateColours( workspace )
     var attributeList = [ 'foreground', 'background', 'iconColour', 'rulerColour' ];
     attributeList.forEach( function( attribute ) { check( 'defaultHighlight.' + attribute ); } );
 
-    var config = vscode.workspace.getConfiguration( 'todo-tree.highlights' );
+    var config = {
+        customHighlight: identity.getSetting( 'highlights.customHighlight', {} )
+    };
     Object.keys( config.customHighlight ).forEach( function( tag )
     {
         attributeList.forEach( function( attribute ) { check( 'customHighlight.' + tag + '.' + attribute ); } );
@@ -39,8 +42,8 @@ function validateIconColours( workspace )
 
     function checkIconColour( setting )
     {
-        var icon = workspace.getConfiguration( 'todo-tree.highlights' ).get( setting + ".icon" );
-        var iconColour = workspace.getConfiguration( 'todo-tree.highlights' ).get( setting + ".iconColour" );
+        var icon = identity.getSetting( 'highlights.' + setting + ".icon", undefined );
+        var iconColour = identity.getSetting( 'highlights.' + setting + ".iconColour", undefined );
         if( icon !== undefined && iconColour !== undefined )
         {
             if( utils.isCodicon( icon ) )
@@ -67,7 +70,9 @@ function validateIconColours( workspace )
 
     checkIconColour( 'defaultHighlight' );
 
-    var config = vscode.workspace.getConfiguration( 'todo-tree.highlights' );
+    var config = {
+        customHighlight: identity.getSetting( 'highlights.customHighlight', {} )
+    };
     Object.keys( config.customHighlight ).forEach( function( tag )
     {
         checkIconColour( 'customHighlight.' + tag );

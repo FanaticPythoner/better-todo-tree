@@ -6,6 +6,7 @@ var path = require( "path" );
 var utils = require( './utils.js' );
 var icons = require( './icons.js' );
 var config = require( './config.js' );
+var identity = require( './extensionIdentity.js' );
 
 var workspaceFolders;
 var nodes = [];
@@ -696,7 +697,7 @@ class TreeNodeProvider
                     {
                         url = utils.formatLabel( url, node );
                         treeItem.command = {
-                            command: "todo-tree.openUrl",
+                            command: identity.COMMANDS.openUrl,
                             arguments: [
                                 url
                             ]
@@ -718,7 +719,7 @@ class TreeNodeProvider
                     treeItem.label = utils.formatLabel( format, node ) + ( node.pathLabel ? ( " " + node.pathLabel ) : "" );
                 }
 
-                var revealBehaviour = vscode.workspace.getConfiguration( 'todo-tree.general' ).get( 'revealBehaviour' );
+                var revealBehaviour = identity.getSetting( 'general.revealBehaviour', 'start of todo' );
 
                 var todoSelection;
                 if( revealBehaviour === 'end of todo' )
@@ -738,7 +739,7 @@ class TreeNodeProvider
                 }
 
                 treeItem.command = {
-                    command: "todo-tree.revealInFile",
+                    command: identity.COMMANDS.revealInFile,
                     arguments: [
                         node.uri ? node.uri : vscode.Uri.file( node.fsPath ),
                         { selection: todoSelection }

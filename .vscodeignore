@@ -9,5 +9,13 @@ dist/extension.js.map
 artifacts/
 justfile
 Justfile
+.github/
+scripts/
+.nvmrc
+.travis.yml
 TODOS_LISTS/
 TODOS_LISTS/**
+.tools/
+.act-artifacts/
+MIGRATION.md
+OPEN_VSX_CERTIFICATE_REPORT.md

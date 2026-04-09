@@ -1,4 +1,4 @@
-# Todo Tree
+# Better Todo Tree
 
 This extension quickly searches (using [ripgrep](https://github.com/BurntSushi/ripgrep)) your workspace for comment tags like TODO and FIXME, and displays them in a tree view in the activity bar. The view can be dragged out of the activity bar into the explorer pane (or anywhere else you would prefer it to be).
 
@@ -6,9 +6,9 @@ Clicking a TODO within the tree will open the file and put the cursor on the lin
 
 Found TODOs can also be highlighted in open files.
 
-*Please see the [wiki](https://github.com/Gruntfuggly/todo-tree/wiki/Configuration-Examples) for configuration examples.*
+*Please see the [wiki](https://github.com/FanaticPythoner/better-todo-tree/wiki/Configuration-Examples) for configuration examples.*
 
-![screenshot](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/screenshot.png)
+![screenshot](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/screenshot.png)
 
 *Notes:*
 
@@ -16,7 +16,7 @@ Found TODOs can also be highlighted in open files.
 
 ## Highlighting
 
->*New!:* If you just want to set different colours for tags, you can now enable `todo-tree.highlights.useColourScheme`. This will apply a set of colours (which can be changed) to the tags in the order that they are defined.
+>*New!:* If you just want to set different colours for tags, you can now enable `better-todo-tree.highlights.useColourScheme`. This will apply a set of colours (which can be changed) to the tags in the order that they are defined.
 
 Highlighting tags is configurable. Use `defaultHighlight` to set up highlights for all tags. If you need to configure individual tags differently, use `customHighlight`. If settings are not specified in `customHighlight`, the value from `defaultHighlight` is used.
 
@@ -40,7 +40,7 @@ Both `defaultHighlight` and `customHighlight` allow for the following settings:
 
 `borderRadius` - used to set the border radius of the background of the highlight.
 
-`icon` - used to set a different icon in the tree view. Must be a valid octicon (see <https://octicons.github.com>) or codicon (see <https://microsoft.github.io/vscode-codicons/dist/codicon.html>). If using codicons, specify them in the format "$(*icon*)". The icon defaults to a tick if it's not valid. You can also use "todo-tree", or "todo-tree-filled" if you want to use the icon from the activity view.
+`icon` - used to set a different icon in the tree view. Must be a valid octicon (see <https://octicons.github.com>) or codicon (see <https://microsoft.github.io/vscode-codicons/dist/codicon.html>). If using codicons, specify them in the format "$(*icon*)". The icon defaults to a tick if it's not valid. You can also use "better-todo-tree", or "better-todo-tree-filled" if you want to use the icon from the activity view.
 
 `iconColour` - used to set the colour of the icon in the tree. If not specified, it will try to use the foreground colour or the background colour. Colour can be specified as per foreground and background colours, but see note below.
 
@@ -48,7 +48,7 @@ Both `defaultHighlight` and `customHighlight` allow for the following settings:
 
 `gutterIcon` - set to true to show the icon in the editor gutter.
 
-<sup>*Note: Unfortunately, only octicons and the todo-tree icon can be displayed in the gutter.*</sup>
+<sup>*Note: Unfortunately, only octicons and the better-todo-tree icon can be displayed in the gutter.*</sup>
 
 `rulerColour` - used to set the colour of the marker in the overview ruler. If not specified, it will default to use the foreground colour. Colour can be specified as per foreground and background colours.
 
@@ -79,7 +79,7 @@ Both `defaultHighlight` and `customHighlight` allow for the following settings:
 Example:
 
 ```json
-"todo-tree.highlights.defaultHighlight": {
+"better-todo-tree.highlights.defaultHighlight": {
     "icon": "alert",
     "type": "text",
     "foreground": "red",
@@ -87,7 +87,7 @@ Example:
     "opacity": 50,
     "iconColour": "blue"
 },
-"todo-tree.highlights.customHighlight": {
+"better-todo-tree.highlights.customHighlight": {
     "TODO": {
         "icon": "check",
         "type": "line"
@@ -100,42 +100,42 @@ Example:
 }
 ```
 
-<sup>*Note: The highlight configuration is separate from the settings for the search. Adding settings in `customHighlight` does not automatically add the tags into `todo-tree.general.tags`.*</sup>
+<sup>*Note: The highlight configuration is separate from the settings for the search. Adding settings in `customHighlight` does not automatically add the tags into `better-todo-tree.general.tags`.*</sup>
 
 <sup>*Note: Using the `capture-groups` setting in `type` may have an impact on performance with large files.
 
 ## Installing
 
-You can install the latest version of the extension via the Visual Studio Marketplace [here](https://marketplace.visualstudio.com/items?itemName=Gruntfuggly.todo-tree).
+You can install the latest version of the extension via the Visual Studio Marketplace [here](https://marketplace.visualstudio.com/items?itemName=FanaticPythoner.better-todo-tree).
 
 Alternatively, open Visual Studio code, press `Ctrl+P` or `Cmd+P` and type:
 
-> ext install Gruntfuggly.todo-tree
+> ext install FanaticPythoner.better-todo-tree
 
 ### Source Code
 
-The source code is available on GitHub [here](https://github.com/Gruntfuggly/todo-tree).
+The source code is available on GitHub [here](https://github.com/FanaticPythoner/better-todo-tree).
 
 ## Controls
 
 The tree view header can contain the following buttons:
 
-![collapse](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/collapse.png) - Collapse all tree nodes</br>
-![expand](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/expand.png) - Expand all tree nodes</br>
-![flat](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/flat.png) - Show the tree view as a flat list, with the full filename for each TODO</br>
-![tags](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/tags.png) - Show the view as a list of tags</br>
-![tree](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/tree.png) - Show the tree view as a tree with expandable nodes for each folder (default)</br>
-![tag](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/tag.png) - Group the TODOs in the tree by the tag</br>
-![notag](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/notag.png) - Organise the TODOs by file (default)</br>
-![filter](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/filter.png) - Only show items in the tree which match the entered filter text</br>
-![clear-filter](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/clear-filter.png) - Remove any active filter</br>
-![refresh](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/refresh.png) - Rebuild the tree</br>
-![scan-open-files](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/scan-open-files.png) - Show tags from open files only</br>
-![scan-current-file](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/scan-current-file.png) - Show tags from the current file</br>
-![scan-workspace](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/scan-workspace-only.png) - Show tags from workspace only</br>
-![scan-workspace](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/scan-workspace.png) - Show tags from workspace and open files</br>
-![reveal](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/reveal.png) - Show the current file in the tree</br>
-![export](https://raw.githubusercontent.com/Gruntfuggly/todo-tree/master/resources/button-icons/export.png) - Export the tree content to a file</br>
+![collapse](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/collapse.png) - Collapse all tree nodes</br>
+![expand](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/expand.png) - Expand all tree nodes</br>
+![flat](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/flat.png) - Show the tree view as a flat list, with the full filename for each TODO</br>
+![tags](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/tags.png) - Show the view as a list of tags</br>
+![tree](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/tree.png) - Show the tree view as a tree with expandable nodes for each folder (default)</br>
+![tag](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/tag.png) - Group the TODOs in the tree by the tag</br>
+![notag](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/notag.png) - Organise the TODOs by file (default)</br>
+![filter](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/filter.png) - Only show items in the tree which match the entered filter text</br>
+![clear-filter](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/clear-filter.png) - Remove any active filter</br>
+![refresh](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/refresh.png) - Rebuild the tree</br>
+![scan-open-files](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/scan-open-files.png) - Show tags from open files only</br>
+![scan-current-file](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/scan-current-file.png) - Show tags from the current file</br>
+![scan-workspace](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/scan-workspace-only.png) - Show tags from workspace only</br>
+![scan-workspace](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/scan-workspace.png) - Show tags from workspace and open files</br>
+![reveal](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/reveal.png) - Show the current file in the tree</br>
+![export](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/button-icons/export.png) - Export the tree content to a file</br>
 
 ## Folder Filter Context Menu
 
@@ -159,7 +159,7 @@ Right clicking in the tree view will bring up a context menu with the following 
 **Export Tree** - dump the tree contents into a file
 **Reveal Current File in Tree** - show the current editor file in tree (if present)
 
-<sup>*Note: The current filters are shown in the debug log. Also, the filter can always be reset by right clicking the **Nothing Found** item in the tree. If your tree becomes invisible because everything is filtered and `hideTreeWhenEmpty` is set to true, you can reset the filter by pressing **F1** and selecting the **Todo Tree: Reset Folder Filter** command.*</sup>
+<sup>*Note: The current filters are shown in the debug log. Also, the filter can always be reset by right clicking the **Nothing Found** item in the tree. If your tree becomes invisible because everything is filtered and `hideTreeWhenEmpty` is set to true, you can reset the filter by pressing **F1** and selecting the **Better Todo Tree: Reset Folder Filter** command.*</sup>
 
 ## Commands
 
@@ -167,60 +167,60 @@ Right clicking in the tree view will bring up a context menu with the following 
 
 To make it easier to configure the tags, there are two commands available:
 
-**Todo Tree: Add Tag** - allows entry of a new tag for searching
+**Better Todo Tree: Add Tag** - allows entry of a new tag for searching
 
-**Todo Tree: Remove Tag** - shows a list of current tags which can be selected for removing
+**Better Todo Tree: Remove Tag** - shows a list of current tags which can be selected for removing
 
 <sup>*Note: The Remove Tag command can be used to show current tags - just press Escape or Enter with out selecting any to close it.*</sup>
 
 ### Export
 
-The contents of the tree can be exported using **Todo Tree: Export Tree**. A read-only file will be created using the path specified with `todo-tree.general.exportPath`. The file can be saved using **File: Save As...**. *Note: Currently **File: Save** does not work which seems to be a VSCode bug (see <https://github.com/microsoft/vscode/issues/101952>).*
+The contents of the tree can be exported using **Better Todo Tree: Export Tree**. A read-only file will be created using the path specified with `better-todo-tree.general.exportPath`. The file can be saved using **File: Save As...**. *Note: Currently **File: Save** does not work which seems to be a VSCode bug (see <https://github.com/microsoft/vscode/issues/101952>).*
 
 ### Switch Scope
 
-**Todo Tree: Switch Scope** - shows a list of configured scopes which can be selected
+**Better Todo Tree: Switch Scope** - shows a list of configured scopes which can be selected
 
 ### Navigation
 
-The commands **Todo Tree: Go To Next** and **Todo Tree: Go To Previous** can be used to move to the next and previous TODO within the current editor.
+The commands **Better Todo Tree: Go To Next** and **Better Todo Tree: Go To Previous** can be used to move to the next and previous TODO within the current editor.
 
 ## Configuration
 
 The extension can be customised as follows (default values in brackets):
 
-**todo-tree.general.debug** (`false`)</br>
+**better-todo-tree.general.debug** (`false`)</br>
 Show a debug channel in the output view.
 
-**todo-tree.general.periodicRefreshInteval** (`0`)</br>
+**better-todo-tree.general.periodicRefreshInteval** (`0`)</br>
 Interval (in minutes) for automatically refreshing the tree. Set to '0' to disable, or to the number of minutes between refreshes. *Note: This is not typically needed as the tree will be refreshed when files change.*
 
-**todo-tree.general.automaticGitRefreshInterval** (`0`)</br>
+**better-todo-tree.general.automaticGitRefreshInterval** (`0`)</br>
 Polling interval (in seconds) for automatically refreshing the tree when your repository is updated. This will check if your repository HEAD has changed and trigger a rescan of the workspace if it has. This replaces the file watcher functionality. Set to '0' to disable, or to the number of seconds between checks.
 
-**todo-tree.general.exportPath** (`~/todo-tree-%Y%m%d-%H%M.txt`)</br>
+**better-todo-tree.general.exportPath** (`~/better-todo-tree-%Y%m%d-%H%M.txt`)</br>
 Path to use when exporting the tree. Environment variables will be expanded, e.g `${HOME}` and the path is passed through strftime (see <https://github.com/samsonjs/strftime>). Set the extension to `.json` to export as a JSON record.
 
-**todo-tree.general.rootFolder** (`""`)</br>
+**better-todo-tree.general.rootFolder** (`""`)</br>
 By default, any open workspaces will have a tree in the view. Use this to force another folder to be the root of the tree. You can include environment variables and also use ${workspaceFolder}. e.g.</br>
-`"todo-tree.general.rootFolder": "${workspaceFolder}/test"`</br>
+`"better-todo-tree.general.rootFolder": "${workspaceFolder}/test"`</br>
 or</br>
-`"todo-tree.general.rootFolder": "${HOME}/project"`.</br>
+`"better-todo-tree.general.rootFolder": "${HOME}/project"`.</br>
 
 
 <sup>*Note: Other open files (outside of the rootFolder) will be shown (as they are opened) with their full path in brackets.*</sup>
 
-**todo-tree.general.schemes** (`['file','ssh','untitled']`)</br>
+**better-todo-tree.general.schemes** (`['file','ssh','untitled']`)</br>
 Editor schemes to find TODOs in. To find TODOs in settings files, for instance, add `vscode-userdata` or for output windows, add `output`.
 
-**todo-tree.general.tags** (`["TODO","FIXME","BUG"]`)</br>
+**better-todo-tree.general.tags** (`["TODO","FIXME","BUG"]`)</br>
 This defines the tags which are recognised as TODOs. This list is automatically inserted into the regex.
 
-**todo-tree.general.tagGroups** (`{}`)</br>
+**better-todo-tree.general.tagGroups** (`{}`)</br>
 This setting allows multiple tags to be treated as a single group. Example:
 
 ```json
-    "todo-tree.general.tagGroups": {
+    "better-todo-tree.general.tagGroups": {
         "FIXME": [
             "FIXME",
             "FIXIT",
@@ -231,60 +231,60 @@ This setting allows multiple tags to be treated as a single group. Example:
 
 This treats any of `FIXME`, `FIXIT` or `FIX` as `FIXME`. When the tree is grouped by tag, all of these will appear under the `FIXME` node. This also means that custom highlights are applied to the group, not each tag type.
 
-<sup>*Note: all tags in the group should also appear in `todo-tree.general.tags`.*</sup>
+<sup>*Note: all tags in the group should also appear in `better-todo-tree.general.tags`.*</sup>
 
-**todo-tree.general.revealBehaviour** (`start of todo`)</br>
+**better-todo-tree.general.revealBehaviour** (`start of todo`)</br>
 Change the cursor behaviour when double-clicking a todo in the tree. You can choose from: `start of todo` (moves the cursor to the beginning of the todo), `end of todo` (moves the cursor to the end of the todo) or `start of line` (moves the cursor to the start of the line).
 
-**todo-tree.general.statusBar** (`none`)</br>
+**better-todo-tree.general.statusBar** (`none`)</br>
 What to show in the status bar - nothing (`none`), total count (`total`), counts per tag (`tags`), counts for the top three tags (`top three`) or counts for the current file only (`current file`).
 
-**todo-tree.general.statusBarClickBehaviour** (`reveal`)</br>
+**better-todo-tree.general.statusBarClickBehaviour** (`reveal`)</br>
 Set the behaviour of clicking the status bar to either cycle through the status bar display formats (`cycle`), reveal the tree (`reveal`) or to toggle highlights (`toggle highlights`).
 
-**todo-tree.general.showIconsInsteadOfTagsInStatusBar** (`false`)</br>
+**better-todo-tree.general.showIconsInsteadOfTagsInStatusBar** (`false`)</br>
 Show icons instead of tags in the status bar.
 
-**todo-tree.general.showActivityBarBadge** (`false`)</br>
+**better-todo-tree.general.showActivityBarBadge** (`false`)</br>
 Show a badge in the activity bar indicating the total number of found TODOs.
 
 <sup>*Note: When the tree view is in the Explorer pane, the badge is displayed on the Explorer icon, which may not be desirable.*</sup>
 
-**todo-tree.filtering.includeGlobs** (`[]`)</br>
+**better-todo-tree.filtering.includeGlobs** (`[]`)</br>
 Globs for use in limiting search results by inclusion, e.g. `[\"**/unit-tests/*.js\"]` to only show .js files in unit-tests subfolders. [Globs help](https://code.visualstudio.com/api/references/vscode-api#GlobPattern).
 
 <sup>*Note: globs paths are absolute - not relative to the current workspace.*</sup>
 
-**todo-tree.filtering.excludeGlobs** (`["**/node_modules/*/**"]`)</br>
+**better-todo-tree.filtering.excludeGlobs** (`["**/node_modules/*/**"]`)</br>
 Globs for use in limiting search results by exclusion (applied after **includeGlobs**), e.g. `[\"**/*.txt\"]` to ignore all .txt files.
 
 <sup>*Note: `node_modules` are excluded by default.*</sup>
 
-**todo-tree.filtering.includedWorkspaces** (`[]`)</br>
+**better-todo-tree.filtering.includedWorkspaces** (`[]`)</br>
 A list of workspace names to include as roots in the tree (wildcards can be used). An empty array includes all workspace folders.
 
-**todo-tree.filtering.excludedWorkspaces** (`[]`)</br>
+**better-todo-tree.filtering.excludedWorkspaces** (`[]`)</br>
 A list of workspace names to exclude as roots in the tree (wildcards can be used).
 
-**todo-tree.filtering.passGlobsToRipgrep** (`true`)</br>
+**better-todo-tree.filtering.passGlobsToRipgrep** (`true`)</br>
 Set this to false to apply the globs *after* the search (legacy behaviour).
 
-**todo-tree.filtering.useBuiltInExcludes** (`none`)</br>
+**better-todo-tree.filtering.useBuiltInExcludes** (`none`)</br>
 Set this to use VSCode's built in files or search excludes. Can be one of `none`, `file excludes` (uses Files:Exclude), `search excludes` (Uses Search:Exclude) or `file and search excludes` (uses both).
 
-**todo-tree.filtering.ignoreGitSubmodules** (`false`)</br>
+**better-todo-tree.filtering.ignoreGitSubmodules** (`false`)</br>
 If true, any subfolders containing a `.git` file will be ignored when searching.
 
-**todo-tree.filtering.includeHiddenFiles** (`false`)</br>
+**better-todo-tree.filtering.includeHiddenFiles** (`false`)</br>
 If true, files starting with a period (.) will be included.
 
-**todo-tree.highlights.enabled** (`true`)</br>
+**better-todo-tree.highlights.enabled** (`true`)</br>
 Set this to false to turn off highlighting.
 
-**todo-tree.highlights.highlightDelay** (`500`)</br>
+**better-todo-tree.highlights.highlightDelay** (`500`)</br>
 The delay before highlighting (milliseconds).
 
-**todo-tree.highlights.defaultHighlight** (`{}`)</br>
+**better-todo-tree.highlights.defaultHighlight** (`{}`)</br>
 Set default highlights. Example:
 
 ```json
@@ -296,7 +296,7 @@ Set default highlights. Example:
 }
 ```
 
-**todo-tree.highlights.customHighlight** (`{}`)</br>
+**better-todo-tree.highlights.customHighlight** (`{}`)</br>
 Set highlights per tag (or tag group). Example:
 
 ```json
@@ -311,29 +311,29 @@ Set highlights per tag (or tag group). Example:
 }
 ```
 
-**todo-tree.highlights.useColourScheme** (`false`)</br>
+**better-todo-tree.highlights.useColourScheme** (`false`)</br>
 Use a simple scheme for colouring highlights. This will simply apply a list of colours in the same order as the tags are defined. Use this as a much simpler alternative to setting up custom highlights for each tag.
 
-<sup>*Note: The colour scheme overrides the colours defined in* `todo-tree.highlights.defaultHighlight` *but not* `todo-tree.highlights.customHighlight`*.*</sup>
+<sup>*Note: The colour scheme overrides the colours defined in* `better-todo-tree.highlights.defaultHighlight` *but not* `better-todo-tree.highlights.customHighlight`*.*</sup>
 
-**todo-tree.highlights.backgroundColourScheme** (`["red","orange","yellow","green","blue","indigo","violet"]`)</br>
-Defines colours for use in conjunction with `todo-tree.highlights.useColourScheme` to colour highlights. Colours can be defined in the same way as other colours (e.g. hex code, theme names, etc.). If there are more tags than colours, the sequence is repeated.
+**better-todo-tree.highlights.backgroundColourScheme** (`["red","orange","yellow","green","blue","indigo","violet"]`)</br>
+Defines colours for use in conjunction with `better-todo-tree.highlights.useColourScheme` to colour highlights. Colours can be defined in the same way as other colours (e.g. hex code, theme names, etc.). If there are more tags than colours, the sequence is repeated.
 
-**todo-tree.highlights.foreroundColourScheme** (`["white","black","black","white","white","white","black"]`)</br>
-Defines colours for use in conjunction with `todo-tree.highlights.backgroundColourScheme` to colour highlights. These colours should be complementary to the background colours.
+**better-todo-tree.highlights.foreroundColourScheme** (`["white","black","black","white","white","white","black"]`)</br>
+Defines colours for use in conjunction with `better-todo-tree.highlights.backgroundColourScheme` to colour highlights. These colours should be complementary to the background colours.
 
-**todo-tree.regex.enableMultiLine** (`false`)</br>
+**better-todo-tree.regex.enableMultiLine** (`false`)</br>
 Normally, multiline support is enabled by detecting the use of `\n` in the regex. Set this to `true`, to enable multiline support by default. This allows the use of `[\s\S]` as an alternative to matching any character including newlines.
 
-**todo-tree.regex.regex** (<tt>
+**better-todo-tree.regex.regex** (<tt>
 &#x28;&#x2f;&#x2f;&#x7c;&#x23;&#x7c;&#x3c;&#x21;&#x2d;&#x2d;&#x7c;&#x3b;&#x7c;&#x2f;&#x5c;&#x5c;&#x2a;&#x7c;&#x5e;&#x7c;&#x5e;&#x5b;&#x20;&#x5c;&#x5c;&#x74;&#x5d;&#x2a;&#x28;&#x2d;&#x7c;&#x5c;&#x5c;&#x64;&#x2b;&#x2e;&#x29;&#x29;&#x5c;&#x5c;&#x73;&#x2a;&#x28;&#x24;&#x54;&#x41;&#x47;&#x53;&#x29;</tt>)</br>
 
 This defines the regex used to locate TODOs. By default, it searches for tags in comments starting with <tt>&#47;&#47;</tt>, <tt>#</tt>, <tt>;</tt>, <tt>&lt;!--</tt> or <tt>&#47;*</tt>, and also markdown todo lists. This should cover most languages. However if you want to refine it, make sure that the <tt>($TAGS)</tt> is kept as <tt>($TAGS)</tt> will be replaced by the expanded tag list. For some of the extension features to work, <tt>($TAGS)</tt> should be present in the regex, however, the basic functionality should still work if you need to explicitly expand the tag list.
 
 <sup>*Note: This is a [Rust regular expression](https://docs.rs/regex/1.0.0/regex)</a>, not javascript.*</sup>
 
-**todo-tree.regex.subTagRegex**
-This is a regular expression for processing the text to the right of the tag, e.g. for extracting a sub tag, or removing unwanted characters. Anything that the regex matches will be removed from the text. If a capture group is included, the contents are extracted into a sub tag, which will be used in the tree to group similar tags. The sub tag can also be used as a placeholder in `todo-tree.tree.subTagClickUrl` and `todo-tree.tree.labelFormat`. Sub tags can also be highlighted by specifying a section in the `todo-tree.highlights.customHighlights` setting. To highlight the sub tag itself, set "type" to "tag-and-subTag" in custom highlights for the tag.
+**better-todo-tree.regex.subTagRegex**
+This is a regular expression for processing the text to the right of the tag, e.g. for extracting a sub tag, or removing unwanted characters. Anything that the regex matches will be removed from the text. If a capture group is included, the contents are extracted into a sub tag, which will be used in the tree to group similar tags. The sub tag can also be used as a placeholder in `better-todo-tree.tree.subTagClickUrl` and `better-todo-tree.tree.labelFormat`. Sub tags can also be highlighted by specifying a section in the `better-todo-tree.highlights.customHighlights` setting. To highlight the sub tag itself, set "type" to "tag-and-subTag" in custom highlights for the tag.
 
 Examples:
 
@@ -341,119 +341,119 @@ Examples:
 
 `"^\s*\((.*)\)"` can be used to extract anything in parentheses after the tag and use it as a sub tag.
 
-**todo-tree.regex.regexCaseSensitive** (`true`)</br>
+**better-todo-tree.regex.regexCaseSensitive** (`true`)</br>
 Set to false to allow tags to be matched regardless of case.
 
-**todo-tree.ripgrep.ripgrep** (`""`)</br>
+**better-todo-tree.ripgrep.ripgrep** (`""`)</br>
 Normally, the extension will locate ripgrep itself as and when required. If you want to use an alternate version of ripgrep, set this to point to wherever it is installed.
 
-**todo-tree.ripgrep.ripgrepArgs** (`"--max-columns=1000"`)</br>
+**better-todo-tree.ripgrep.ripgrepArgs** (`"--max-columns=1000"`)</br>
 Use this to pass additional arguments to ripgrep. e.g. `"-i"` to make the search case insensitive. *Use with caution!*
 
-**todo-tree.ripgrep.ripgrepMaxBuffer** (`200`)</br>
+**better-todo-tree.ripgrep.ripgrepMaxBuffer** (`200`)</br>
 By default, the ripgrep process will have a buffer of 200KB. However, this is sometimes not enough for all the tags you might want to see. This setting can be used to increase the buffer size accordingly.
 
-**todo-tree.ripgrep.usePatternFile** (`true`)</br>
+**better-todo-tree.ripgrep.usePatternFile** (`true`)</br>
 A pattern file is used with ripgrep by default. If you experience issues with deleting the pattern file, set this to false to use the legacy method of providing the regex to ripgrep.
 
-**todo-tree.tree.hideTreeWhenEmpty** (`true`)</br>
+**better-todo-tree.tree.hideTreeWhenEmpty** (`true`)</br>
 Normally, the tree is removed from the explorer view if nothing is found. Set this to false to keep the view present.
 
-**todo-tree.tree.filterCaseSensitive** (`false`)</br>
+**better-todo-tree.tree.filterCaseSensitive** (`false`)</br>
 Use this if you need the filtering to be case sensitive.
 
 <sup>*Note: this does not the apply to the search*.</sup>
 
-**todo-tree.tree.trackFile** (`true`)</br>
+**better-todo-tree.tree.trackFile** (`true`)</br>
 Set to false if you want to prevent tracking the open file in the tree view.
 
-**todo-tree.tree.showBadges** (`true`)</br>
+**better-todo-tree.tree.showBadges** (`true`)</br>
 Set to false to disable SCM status and badges in the tree. *
 
 <sup>*Note: This also unfortunately turns off themed icons.*</sup>
 
-**todo-tree.tree.expanded<sup>*</sup>** (`false`)</br>
+**better-todo-tree.tree.expanded<sup>*</sup>** (`false`)</br>
 Set to true if you want new views to be expanded by default.
 
-**todo-tree.tree.flat<sup>*</sup>** (`false`)</br>
+**better-todo-tree.tree.flat<sup>*</sup>** (`false`)</br>
 Set to true if you want new views to be flat by default.
 
-**todo-tree.tree.grouped<sup>*</sup>** (`false`)</br>
+**better-todo-tree.tree.groupedByTag<sup>*</sup>** (`false`)</br>
 Set to true if you want new views to be grouped by default.
 
-**todo-tree.tree.tagsOnly<sup>*</sup>** (`false`)</br>
+**better-todo-tree.tree.tagsOnly<sup>*</sup>** (`false`)</br>
 Set to true if you want new views with tags only by default.
 
-**todo-tree.tree.sortTagsOnlyViewAlphabetically** (`false`)</br>
+**better-todo-tree.tree.sortTagsOnlyViewAlphabetically** (`false`)</br>
 Sort items in the tags only view alphabetically instead of in order of the tags list.
 
-**todo-tree.tree.showCountsInTree** (`false`)</br>
+**better-todo-tree.tree.showCountsInTree** (`false`)</br>
 Set to true to show counts of TODOs in the tree.
 
-**todo-tree.tree.labelFormat** (`${tag} ${after}`)</br>
+**better-todo-tree.tree.labelFormat** (`${tag} ${after}`)</br>
 Format of the TODO item labels. Available placeholders are `${line}`, `${column}`, `${tag}`, `${before}` (text from before the tag), `${after}` (text from after the tag), `${filename}`, `${filepath}` and `${afterOrBefore}` (use "after" text or "before" text if after is empty). When using `${tag}` or `${subTag}` you can also transform the text with "uppercase", "lowercase" or "capitalize", e.g. `${tag:lowercase}`.
 
-**todo-tree.tree.scanMode** (`workspace`)</br>
+**better-todo-tree.tree.scanMode** (`workspace`)</br>
 By default the extension scans the whole workspace (`workspace`). Use this to limit the search to only open files (`open files`) or only the current file (`current file`).
 
-**todo-tree.tree.showScanModeButton** (`false`)</br>
+**better-todo-tree.tree.showScanModeButton** (`false`)</br>
 Show a button on the tree view header to switch the scanMode (see above).
 
-**todo-tree.tree.hideIconsWhenGroupedByTag** (`false`)</br>
+**better-todo-tree.tree.hideIconsWhenGroupedByTag** (`false`)</br>
 Hide item icons when grouping by tag.
 
-**todo-tree.tree.sort** (`true`)</br>
+**better-todo-tree.tree.sort** (`true`)</br>
 ripgrep searches using multiple threads to improve performance. The tree is sorted when it is populated so that it stays stable. If you want to use ripgrep's own sort arguments, set this to false.
 
 <sup>*Note: Depending on what scan mode you select, you may also want to disable auto-refresh when disabling the sort, otherwise the tree may still be unstable.*</sup>
 
-**todo-tree.tree.disableCompactFolders** (`false`)</br>
+**better-todo-tree.tree.disableCompactFolders** (`false`)</br>
 The tree will normally respect the VSCode's `explorer.compactFolders` setting. Set this to true if you want to disable compact folders in the todo tree.
 
-**todo-tree.tree.tooltipFormat** (`${filepath}, ${line}`)</br>
-Format of the tree item tooltips. Uses the same placeholders as `todo-tree.tree.labelFormat` (see above).
+**better-todo-tree.tree.tooltipFormat** (`${filepath}, ${line}`)</br>
+Format of the tree item tooltips. Uses the same placeholders as `better-todo-tree.tree.labelFormat` (see above).
 
-**todo-tree.tree.subTagClickUrl**</br>
+**better-todo-tree.tree.subTagClickUrl**</br>
 A URL (which can contain placeholders), which will be opened when clicking on a sub tag in the tree, e.g. `https://github.com/${subTag}` could be used if the sub tag extracts a user name.
 
-**todo-tree.tree.buttons.reveal** (`true`)</br>
+**better-todo-tree.tree.buttons.reveal** (`true`)</br>
 Show a button in the tree view title bar to reveal the current item (only when track file is not enabled).
 
-**todo-tree.tree.buttons.scanMode** (`false`)</br>
+**better-todo-tree.tree.buttons.scanMode** (`false`)</br>
 Show a button in the tree view title bar to change the Scan Mode setting.
 
-**todo-tree.tree.buttons.viewStyle** (`true`)</br>
+**better-todo-tree.tree.buttons.viewStyle** (`true`)</br>
 Show a button in the tree view title bar to change the view style (tree, flat or tags only).
 
-**todo-tree.tree.buttons.groupByTag** (`true`)</br>
+**better-todo-tree.tree.buttons.groupByTag** (`true`)</br>
 Show a button in the tree view title bar to enable grouping items by tag.
 
-**todo-tree.tree.buttons.groupBySubTag** (`false`)</br>
+**better-todo-tree.tree.buttons.groupBySubTag** (`false`)</br>
 Show a button in the tree view title bar to enable grouping items by sub tag.
 
 <sup>*Note: This button will only be visible when sub tags have been found and are present in the tree.*</sup>
 
-**todo-tree.tree.buttons.filter** (`true`)</br>
+**better-todo-tree.tree.buttons.filter** (`true`)</br>
 Show a button in the tree view title bar allowing the tree to be filtered by entering some text.
 
-**todo-tree.tree.buttons.refresh** (`true`)</br>
+**better-todo-tree.tree.buttons.refresh** (`true`)</br>
 Show a refresh button in the tree view title bar.
 
-**todo-tree.tree.buttons.expand** (`true`)</br>
+**better-todo-tree.tree.buttons.expand** (`true`)</br>
 Show a button in the tree view title bar to expand or collapse the whole tree.
 
-**todo-tree.tree.buttons.export** (`false`)</br>
+**better-todo-tree.tree.buttons.export** (`false`)</br>
 Show a button in the tree view title bar to create a text file showing the tree content.
 
 <sup>*</sup>*Only applies to new workspaces. Once the view has been changed in the workspace, the current state is stored.*
 
-**todo-tree.filtering.scopes** (`{}`)</br>
-Defines a set of file scopes that can be quickly switched between using the *todo-tree.switchScope* command.
+**better-todo-tree.filtering.scopes** (`{}`)</br>
+Defines a set of file scopes that can be quickly switched between using the *better-todo-tree.switchScope* command.
 
 This is a complex configuration property that can only be configured through the configuration JSON file. For example
 
 ```json
-"todo-tree.scopes": [
+"better-todo-tree.filtering.scopes": [
     {
         "name": "Production ",
         "excludeGlobs": [
@@ -474,10 +474,10 @@ This is a complex configuration property that can only be configured through the
 
 ### Multiline TODOs
 
-If the regex contains `\n`, then multiline TODOs will be enabled. In this mode, the search results are processed slightly differently. If results are found which do not contain any tags from `todo-tree.general.tags` it will be assumed that they belong to the previous result that did have a tag. For example, if you set the regex to something like:
+If the regex contains `\n`, then multiline TODOs will be enabled. In this mode, the search results are processed slightly differently. If results are found which do not contain any tags from `better-todo-tree.general.tags` it will be assumed that they belong to the previous result that did have a tag. For example, if you set the regex to something like:
 
 ```json
-"todo-tree.regex.regex": "(//)\\s*($TAGS).*(\\n\\s*//\\s{2,}.*)*"
+"better-todo-tree.regex.regex": "(//)\\s*($TAGS).*(\\n\\s*//\\s{2,}.*)*"
 ```
 
 This will now match multiline TODOs where the extra lines have at least two spaces between the comment characters and the TODO item. e.g.
@@ -491,7 +491,7 @@ This will now match multiline TODOs where the extra lines have at least two spac
 If you want to match multiline TODOs in C++ style multiline comment blocks, you'll need something like:
 
 ```json
-"todo-tree.regex.regex": "(/\\*)\\s*($TAGS).*(\\n\\s*(//|/\\*|\\*\\*)\\s{2,}.*)*"
+"better-todo-tree.regex.regex": "(/\\*)\\s*($TAGS).*(\\n\\s*(//|/\\*|\\*\\*)\\s{2,}.*)*"
 ```
 
 which should match:
@@ -509,23 +509,23 @@ which should match:
 
 ### Excluding files and folders
 
-To restrict the set of folders which is searched, you can define `todo-tree.filtering.includeGlobs`. This is an array of globs which the search results are matched against. If the results match any of the globs, they will be shown. By default the array is empty, which matches everything. See [here](https://code.visualstudio.com/api/references/vscode-api#GlobPattern) for more information on globs.
+To restrict the set of folders which is searched, you can define `better-todo-tree.filtering.includeGlobs`. This is an array of globs which the search results are matched against. If the results match any of the globs, they will be shown. By default the array is empty, which matches everything. See [here](https://code.visualstudio.com/api/references/vscode-api#GlobPattern) for more information on globs.
 
 <sup>*Note: globs paths are absolute - not relative to the current workspace.*</sup>
 
-To exclude folders/files from your search you can define `todo-tree.filtering.excludeGlobs`. If the search results match any of these globs, then the results will be ignored.
+To exclude folders/files from your search you can define `better-todo-tree.filtering.excludeGlobs`. If the search results match any of these globs, then the results will be ignored.
 
 You can also include and exclude folders from the tree using the context menu. This folder filter is applied separately to the include/exclude globs.
 
-<sup>*Note: By default, ripgrep ignores files and folders from your `.gitignore` or `.ignore` files. If you want to include these files, set* `todo-tree.ripgrep.ripgrepArgs` *to* `--no-ignore`.</sup>
+<sup>*Note: By default, ripgrep ignores files and folders from your `.gitignore` or `.ignore` files. If you want to include these files, set* `better-todo-tree.ripgrep.ripgrepArgs` *to* `--no-ignore`.</sup>
 
 ### Markdown Support
 
 When the extension was first written, very basic markdown support was added simply by adding a pattern to the default regex to match "`- [ ]`". A better way to handle markdown TODOs is to add "`(-|\d+.)`" to the list of "comments" in the first part of the regex and then adding "`[ ]`" and "`[x]`" to the list of tags in `settings.json`, e.g. :
 
 ```json
-"todo-tree.regex.regex": "(//|#|<!--|;|/\\*|^|^\\s*(-|\\d+.))\\s*($TAGS)"
-"todo-tree.general.tags": [
+"better-todo-tree.regex.regex": "(//|#|<!--|;|/\\*|^|^\\s*(-|\\d+.))\\s*($TAGS)"
+"better-todo-tree.general.tags": [
         "BUG",
         "HACK",
         "FIXME",
@@ -551,7 +551,7 @@ This will then match all of the following:
 This also allows custom highlighting to be applied, e.g.
 
 ```json
-"todo-tree.highlights.customHighlight": {
+"better-todo-tree.highlights.customHighlight": {
     "[ ]": {
         "background": "#ff000080"
     },
@@ -569,7 +569,7 @@ Lastly, it will allow grouping by tag (and sub tags) to work and also work bette
 
 ## Known Issues
 
-Grouping by tag will only work when your configuration defines the tags using the `todo-tree.general.tags` setting. Older versions of the extension had the tags directly defined in the `todo-tree.regex.regex` whereas now, the regex replaces **$TAGS** with the contents of `todo-tree.general.tags`.
+Grouping by tag will only work when your configuration defines the tags using the `better-todo-tree.general.tags` setting. Older versions of the extension had the tags directly defined in the `better-todo-tree.regex.regex` whereas now, the regex replaces **$TAGS** with the contents of `better-todo-tree.general.tags`.
 
 Grouping by tag doesn't work for markdown task list items as there is no tag to group with. The tree will show the files alongside the tag groups.
 
@@ -577,9 +577,9 @@ Tracking the file in the tree view when grouping by tag will reveal the first ta
 
 When there is no current workspace, default icons will be shown in the tree.
 
-## Donate
+## Compatibility
 
-If you find this extension useful, please feel free to donate [here](https://paypal.me/Gruntfuggly). Thanks!
+Better Todo Tree keeps reading legacy `todo-tree.*` settings and imports them into the new `better-todo-tree.*` namespace, so existing user configuration keeps working after the rebrand.
 
 ### Credits
 
@@ -600,3 +600,10 @@ Lots of the icons have now been updated by [johnletey](https://github.com/johnle
 #### Translations
 
 Simplified Chinese translation by [loniceras](https://github.com/loniceras).
+
+## License
+
+This fork is distributed under **GPL-3.0-only**. The original Todo Tree code
+that this fork builds on was originally distributed under the Expat/MIT
+license, and that upstream notice is preserved in
+[`LICENSE.upstream`](./LICENSE.upstream).

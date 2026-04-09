@@ -1,6 +1,6 @@
 {
-    "name": "todo-tree",
-    "displayName": "Todo Tree",
+    "name": "better-todo-tree",
+    "displayName": "Better Todo Tree",
     "description": "Show TODO, FIXME, etc. comment tags in a tree view",
     "keywords": [
         "todo",
@@ -8,17 +8,16 @@
         "tasklist",
         "multi-root ready"
     ],
-    "version": "0.0.224",
-    "license": "MIT",
-    "icon": "resources/todo-tree.png",
-    "publisher": "Gruntfuggly",
+    "version": "0.0.225",
+    "license": "GPL-3.0-only",
+    "icon": "resources/better-todo-tree.png",
+    "publisher": "FanaticPythoner",
     "engines": {
         "vscode": "^1.72.0"
     },
-    "repository": "https://github.com/Gruntfuggly/todo-tree",
+    "repository": "https://github.com/FanaticPythoner/better-todo-tree",
     "bugs": {
-        "url": "https://github.com/Gruntfuggly/todo-tree/issues",
-        "email": "gruntfuggly@googlemail.com"
+        "url": "https://github.com/FanaticPythoner/better-todo-tree/issues"
     },
     "scripts": {
         "test": "qunit",
@@ -38,8 +37,8 @@
             "activitybar": [
                 {
                     "id": "todo-tree-container",
-                    "title": "%todo-tree.activitybar.title%",
-                    "icon": "resources/todo-tree-container.svg"
+                    "title": "%better-todo-tree.activitybar.title%",
+                    "icon": "resources/better-todo-tree-container.svg"
                 }
             ]
         },
@@ -47,474 +46,515 @@
             "todo-tree-container": [
                 {
                     "id": "todo-tree-view",
-                    "name": "%todo-tree.container.name%",
-                    "when": "!todo-tree-is-empty"
+                    "name": "%better-todo-tree.container.name%",
+                    "when": "!better-todo-tree-is-empty"
                 }
             ]
         },
         "menus": {
             "view/title": [
                 {
-                    "command": "todo-tree.exportTree",
-                    "when": "view =~ /todo-tree/ && todo-tree-show-export-button == true",
+                    "command": "better-todo-tree.exportTree",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-show-export-button == true",
                     "group": "navigation@1"
                 },
                 {
-                    "command": "todo-tree.reveal",
-                    "when": "view =~ /todo-tree/ && todo-tree-tags-only == false && todo-tree-show-reveal-button == true",
+                    "command": "better-todo-tree.reveal",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-tags-only == false && better-todo-tree-show-reveal-button == true",
                     "group": "navigation@2"
                 },
                 {
-                    "command": "todo-tree.scanOpenFilesOnly",
-                    "when": "view =~ /todo-tree/ && todo-tree-scan-mode == 'workspace only' && todo-tree-show-scan-mode-button == true",
+                    "command": "better-todo-tree.scanOpenFilesOnly",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode == 'workspace only' && better-todo-tree-show-scan-mode-button == true",
                     "group": "navigation@3"
                 },
                 {
-                    "command": "todo-tree.scanCurrentFileOnly",
-                    "when": "view =~ /todo-tree/ && todo-tree-scan-mode == 'open files' && todo-tree-show-scan-mode-button == true",
+                    "command": "better-todo-tree.scanCurrentFileOnly",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode == 'open files' && better-todo-tree-show-scan-mode-button == true",
                     "group": "navigation@3"
                 },
                 {
-                    "command": "todo-tree.scanWorkspaceAndOpenFiles",
-                    "when": "view =~ /todo-tree/ && todo-tree-scan-mode == 'current file' && todo-tree-show-scan-mode-button == true",
+                    "command": "better-todo-tree.scanWorkspaceAndOpenFiles",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode == 'current file' && better-todo-tree-show-scan-mode-button == true",
                     "group": "navigation@3"
                 },
                 {
-                    "command": "todo-tree.scanWorkspaceOnly",
-                    "when": "view =~ /todo-tree/ && todo-tree-scan-mode == 'workspace' && todo-tree-show-scan-mode-button == true",
+                    "command": "better-todo-tree.scanWorkspaceOnly",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode == 'workspace' && better-todo-tree-show-scan-mode-button == true",
                     "group": "navigation@3"
                 },
                 {
-                    "command": "todo-tree.showFlatView",
-                    "when": "view =~ /todo-tree/ && todo-tree-flat == false && todo-tree-tags-only == false && todo-tree-show-view-style-button == true",
+                    "command": "better-todo-tree.showFlatView",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-flat == false && better-todo-tree-tags-only == false && better-todo-tree-show-view-style-button == true",
                     "group": "navigation@4"
                 },
                 {
-                    "command": "todo-tree.showTagsOnlyView",
-                    "when": "view =~ /todo-tree/ && todo-tree-flat == true && todo-tree-tags-only == false && todo-tree-show-view-style-button == true",
+                    "command": "better-todo-tree.showTagsOnlyView",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-flat == true && better-todo-tree-tags-only == false && better-todo-tree-show-view-style-button == true",
                     "group": "navigation@4"
                 },
                 {
-                    "command": "todo-tree.showTreeView",
-                    "when": "view =~ /todo-tree/ && todo-tree-flat == false && todo-tree-tags-only == true && todo-tree-show-view-style-button == true",
+                    "command": "better-todo-tree.showTreeView",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-flat == false && better-todo-tree-tags-only == true && better-todo-tree-show-view-style-button == true",
                     "group": "navigation@4"
                 },
                 {
-                    "command": "todo-tree.groupByTag",
-                    "when": "view =~ /todo-tree/ && todo-tree-grouped-by-tag == false && todo-tree-show-group-by-tag-button == true",
+                    "command": "better-todo-tree.groupByTag",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-tag == false && better-todo-tree-show-group-by-tag-button == true",
                     "group": "navigation@5"
                 },
                 {
-                    "command": "todo-tree.ungroupByTag",
-                    "when": "view =~ /todo-tree/ && todo-tree-grouped-by-tag == true && todo-tree-show-group-by-tag-button == true",
+                    "command": "better-todo-tree.ungroupByTag",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-tag == true && better-todo-tree-show-group-by-tag-button == true",
                     "group": "navigation@5"
                 },
                 {
-                    "command": "todo-tree.groupBySubTag",
-                    "when": "view =~ /todo-tree/ && todo-tree-grouped-by-sub-tag == false && todo-tree-show-group-by-sub-tag-button == true && todo-tree-has-sub-tags == true",
+                    "command": "better-todo-tree.groupBySubTag",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-sub-tag == false && better-todo-tree-show-group-by-sub-tag-button == true && better-todo-tree-has-sub-tags == true",
                     "group": "navigation@6"
                 },
                 {
-                    "command": "todo-tree.ungroupBySubTag",
-                    "when": "view =~ /todo-tree/ && todo-tree-grouped-by-sub-tag == true && todo-tree-show-group-by-sub-tag-button == true && todo-tree-has-sub-tags == true",
+                    "command": "better-todo-tree.ungroupBySubTag",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-sub-tag == true && better-todo-tree-show-group-by-sub-tag-button == true && better-todo-tree-has-sub-tags == true",
                     "group": "navigation@6"
                 },
                 {
-                    "command": "todo-tree.filter",
-                    "when": "view =~ /todo-tree/ && todo-tree-filtered == false && todo-tree-show-filter-button == true",
+                    "command": "better-todo-tree.filter",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-filtered == false && better-todo-tree-show-filter-button == true",
                     "group": "navigation@7"
                 },
                 {
-                    "command": "todo-tree.filterClear",
-                    "when": "view =~ /todo-tree/ && todo-tree-filtered == true && todo-tree-show-filter-button == true",
+                    "command": "better-todo-tree.filterClear",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-filtered == true && better-todo-tree-show-filter-button == true",
                     "group": "navigation@7"
                 },
                 {
-                    "command": "todo-tree.refresh",
-                    "when": "view =~ /todo-tree/ && todo-tree-show-refresh-button == true",
+                    "command": "better-todo-tree.refresh",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-show-refresh-button == true",
                     "group": "navigation@8"
                 },
                 {
-                    "command": "todo-tree.expand",
-                    "when": "view =~ /todo-tree/ && todo-tree-expanded == false && todo-tree-show-expand-button == true",
+                    "command": "better-todo-tree.expand",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-expanded == false && better-todo-tree-show-expand-button == true",
                     "group": "navigation@9"
                 },
                 {
-                    "command": "todo-tree.collapse",
-                    "when": "view =~ /todo-tree/ && todo-tree-expanded == true && todo-tree-show-expand-button == true",
+                    "command": "better-todo-tree.collapse",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-expanded == true && better-todo-tree-show-expand-button == true",
                     "group": "navigation@9"
                 }
             ],
             "view/item/context": [
                 {
-                    "command": "todo-tree.filter",
-                    "when": "view =~ /todo-tree/ && todo-tree-filtered == false",
+                    "command": "better-todo-tree.filter",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-filtered == false",
                     "group": "1-filters@1"
                 },
                 {
-                    "command": "todo-tree.filterClear",
-                    "when": "view =~ /todo-tree/ && todo-tree-global-filter-active",
+                    "command": "better-todo-tree.filterClear",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-global-filter-active",
                     "group": "1-filters@2"
                 },
                 {
-                    "command": "todo-tree.excludeThisFolder",
+                    "command": "better-todo-tree.excludeThisFolder",
                     "when": "view =~ /todo-tree/ && viewItem == folder",
                     "group": "1-filters@3"
                 },
                 {
-                    "command": "todo-tree.excludeThisFile",
+                    "command": "better-todo-tree.excludeThisFile",
                     "when": "view =~ /todo-tree/ && viewItem == file",
                     "group": "1-filters@4"
                 },
                 {
-                    "command": "todo-tree.showOnlyThisFolder",
+                    "command": "better-todo-tree.showOnlyThisFolder",
                     "when": "view =~ /todo-tree/ && viewItem == folder",
                     "group": "1-filters@5"
                 },
                 {
-                    "command": "todo-tree.showOnlyThisFolderAndSubfolders",
+                    "command": "better-todo-tree.showOnlyThisFolderAndSubfolders",
                     "when": "view =~ /todo-tree/ && viewItem == folder",
                     "group": "1-filters@6"
                 },
                 {
-                    "command": "todo-tree.removeFilter",
-                    "when": "view =~ /todo-tree/ && todo-tree-folder-filter-active",
+                    "command": "better-todo-tree.removeFilter",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-folder-filter-active",
                     "group": "1-filters@7"
                 },
                 {
-                    "command": "todo-tree.resetAllFilters",
-                    "when": "view =~ /todo-tree/ && todo-tree-folder-filter-active",
+                    "command": "better-todo-tree.resetAllFilters",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-folder-filter-active",
                     "group": "1-filters@8"
                 },
                 {
-                    "command": "todo-tree.toggleItemCounts",
+                    "command": "better-todo-tree.toggleItemCounts",
                     "when": "view =~ /todo-tree/",
                     "group": "2-toggles"
                 },
                 {
-                    "command": "todo-tree.toggleBadges",
+                    "command": "better-todo-tree.toggleBadges",
                     "when": "view =~ /todo-tree/",
                     "group": "2-toggles"
                 },
                 {
-                    "command": "todo-tree.toggleCompactFolders",
-                    "when": "view =~/todo-tree/ && todo-tree-can-toggle-compact-folders == true",
+                    "command": "better-todo-tree.toggleCompactFolders",
+                    "when": "view =~/todo-tree/ && better-todo-tree-can-toggle-compact-folders == true",
                     "group": "2-toggles"
                 },
                 {
-                    "command": "todo-tree.scanOpenFilesOnly",
-                    "when": "view =~ /todo-tree/ && todo-tree-scan-mode != 'open files'",
+                    "command": "better-todo-tree.scanOpenFilesOnly",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode != 'open files'",
                     "group": "3-view"
                 },
                 {
-                    "command": "todo-tree.scanCurrentFileOnly",
-                    "when": "view =~ /todo-tree/ && todo-tree-scan-mode != 'current file'",
+                    "command": "better-todo-tree.scanCurrentFileOnly",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode != 'current file'",
                     "group": "3-view"
                 },
                 {
-                    "command": "todo-tree.scanWorkspaceAndOpenFiles",
-                    "when": "view =~ /todo-tree/ && todo-tree-scan-mode != 'workspace'",
+                    "command": "better-todo-tree.scanWorkspaceAndOpenFiles",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode != 'workspace'",
                     "group": "3-view"
                 },
                 {
-                    "command": "todo-tree.scanWorkspaceOnly",
-                    "when": "view =~ /todo-tree/ && todo-tree-scan-mode != 'workspace only'",
+                    "command": "better-todo-tree.scanWorkspaceOnly",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode != 'workspace only'",
                     "group": "3-view"
                 },
                 {
-                    "command": "todo-tree.expand",
-                    "when": "view =~ /todo-tree/ && todo-tree-expanded == false",
+                    "command": "better-todo-tree.expand",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-expanded == false",
                     "group": "4-tree@1"
                 },
                 {
-                    "command": "todo-tree.collapse",
-                    "when": "view =~ /todo-tree/ && todo-tree-expanded == true",
+                    "command": "better-todo-tree.collapse",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-expanded == true",
                     "group": "4-tree@1"
                 },
                 {
-                    "command": "todo-tree.showFlatView",
-                    "when": "view =~ /todo-tree/ && todo-tree-flat == false",
+                    "command": "better-todo-tree.showFlatView",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-flat == false",
                     "group": "4-tree@2"
                 },
                 {
-                    "command": "todo-tree.showTagsOnlyView",
-                    "when": "view =~ /todo-tree/ && todo-tree-tags-only == false",
+                    "command": "better-todo-tree.showTagsOnlyView",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-tags-only == false",
                     "group": "4-tree@3"
                 },
                 {
-                    "command": "todo-tree.showTreeView",
-                    "when": "view =~ /todo-tree/ && (todo-tree-flat == true || todo-tree-tags-only == true)",
+                    "command": "better-todo-tree.showTreeView",
+                    "when": "view =~ /todo-tree/ && (better-todo-tree-flat == true || better-todo-tree-tags-only == true)",
                     "group": "4-tree@4"
                 },
                 {
-                    "command": "todo-tree.groupByTag",
-                    "when": "view =~ /todo-tree/ && todo-tree-grouped-by-tag == false",
+                    "command": "better-todo-tree.groupByTag",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-tag == false",
                     "group": "4-tree@5"
                 },
                 {
-                    "command": "todo-tree.ungroupByTag",
-                    "when": "view =~ /todo-tree/ && todo-tree-grouped-by-tag == true",
+                    "command": "better-todo-tree.ungroupByTag",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-tag == true",
                     "group": "4-tree@5"
                 },
                 {
-                    "command": "todo-tree.groupBySubTag",
-                    "when": "view =~ /todo-tree/ && todo-tree-grouped-by-sub-tag == false && todo-tree-has-sub-tags == true",
+                    "command": "better-todo-tree.groupBySubTag",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-sub-tag == false && better-todo-tree-has-sub-tags == true",
                     "group": "4-tree@6"
                 },
                 {
-                    "command": "todo-tree.ungroupBySubTag",
-                    "when": "view =~ /todo-tree/ && todo-tree-grouped-by-sub-tag == true && todo-tree-has-sub-tags == true",
+                    "command": "better-todo-tree.ungroupBySubTag",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-sub-tag == true && better-todo-tree-has-sub-tags == true",
                     "group": "4-tree@6"
                 },
                 {
-                    "command": "todo-tree.exportTree",
+                    "command": "better-todo-tree.exportTree",
                     "when": "view =~/todo-tree/",
                     "group": "5-misc1"
                 },
                 {
-                    "command": "todo-tree.reveal",
+                    "command": "better-todo-tree.reveal",
                     "when": "view =~/todo-tree/",
                     "group": "6-misc2"
                 }
             ],
             "commandPalette": [
                 {
-                    "command": "todo-tree.showOnlyThisFolder",
+                    "command": "better-todo-tree.showOnlyThisFolder",
                     "when": "false"
                 },
                 {
-                    "command": "todo-tree.showOnlyThisFolderAndSubfolders",
+                    "command": "better-todo-tree.showOnlyThisFolderAndSubfolders",
                     "when": "false"
                 },
                 {
-                    "command": "todo-tree.excludeThisFolder",
+                    "command": "better-todo-tree.excludeThisFolder",
                     "when": "false"
                 },
                 {
-                    "command": "todo-tree.excludeThisFile",
+                    "command": "better-todo-tree.excludeThisFile",
                     "when": "false"
                 }
             ]
         },
         "commands": [
             {
-                "command": "todo-tree.showFlatView",
-                "title": "%todo-tree.command.showFlatView.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.showFlatView",
+                "title": "%better-todo-tree.command.showFlatView.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(list-unordered)"
             },
             {
-                "command": "todo-tree.showTagsOnlyView",
-                "title": "%todo-tree.command.showTagsOnlyView.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.showTagsOnlyView",
+                "title": "%better-todo-tree.command.showTagsOnlyView.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(list-flat)"
             },
             {
-                "command": "todo-tree.showTreeView",
-                "title": "%todo-tree.command.showTreeView.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.showTreeView",
+                "title": "%better-todo-tree.command.showTreeView.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(list-tree)"
             },
             {
-                "command": "todo-tree.refresh",
-                "title": "%todo-tree.command.refresh.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.refresh",
+                "title": "%better-todo-tree.command.refresh.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(refresh)"
             },
             {
-                "command": "todo-tree.expand",
-                "title": "%todo-tree.command.expand.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.expand",
+                "title": "%better-todo-tree.command.expand.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(expand-all)",
-                "enablement": "todo-tree-collapsible"
+                "enablement": "better-todo-tree-collapsible"
             },
             {
-                "command": "todo-tree.collapse",
-                "title": "%todo-tree.command.collapse.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.collapse",
+                "title": "%better-todo-tree.command.collapse.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(collapse-all)",
-                "enablement": "todo-tree-collapsible"
+                "enablement": "better-todo-tree-collapsible"
             },
             {
-                "command": "todo-tree.filter",
-                "title": "%todo-tree.command.filter.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.filter",
+                "title": "%better-todo-tree.command.filter.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(filter)"
             },
             {
-                "command": "todo-tree.filterClear",
-                "title": "%todo-tree.command.filterClear.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.filterClear",
+                "title": "%better-todo-tree.command.filterClear.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(clear-all)"
             },
             {
-                "command": "todo-tree.groupByTag",
-                "title": "%todo-tree.command.groupByTag.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.groupByTag",
+                "title": "%better-todo-tree.command.groupByTag.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(tag)"
             },
             {
-                "command": "todo-tree.ungroupByTag",
-                "title": "%todo-tree.command.ungroupByTag.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.ungroupByTag",
+                "title": "%better-todo-tree.command.ungroupByTag.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(unfold)"
             },
             {
-                "command": "todo-tree.groupBySubTag",
-                "title": "%todo-tree.command.groupBySubTag.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.groupBySubTag",
+                "title": "%better-todo-tree.command.groupBySubTag.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(chrome-restore)"
             },
             {
-                "command": "todo-tree.ungroupBySubTag",
-                "title": "%todo-tree.command.ungroupBySubTag.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.ungroupBySubTag",
+                "title": "%better-todo-tree.command.ungroupBySubTag.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(chrome-maximize)"
             },
             {
-                "command": "todo-tree.scanOpenFilesOnly",
-                "title": "%todo-tree.command.scanOpenFilesOnly.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.scanOpenFilesOnly",
+                "title": "%better-todo-tree.command.scanOpenFilesOnly.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(files)"
             },
             {
-                "command": "todo-tree.scanCurrentFileOnly",
-                "title": "%todo-tree.command.scanCurrentFileOnly.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.scanCurrentFileOnly",
+                "title": "%better-todo-tree.command.scanCurrentFileOnly.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(symbol-file)"
             },
             {
-                "command": "todo-tree.scanWorkspaceAndOpenFiles",
-                "title": "%todo-tree.command.scanWorkspaceAndOpenFiles.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.scanWorkspaceAndOpenFiles",
+                "title": "%better-todo-tree.command.scanWorkspaceAndOpenFiles.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(folder-active)"
             },
             {
-                "command": "todo-tree.scanWorkspaceOnly",
-                "title": "%todo-tree.command.scanWorkspaceOnly.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.scanWorkspaceOnly",
+                "title": "%better-todo-tree.command.scanWorkspaceOnly.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(folder)"
             },
             {
-                "command": "todo-tree.addTag",
-                "title": "%todo-tree.command.addTag.title%",
-                "category": "%todo-tree.command.category%"
+                "command": "better-todo-tree.addTag",
+                "title": "%better-todo-tree.command.addTag.title%",
+                "category": "%better-todo-tree.command.category%"
             },
             {
-                "command": "todo-tree.removeTag",
-                "title": "%todo-tree.command.removeTag.title%",
-                "category": "%todo-tree.command.category%"
+                "command": "better-todo-tree.removeTag",
+                "title": "%better-todo-tree.command.removeTag.title%",
+                "category": "%better-todo-tree.command.category%"
             },
             {
-                "command": "todo-tree.exportTree",
-                "title": "%todo-tree.command.exportTree.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.exportTree",
+                "title": "%better-todo-tree.command.exportTree.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(save)"
             },
             {
-                "command": "todo-tree.showOnlyThisFolder",
-                "title": "%todo-tree.command.showOnlyThisFolder.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.showOnlyThisFolder",
+                "title": "%better-todo-tree.command.showOnlyThisFolder.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(filter)"
             },
             {
-                "command": "todo-tree.showOnlyThisFolderAndSubfolders",
-                "title": "%todo-tree.command.showOnlyThisFolderAndSubfolders.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.showOnlyThisFolderAndSubfolders",
+                "title": "%better-todo-tree.command.showOnlyThisFolderAndSubfolders.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(filter)"
             },
             {
-                "command": "todo-tree.switchScope",
-                "title": "%todo-tree.command.switchScope.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.switchScope",
+                "title": "%better-todo-tree.command.switchScope.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(filter)"
             },
             {
-                "command": "todo-tree.excludeThisFolder",
-                "title": "%todo-tree.command.excludeThisFolder.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.excludeThisFolder",
+                "title": "%better-todo-tree.command.excludeThisFolder.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(filter)"
             },
             {
-                "command": "todo-tree.excludeThisFile",
-                "title": "%todo-tree.command.excludeThisFile.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.excludeThisFile",
+                "title": "%better-todo-tree.command.excludeThisFile.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(filter)"
             },
             {
-                "command": "todo-tree.removeFilter",
-                "title": "%todo-tree.command.removeFilter.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.removeFilter",
+                "title": "%better-todo-tree.command.removeFilter.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(filter)"
             },
             {
-                "command": "todo-tree.resetAllFilters",
-                "title": "%todo-tree.command.resetAllFilters.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.resetAllFilters",
+                "title": "%better-todo-tree.command.resetAllFilters.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(clear-all)"
             },
             {
-                "command": "todo-tree.reveal",
-                "title": "%todo-tree.command.reveal.title%",
-                "category": "%todo-tree.command.category%",
+                "command": "better-todo-tree.reveal",
+                "title": "%better-todo-tree.command.reveal.title%",
+                "category": "%better-todo-tree.command.category%",
                 "icon": "$(location)"
             },
             {
-                "command": "todo-tree.resetCache",
-                "title": "%todo-tree.command.resetCache.title%",
-                "category": "%todo-tree.command.category%"
+                "command": "better-todo-tree.resetCache",
+                "title": "%better-todo-tree.command.resetCache.title%",
+                "category": "%better-todo-tree.command.category%"
             },
             {
-                "command": "todo-tree.toggleItemCounts",
-                "title": "%todo-tree.command.toggleItemCounts.title%",
-                "category": "%todo-tree.command.category%"
+                "command": "better-todo-tree.toggleItemCounts",
+                "title": "%better-todo-tree.command.toggleItemCounts.title%",
+                "category": "%better-todo-tree.command.category%"
             },
             {
-                "command": "todo-tree.toggleBadges",
-                "title": "%todo-tree.command.toggleBadges.title%",
-                "category": "%todo-tree.command.category%"
+                "command": "better-todo-tree.toggleBadges",
+                "title": "%better-todo-tree.command.toggleBadges.title%",
+                "category": "%better-todo-tree.command.category%"
             },
             {
-                "command": "todo-tree.toggleCompactFolders",
-                "title": "%todo-tree.command.toggleCompactFolders.title%",
-                "category": "%todo-tree.command.category%"
+                "command": "better-todo-tree.toggleCompactFolders",
+                "title": "%better-todo-tree.command.toggleCompactFolders.title%",
+                "category": "%better-todo-tree.command.category%"
             },
             {
-                "command": "todo-tree.goToNext",
-                "title": "%todo-tree.command.goToNext.title%",
-                "category": "%todo-tree.command.category%"
+                "command": "better-todo-tree.goToNext",
+                "title": "%better-todo-tree.command.goToNext.title%",
+                "category": "%better-todo-tree.command.category%"
             },
             {
-                "command": "todo-tree.goToPrevious",
-                "title": "%todo-tree.command.goToPrevious.title%",
-                "category": "%todo-tree.command.category%"
+                "command": "better-todo-tree.goToPrevious",
+                "title": "%better-todo-tree.command.goToPrevious.title%",
+                "category": "%better-todo-tree.command.category%"
             },
             {
-                "command": "todo-tree.revealInFile",
-                "title": "%todo-tree.command.revealInFile.title%",
-                "category": "%todo-tree.command.category%"
+                "command": "better-todo-tree.revealInFile",
+                "title": "%better-todo-tree.command.revealInFile.title%",
+                "category": "%better-todo-tree.command.category%"
+            },
+            {
+                "command": "better-todo-tree.importLegacySettings",
+                "title": "%better-todo-tree.command.importLegacySettings.title%",
+                "category": "%better-todo-tree.command.category%"
             }
         ],
         "configuration": [
             {
-                "title": "%todo-tree.configuration.general%",
+                "title": "%better-todo-tree.configuration.general%",
                 "order": 1,
                 "type": "object",
                 "properties": {
+                    "better-todo-tree.general.debug": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.general.debug.markdownDescription%",
+                        "type": "boolean"
+                    },
                     "todo-tree.general.debug": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.general.debug.markdownDescription%",
-                        "type": "boolean"
+                        "markdownDescription": "%better-todo-tree.configuration.general.debug.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.general.automaticGitRefreshInterval": {
+                        "default": 0,
+                        "markdownDescription": "%better-todo-tree.configuration.general.automaticGitRefreshInterval.markdownDescription%",
+                        "type": "integer"
                     },
                     "todo-tree.general.automaticGitRefreshInterval": {
                         "default": 0,
-                        "markdownDescription": "%todo-tree.configuration.general.automaticGitRefreshInterval.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.general.automaticGitRefreshInterval.markdownDescription%",
+                        "type": "integer",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.general.periodicRefreshInterval": {
+                        "default": 0,
+                        "markdownDescription": "%better-todo-tree.configuration.general.periodicRefreshInterval.markdownDescription%",
                         "type": "integer"
                     },
                     "todo-tree.general.periodicRefreshInterval": {
                         "default": 0,
-                        "markdownDescription": "%todo-tree.configuration.general.periodicRefreshInterval.markdownDescription%",
-                        "type": "integer"
+                        "markdownDescription": "%better-todo-tree.configuration.general.periodicRefreshInterval.markdownDescription%",
+                        "type": "integer",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.general.revealBehaviour": {
+                        "default": "start of todo",
+                        "enum": [
+                            "start of line",
+                            "start of todo",
+                            "end of todo"
+                        ],
+                        "markdownDescription": "%better-todo-tree.configuration.general.revealBehaviour.markdownDescription%",
+                        "markdownEnumDescriptions": [
+                            "%better-todo-tree.configuration.general.revealBehaviour.markdownEnumDescriptions.1%",
+                            "%better-todo-tree.configuration.general.revealBehaviour.markdownEnumDescriptions.2%",
+                            "%better-todo-tree.configuration.general.revealBehaviour.markdownEnumDescriptions.3%"
+                        ],
+                        "type": "string"
                     },
                     "todo-tree.general.revealBehaviour": {
                         "default": "start of todo",
@@ -523,23 +563,52 @@
                             "start of todo",
                             "end of todo"
                         ],
-                        "markdownDescription": "%todo-tree.configuration.general.revealBehaviour.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.general.revealBehaviour.markdownDescription%",
                         "markdownEnumDescriptions": [
-                            "%todo-tree.configuration.general.revealBehaviour.markdownEnumDescriptions.1%",
-                            "%todo-tree.configuration.general.revealBehaviour.markdownEnumDescriptions.2%",
-                            "%todo-tree.configuration.general.revealBehaviour.markdownEnumDescriptions.3%"
+                            "%better-todo-tree.configuration.general.revealBehaviour.markdownEnumDescriptions.1%",
+                            "%better-todo-tree.configuration.general.revealBehaviour.markdownEnumDescriptions.2%",
+                            "%better-todo-tree.configuration.general.revealBehaviour.markdownEnumDescriptions.3%"
                         ],
+                        "type": "string",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.general.exportPath": {
+                        "default": "~/better-todo-tree-%Y%m%d-%H%M.txt",
+                        "markdownDescription": "%better-todo-tree.configuration.general.exportPath.markdownDescription%",
                         "type": "string"
                     },
                     "todo-tree.general.exportPath": {
-                        "default": "~/todo-tree-%Y%m%d-%H%M.txt",
-                        "markdownDescription": "%todo-tree.configuration.general.exportPath.markdownDescription%",
+                        "default": "~/better-todo-tree-%Y%m%d-%H%M.txt",
+                        "markdownDescription": "%better-todo-tree.configuration.general.exportPath.markdownDescription%",
+                        "type": "string",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.general.rootFolder": {
+                        "default": "",
+                        "markdownDescription": "%better-todo-tree.configuration.general.rootFolder.markdownDescription%",
                         "type": "string"
                     },
                     "todo-tree.general.rootFolder": {
                         "default": "",
-                        "markdownDescription": "%todo-tree.configuration.general.rootFolder.markdownDescription%",
-                        "type": "string"
+                        "markdownDescription": "%better-todo-tree.configuration.general.rootFolder.markdownDescription%",
+                        "type": "string",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.general.schemes": {
+                        "default": [
+                            "file",
+                            "ssh",
+                            "untitled",
+                            "vscode-notebook-cell"
+                        ],
+                        "items": {
+                            "type": "string"
+                        },
+                        "markdownDescription": "%better-todo-tree.configuration.general.schemes.markdownDescription%",
+                        "type": "array"
                     },
                     "todo-tree.general.schemes": {
                         "default": [
@@ -551,8 +620,29 @@
                         "items": {
                             "type": "string"
                         },
-                        "markdownDescription": "%todo-tree.configuration.general.schemes.markdownDescription%",
-                        "type": "array"
+                        "markdownDescription": "%better-todo-tree.configuration.general.schemes.markdownDescription%",
+                        "type": "array",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.general.statusBar": {
+                        "default": "none",
+                        "enum": [
+                            "none",
+                            "total",
+                            "tags",
+                            "top three",
+                            "current file"
+                        ],
+                        "markdownDescription": "%better-todo-tree.configuration.general.statusBar.markdownDescription%",
+                        "markdownEnumDescriptions": [
+                            "%better-todo-tree.configuration.general.statusBar.markdownEnumDescriptions.1%",
+                            "%better-todo-tree.configuration.general.statusBar.markdownEnumDescriptions.2%",
+                            "%better-todo-tree.configuration.general.statusBar.markdownEnumDescriptions.3%",
+                            "%better-todo-tree.configuration.general.statusBar.markdownEnumDescriptions.4%",
+                            "%better-todo-tree.configuration.general.statusBar.markdownEnumDescriptions.5%"
+                        ],
+                        "type": "string"
                     },
                     "todo-tree.general.statusBar": {
                         "default": "none",
@@ -563,20 +653,44 @@
                             "top three",
                             "current file"
                         ],
-                        "markdownDescription": "%todo-tree.configuration.general.statusBar.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.general.statusBar.markdownDescription%",
                         "markdownEnumDescriptions": [
-                            "%todo-tree.configuration.general.statusBar.markdownEnumDescriptions.1%",
-                            "%todo-tree.configuration.general.statusBar.markdownEnumDescriptions.2%",
-                            "%todo-tree.configuration.general.statusBar.markdownEnumDescriptions.3%",
-                            "%todo-tree.configuration.general.statusBar.markdownEnumDescriptions.4%",
-                            "%todo-tree.configuration.general.statusBar.markdownEnumDescriptions.5%"
+                            "%better-todo-tree.configuration.general.statusBar.markdownEnumDescriptions.1%",
+                            "%better-todo-tree.configuration.general.statusBar.markdownEnumDescriptions.2%",
+                            "%better-todo-tree.configuration.general.statusBar.markdownEnumDescriptions.3%",
+                            "%better-todo-tree.configuration.general.statusBar.markdownEnumDescriptions.4%",
+                            "%better-todo-tree.configuration.general.statusBar.markdownEnumDescriptions.5%"
                         ],
-                        "type": "string"
+                        "type": "string",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.general.showIconsInsteadOfTagsInStatusBar": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.general.showIconsInsteadOfTagsInStatusBar.markdownDescription%",
+                        "type": "boolean"
                     },
                     "todo-tree.general.showIconsInsteadOfTagsInStatusBar": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.general.showIconsInsteadOfTagsInStatusBar.markdownDescription%",
-                        "type": "boolean"
+                        "markdownDescription": "%better-todo-tree.configuration.general.showIconsInsteadOfTagsInStatusBar.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.general.statusBarClickBehaviour": {
+                        "default": "reveal",
+                        "enum": [
+                            "cycle",
+                            "reveal",
+                            "toggle highlights"
+                        ],
+                        "markdownDescription": "%better-todo-tree.configuration.general.statusBarClickBehaviour.markdownDescription%",
+                        "markdownEnumDescriptions": [
+                            "%better-todo-tree.configuration.general.statusBarClickBehaviour.markdownEnumDescriptions.1%",
+                            "%better-todo-tree.configuration.general.statusBarClickBehaviour.markdownEnumDescriptions.2%",
+                            "%better-todo-tree.configuration.general.statusBarClickBehaviour.markdownEnumDescriptions.3%"
+                        ],
+                        "type": "string"
                     },
                     "todo-tree.general.statusBarClickBehaviour": {
                         "default": "reveal",
@@ -585,17 +699,19 @@
                             "reveal",
                             "toggle highlights"
                         ],
-                        "markdownDescription": "%todo-tree.configuration.general.statusBarClickBehaviour.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.general.statusBarClickBehaviour.markdownDescription%",
                         "markdownEnumDescriptions": [
-                            "%todo-tree.configuration.general.statusBarClickBehaviour.markdownEnumDescriptions.1%",
-                            "%todo-tree.configuration.general.statusBarClickBehaviour.markdownEnumDescriptions.2%",
-                            "%todo-tree.configuration.general.statusBarClickBehaviour.markdownEnumDescriptions.3%"
+                            "%better-todo-tree.configuration.general.statusBarClickBehaviour.markdownEnumDescriptions.1%",
+                            "%better-todo-tree.configuration.general.statusBarClickBehaviour.markdownEnumDescriptions.2%",
+                            "%better-todo-tree.configuration.general.statusBarClickBehaviour.markdownEnumDescriptions.3%"
                         ],
-                        "type": "string"
+                        "type": "string",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
                     },
-                    "todo-tree.general.tagGroups": {
+                    "better-todo-tree.general.tagGroups": {
                         "default": {},
-                        "markdownDescription": "%todo-tree.configuration.general.tagGroups.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.general.tagGroups.markdownDescription%",
                         "type": "object",
                         "additionalProperties": {
                             "type": "array",
@@ -603,6 +719,35 @@
                                 "type": "string"
                             }
                         }
+                    },
+                    "todo-tree.general.tagGroups": {
+                        "default": {},
+                        "markdownDescription": "%better-todo-tree.configuration.general.tagGroups.markdownDescription%",
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.general.tags": {
+                        "default": [
+                            "BUG",
+                            "HACK",
+                            "FIXME",
+                            "TODO",
+                            "XXX",
+                            "[ ]",
+                            "[x]"
+                        ],
+                        "items": {
+                            "type": "string"
+                        },
+                        "markdownDescription": "%better-todo-tree.configuration.general.tags.markdownDescription%",
+                        "type": "array"
                     },
                     "todo-tree.general.tags": {
                         "default": [
@@ -617,22 +762,31 @@
                         "items": {
                             "type": "string"
                         },
-                        "markdownDescription": "%todo-tree.configuration.general.tags.markdownDescription%",
-                        "type": "array"
+                        "markdownDescription": "%better-todo-tree.configuration.general.tags.markdownDescription%",
+                        "type": "array",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.general.showActivityBarBadge": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.general.showActivityBarBadge.markdownDescription%",
+                        "type": "boolean"
                     },
                     "todo-tree.general.showActivityBarBadge": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.general.showActivityBarBadge.markdownDescription%",
-                        "type": "boolean"
+                        "markdownDescription": "%better-todo-tree.configuration.general.showActivityBarBadge.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
                     }
                 }
             },
             {
-                "title": "%todo-tree.configuration.highlights%",
+                "title": "%better-todo-tree.configuration.highlights%",
                 "order": 2,
                 "type": "object",
                 "properties": {
-                    "todo-tree.highlights.customHighlight": {
+                    "better-todo-tree.highlights.customHighlight": {
                         "default": {
                             "BUG": {
                                 "icon": "bug"
@@ -653,7 +807,7 @@
                                 "icon": "issue-closed"
                             }
                         },
-                        "markdownDescription": "%todo-tree.configuration.highlights.customHighlight.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.highlights.customHighlight.markdownDescription%",
                         "type": "object",
                         "additionalProperties": {
                             "type": "object",
@@ -733,9 +887,112 @@
                             }
                         }
                     },
-                    "todo-tree.highlights.defaultHighlight": {
+                    "todo-tree.highlights.customHighlight": {
+                        "default": {
+                            "BUG": {
+                                "icon": "bug"
+                            },
+                            "HACK": {
+                                "icon": "tools"
+                            },
+                            "FIXME": {
+                                "icon": "flame"
+                            },
+                            "XXX": {
+                                "icon": "x"
+                            },
+                            "[ ]": {
+                                "icon": "issue-draft"
+                            },
+                            "[x]": {
+                                "icon": "issue-closed"
+                            }
+                        },
+                        "markdownDescription": "%better-todo-tree.configuration.highlights.customHighlight.markdownDescription%",
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                                "foreground": {
+                                    "type": "string",
+                                    "format": "color-hex"
+                                },
+                                "background": {
+                                    "type": "string",
+                                    "format": "color-hex"
+                                },
+                                "opacity": {
+                                    "type": "number"
+                                },
+                                "fontWeight": {
+                                    "type": "string"
+                                },
+                                "fontStyle": {
+                                    "type": "string"
+                                },
+                                "textDecoration": {
+                                    "type": "string"
+                                },
+                                "borderRadius": {
+                                    "type": "string"
+                                },
+                                "icon": {
+                                    "type": "string"
+                                },
+                                "iconColour": {
+                                    "type": "string",
+                                    "format": "color-hex"
+                                },
+                                "gutterIcon": {
+                                    "type": "boolean"
+                                },
+                                "rulerColour": {
+                                    "type": "string",
+                                    "format": "color-hex"
+                                },
+                                "rulerOpacity": {
+                                    "type": "number"
+                                },
+                                "rulerLane": {
+                                    "type": "string",
+                                    "enum": [
+                                        "none",
+                                        "left",
+                                        "center",
+                                        "right",
+                                        "full"
+                                    ]
+                                },
+                                "type": {
+                                    "type": "string",
+                                    "enum": [
+                                        "tag",
+                                        "text",
+                                        "tag-and-comment",
+                                        "tag-and-subTag",
+                                        "text-and-comment",
+                                        "line",
+                                        "whole-line",
+                                        "none"
+                                    ]
+                                },
+                                "hideFromTree": {
+                                    "type": "boolean"
+                                },
+                                "hideFromStatusBar": {
+                                    "type": "boolean"
+                                },
+                                "hideFromActivityBar": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.highlights.defaultHighlight": {
                         "default": {},
-                        "markdownDescription": "%todo-tree.configuration.highlights.defaultHighlight.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.highlights.defaultHighlight.markdownDescription%",
                         "type": "object",
                         "properties": {
                             "foreground": {
@@ -812,20 +1069,138 @@
                             }
                         }
                     },
+                    "todo-tree.highlights.defaultHighlight": {
+                        "default": {},
+                        "markdownDescription": "%better-todo-tree.configuration.highlights.defaultHighlight.markdownDescription%",
+                        "type": "object",
+                        "properties": {
+                            "foreground": {
+                                "type": "string",
+                                "format": "color-hex"
+                            },
+                            "background": {
+                                "type": "string",
+                                "format": "color-hex"
+                            },
+                            "opacity": {
+                                "type": "number"
+                            },
+                            "fontWeight": {
+                                "type": "string"
+                            },
+                            "fontStyle": {
+                                "type": "string"
+                            },
+                            "textDecoration": {
+                                "type": "string"
+                            },
+                            "borderRadius": {
+                                "type": "string"
+                            },
+                            "icon": {
+                                "type": "string"
+                            },
+                            "iconColour": {
+                                "type": "string",
+                                "format": "color-hex"
+                            },
+                            "gutterIcon": {
+                                "type": "boolean"
+                            },
+                            "rulerColour": {
+                                "type": "string",
+                                "format": "color-hex"
+                            },
+                            "rulerOpacity": {
+                                "type": "number"
+                            },
+                            "rulerLane": {
+                                "type": "string",
+                                "enum": [
+                                    "none",
+                                    "left",
+                                    "center",
+                                    "right",
+                                    "full"
+                                ]
+                            },
+                            "type": {
+                                "type": "string",
+                                "enum": [
+                                    "tag",
+                                    "text",
+                                    "tag-and-comment",
+                                    "tag-and-subTag",
+                                    "text-and-comment",
+                                    "line",
+                                    "whole-line",
+                                    "none"
+                                ]
+                            },
+                            "hideFromTree": {
+                                "type": "boolean"
+                            },
+                            "hideFromStatusBar": {
+                                "type": "boolean"
+                            },
+                            "hideFromActivityBar": {
+                                "type": "boolean"
+                            }
+                        },
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.highlights.enabled": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.highlights.enabled.markdownDescription%",
+                        "type": "boolean"
+                    },
                     "todo-tree.highlights.enabled": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.highlights.enabled.markdownDescription%",
-                        "type": "boolean"
+                        "markdownDescription": "%better-todo-tree.configuration.highlights.enabled.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.highlights.highlightDelay": {
+                        "default": 500,
+                        "markdownDescription": "%better-todo-tree.configuration.highlights.highlightDelay.markdownDescription%",
+                        "type": "integer"
                     },
                     "todo-tree.highlights.highlightDelay": {
                         "default": 500,
-                        "markdownDescription": "%todo-tree.configuration.highlights.highlightDelay.markdownDescription%",
-                        "type": "integer"
+                        "markdownDescription": "%better-todo-tree.configuration.highlights.highlightDelay.markdownDescription%",
+                        "type": "integer",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.highlights.useColourScheme": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.highlights.useColourScheme.markdownDescription%",
+                        "type": "boolean"
                     },
                     "todo-tree.highlights.useColourScheme": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.highlights.useColourScheme.markdownDescription%",
-                        "type": "boolean"
+                        "markdownDescription": "%better-todo-tree.configuration.highlights.useColourScheme.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.highlights.foregroundColourScheme": {
+                        "default": [
+                            "white",
+                            "black",
+                            "black",
+                            "white",
+                            "white",
+                            "white",
+                            "black"
+                        ],
+                        "items": {
+                            "type": "string"
+                        },
+                        "markdownDescription": "%better-todo-tree.configuration.highlights.foregroundColourScheme.markdownDescription%",
+                        "type": "array"
                     },
                     "todo-tree.highlights.foregroundColourScheme": {
                         "default": [
@@ -840,7 +1215,25 @@
                         "items": {
                             "type": "string"
                         },
-                        "markdownDescription": "%todo-tree.configuration.highlights.foregroundColourScheme.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.highlights.foregroundColourScheme.markdownDescription%",
+                        "type": "array",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.highlights.backgroundColourScheme": {
+                        "default": [
+                            "red",
+                            "orange",
+                            "yellow",
+                            "green",
+                            "blue",
+                            "indigo",
+                            "violet"
+                        ],
+                        "items": {
+                            "type": "string"
+                        },
+                        "markdownDescription": "%better-todo-tree.configuration.highlights.backgroundColourScheme.markdownDescription%",
                         "type": "array"
                     },
                     "todo-tree.highlights.backgroundColourScheme": {
@@ -856,22 +1249,44 @@
                         "items": {
                             "type": "string"
                         },
-                        "markdownDescription": "%todo-tree.configuration.highlights.backgroundColourScheme.markdownDescription%",
-                        "type": "array"
+                        "markdownDescription": "%better-todo-tree.configuration.highlights.backgroundColourScheme.markdownDescription%",
+                        "type": "array",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
                     }
                 }
             },
             {
-                "title": "%todo-tree.configuration.filtering%",
+                "title": "%better-todo-tree.configuration.filtering%",
                 "order": 3,
                 "type": "object",
                 "properties": {
+                    "better-todo-tree.filtering.excludedWorkspaces": {
+                        "default": [],
+                        "items": {
+                            "type": "string"
+                        },
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.excludedWorkspaces.markdownDescription%",
+                        "type": "array"
+                    },
                     "todo-tree.filtering.excludedWorkspaces": {
                         "default": [],
                         "items": {
                             "type": "string"
                         },
-                        "markdownDescription": "%todo-tree.configuration.filtering.excludedWorkspaces.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.excludedWorkspaces.markdownDescription%",
+                        "type": "array",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.filtering.excludeGlobs": {
+                        "default": [
+                            "**/node_modules/*/**"
+                        ],
+                        "items": {
+                            "type": "string"
+                        },
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.excludeGlobs.markdownDescription%",
                         "type": "array"
                     },
                     "todo-tree.filtering.excludeGlobs": {
@@ -881,20 +1296,47 @@
                         "items": {
                             "type": "string"
                         },
-                        "markdownDescription": "%todo-tree.configuration.filtering.excludeGlobs.markdownDescription%",
-                        "type": "array"
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.excludeGlobs.markdownDescription%",
+                        "type": "array",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.filtering.ignoreGitSubmodules": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.ignoreGitSubmodules.markdownDescription%",
+                        "type": "boolean"
                     },
                     "todo-tree.filtering.ignoreGitSubmodules": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.filtering.ignoreGitSubmodules.markdownDescription%",
-                        "type": "boolean"
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.ignoreGitSubmodules.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.filtering.includedWorkspaces": {
+                        "default": [],
+                        "items": {
+                            "type": "string"
+                        },
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.includedWorkspaces.markdownDescription%",
+                        "type": "array"
                     },
                     "todo-tree.filtering.includedWorkspaces": {
                         "default": [],
                         "items": {
                             "type": "string"
                         },
-                        "markdownDescription": "%todo-tree.configuration.filtering.includedWorkspaces.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.includedWorkspaces.markdownDescription%",
+                        "type": "array",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.filtering.includeGlobs": {
+                        "default": [],
+                        "items": {
+                            "type": "string"
+                        },
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.includeGlobs.markdownDescription%",
                         "type": "array"
                     },
                     "todo-tree.filtering.includeGlobs": {
@@ -902,23 +1344,63 @@
                         "items": {
                             "type": "string"
                         },
-                        "markdownDescription": "%todo-tree.configuration.filtering.includeGlobs.markdownDescription%",
-                        "type": "array"
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.includeGlobs.markdownDescription%",
+                        "type": "array",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.filtering.includeHiddenFiles": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.includeHiddenFiles.markdownDescription%",
+                        "type": "boolean"
                     },
                     "todo-tree.filtering.includeHiddenFiles": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.filtering.includeHiddenFiles.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.includeHiddenFiles.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.filtering.passGlobsToRipgrep": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.passGlobsToRipgrep.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.filtering.passGlobsToRipgrep": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.filtering.passGlobsToRipgrep.markdownDescription%",
-                        "type": "boolean"
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.passGlobsToRipgrep.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.filtering.scopes": {
+                        "default": [],
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.scopes.markdownDescription%",
+                        "type": "array"
                     },
                     "todo-tree.filtering.scopes": {
                         "default": [],
-                        "markdownDescription": "%todo-tree.configuration.filtering.scopes.markdownDescription%",
-                        "type": "array"
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.scopes.markdownDescription%",
+                        "type": "array",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.filtering.useBuiltInExcludes": {
+                        "default": "none",
+                        "enum": [
+                            "none",
+                            "file excludes",
+                            "search excludes",
+                            "file and search excludes"
+                        ],
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.useBuiltInExcludes.markdownDescription%",
+                        "markdownEnumDescriptions": [
+                            "%better-todo-tree.configuration.filtering.useBuiltInExcludes.markdownEnumDescriptions.1%",
+                            "%better-todo-tree.configuration.filtering.useBuiltInExcludes.markdownEnumDescriptions.2%",
+                            "%better-todo-tree.configuration.filtering.useBuiltInExcludes.markdownEnumDescriptions.3%",
+                            "%better-todo-tree.configuration.filtering.useBuiltInExcludes.markdownEnumDescriptions.4%"
+                        ],
+                        "type": "string"
                     },
                     "todo-tree.filtering.useBuiltInExcludes": {
                         "default": "none",
@@ -928,76 +1410,172 @@
                             "search excludes",
                             "file and search excludes"
                         ],
-                        "markdownDescription": "%todo-tree.configuration.filtering.useBuiltInExcludes.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.filtering.useBuiltInExcludes.markdownDescription%",
                         "markdownEnumDescriptions": [
-                            "%todo-tree.configuration.filtering.useBuiltInExcludes.markdownEnumDescriptions.1%",
-                            "%todo-tree.configuration.filtering.useBuiltInExcludes.markdownEnumDescriptions.2%",
-                            "%todo-tree.configuration.filtering.useBuiltInExcludes.markdownEnumDescriptions.3%",
-                            "%todo-tree.configuration.filtering.useBuiltInExcludes.markdownEnumDescriptions.4%"
+                            "%better-todo-tree.configuration.filtering.useBuiltInExcludes.markdownEnumDescriptions.1%",
+                            "%better-todo-tree.configuration.filtering.useBuiltInExcludes.markdownEnumDescriptions.2%",
+                            "%better-todo-tree.configuration.filtering.useBuiltInExcludes.markdownEnumDescriptions.3%",
+                            "%better-todo-tree.configuration.filtering.useBuiltInExcludes.markdownEnumDescriptions.4%"
                         ],
-                        "type": "string"
+                        "type": "string",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
                     }
                 }
             },
             {
-                "title": "%todo-tree.configuration.tree%",
+                "title": "%better-todo-tree.configuration.tree%",
                 "order": 4,
                 "type": "object",
                 "properties": {
+                    "better-todo-tree.tree.autoRefresh": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.autoRefresh.markdownDescription%",
+                        "type": "boolean"
+                    },
                     "todo-tree.tree.autoRefresh": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.tree.autoRefresh.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.autoRefresh.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.disableCompactFolders": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.disableCompactFolders.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.disableCompactFolders": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.tree.disableCompactFolders.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.disableCompactFolders.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.expanded": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.expanded.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.expanded": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.tree.expanded.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.expanded.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.filterCaseSensitive": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.filterCaseSensitive.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.filterCaseSensitive": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.tree.filterCaseSensitive.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.filterCaseSensitive.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.flat": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.flat.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.flat": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.tree.flat.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.flat.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.groupedByTag": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.groupedByTag.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.groupedByTag": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.tree.groupedByTag.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.groupedByTag.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.groupedBySubTag": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.groupedBySubTag.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.groupedBySubTag": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.tree.groupedBySubTag.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.groupedBySubTag.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.hideIconsWhenGroupedByTag": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.hideIconsWhenGroupedByTag.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.hideIconsWhenGroupedByTag": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.tree.hideIconsWhenGroupedByTag.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.hideIconsWhenGroupedByTag.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.hideTreeWhenEmpty": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.hideTreeWhenEmpty.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.hideTreeWhenEmpty": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.tree.hideTreeWhenEmpty.markdownDescription%",
-                        "type": "boolean"
+                        "markdownDescription": "%better-todo-tree.configuration.tree.hideTreeWhenEmpty.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.labelFormat": {
+                        "default": "${tag} ${after}",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.labelFormat.markdownDescription%",
+                        "type": "string"
                     },
                     "todo-tree.tree.labelFormat": {
                         "default": "${tag} ${after}",
-                        "markdownDescription": "%todo-tree.configuration.tree.labelFormat.markdownDescription%",
-                        "type": "string"
+                        "markdownDescription": "%better-todo-tree.configuration.tree.labelFormat.markdownDescription%",
+                        "type": "string",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.scanAtStartup": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.scanAtStartup.markdownDescription%",
+                        "type": "boolean"
                     },
                     "todo-tree.tree.scanAtStartup": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.tree.scanAtStartup.markdownDescription%",
-                        "type": "boolean"
+                        "markdownDescription": "%better-todo-tree.configuration.tree.scanAtStartup.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.scanMode": {
+                        "default": "workspace",
+                        "enum": [
+                            "workspace",
+                            "open files",
+                            "current file",
+                            "workspace only"
+                        ],
+                        "markdownDescription": "%better-todo-tree.configuration.tree.scanMode.markdownDescription%",
+                        "markdownEnumDescriptions": [
+                            "%better-todo-tree.configuration.tree.scanMode.markdownEnumDescriptions.1%",
+                            "%better-todo-tree.configuration.tree.scanMode.markdownEnumDescriptions.2%",
+                            "%better-todo-tree.configuration.tree.scanMode.markdownEnumDescriptions.3%",
+                            "%better-todo-tree.configuration.tree.scanMode.markdownEnumDescriptions.4%"
+                        ],
+                        "type": "string"
                     },
                     "todo-tree.tree.scanMode": {
                         "default": "workspace",
@@ -1007,191 +1585,390 @@
                             "current file",
                             "workspace only"
                         ],
-                        "markdownDescription": "%todo-tree.configuration.tree.scanMode.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.scanMode.markdownDescription%",
                         "markdownEnumDescriptions": [
-                            "%todo-tree.configuration.tree.scanMode.markdownEnumDescriptions.1%",
-                            "%todo-tree.configuration.tree.scanMode.markdownEnumDescriptions.2%",
-                            "%todo-tree.configuration.tree.scanMode.markdownEnumDescriptions.3%",
-                            "%todo-tree.configuration.tree.scanMode.markdownEnumDescriptions.4%"
+                            "%better-todo-tree.configuration.tree.scanMode.markdownEnumDescriptions.1%",
+                            "%better-todo-tree.configuration.tree.scanMode.markdownEnumDescriptions.2%",
+                            "%better-todo-tree.configuration.tree.scanMode.markdownEnumDescriptions.3%",
+                            "%better-todo-tree.configuration.tree.scanMode.markdownEnumDescriptions.4%"
                         ],
-                        "type": "string"
+                        "type": "string",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.showBadges": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.showBadges.markdownDescription%",
+                        "type": "boolean"
                     },
                     "todo-tree.tree.showBadges": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.tree.showBadges.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.showBadges.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.showCountsInTree": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.showCountsInTree.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.showCountsInTree": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.tree.showCountsInTree.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.showCountsInTree.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.showInExplorer": {
+                        "default": false,
+                        "deprecationMessage": "%better-todo-tree.configuration.tree.showInExplorer.deprecationMessage%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.showInExplorer": {
                         "default": false,
-                        "deprecationMessage": "%todo-tree.configuration.tree.showInExplorer.deprecationMessage%",
+                        "deprecationMessage": "%better-todo-tree.configuration.tree.showInExplorer.deprecationMessage%",
+                        "type": "boolean",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.showCurrentScanMode": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.showCurrentScanMode.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.showCurrentScanMode": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.tree.showCurrentScanMode.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.showCurrentScanMode.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.showScanOpenFilesOrWorkspaceButton": {
+                        "default": false,
+                        "deprecationMessage": "%better-todo-tree.configuration.tree.showScanOpenFilesOrWorkspaceButton.deprecationMessage%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.showScanOpenFilesOrWorkspaceButton": {
                         "default": false,
-                        "deprecationMessage": "%todo-tree.configuration.tree.showScanOpenFilesOrWorkspaceButton.deprecationMessage%",
-                        "type": "boolean"
+                        "deprecationMessage": "%better-todo-tree.configuration.tree.showScanOpenFilesOrWorkspaceButton.deprecationMessage%",
+                        "type": "boolean",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.subTagClickUrl": {
+                        "default": "",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.subTagClickUrl.markdownDescription%",
+                        "type": "string"
                     },
                     "todo-tree.tree.subTagClickUrl": {
                         "default": "",
-                        "markdownDescription": "%todo-tree.configuration.tree.subTagClickUrl.markdownDescription%",
-                        "type": "string"
+                        "markdownDescription": "%better-todo-tree.configuration.tree.subTagClickUrl.markdownDescription%",
+                        "type": "string",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.showTagsFromOpenFilesOnly": {
+                        "default": false,
+                        "deprecationMessage": "%better-todo-tree.configuration.tree.showTagsFromOpenFilesOnly.deprecationMessage%",
+                        "type": "boolean"
                     },
                     "todo-tree.tree.showTagsFromOpenFilesOnly": {
                         "default": false,
-                        "deprecationMessage": "%todo-tree.configuration.tree.showTagsFromOpenFilesOnly.deprecationMessage%",
+                        "deprecationMessage": "%better-todo-tree.configuration.tree.showTagsFromOpenFilesOnly.deprecationMessage%",
+                        "type": "boolean",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.sortTagsOnlyViewAlphabetically": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.sortTagsOnlyViewAlphabetically.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.sortTagsOnlyViewAlphabetically": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.tree.sortTagsOnlyViewAlphabetically.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.sortTagsOnlyViewAlphabetically.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.sort": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.sort.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.sort": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.tree.sort.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.sort.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.tagsOnly": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.tagsOnly.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.tagsOnly": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.tree.tagsOnly.markdownDescription%",
-                        "type": "boolean"
+                        "markdownDescription": "%better-todo-tree.configuration.tree.tagsOnly.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.tooltipFormat": {
+                        "default": "${filepath}, line ${line}",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.tooltipFormat.markdownDescription%",
+                        "type": "string"
                     },
                     "todo-tree.tree.tooltipFormat": {
                         "default": "${filepath}, line ${line}",
-                        "markdownDescription": "%todo-tree.configuration.tree.tooltipFormat.markdownDescription%",
-                        "type": "string"
+                        "markdownDescription": "%better-todo-tree.configuration.tree.tooltipFormat.markdownDescription%",
+                        "type": "string",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.trackFile": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.trackFile.markdownDescription%",
+                        "type": "boolean"
                     },
                     "todo-tree.tree.trackFile": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.tree.trackFile.markdownDescription%",
-                        "type": "boolean"
+                        "markdownDescription": "%better-todo-tree.configuration.tree.trackFile.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
                     }
                 }
             },
             {
-                "title": "%todo-tree.configuration.buttons%",
+                "title": "%better-todo-tree.configuration.buttons%",
                 "order": 5,
                 "type": "object",
                 "properties": {
+                    "better-todo-tree.tree.buttons.reveal": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.reveal.markdownDescription%",
+                        "type": "boolean"
+                    },
                     "todo-tree.tree.buttons.reveal": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.tree.buttons.reveal.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.reveal.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.buttons.scanMode": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.scanMode.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.buttons.scanMode": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.tree.buttons.scanMode.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.scanMode.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.buttons.viewStyle": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.viewStyle.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.buttons.viewStyle": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.tree.buttons.viewStyle.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.viewStyle.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.buttons.groupByTag": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.groupByTag.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.buttons.groupByTag": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.tree.buttons.groupByTag.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.groupByTag.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.buttons.groupBySubTag": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.groupBySubTag.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.buttons.groupBySubTag": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.tree.buttons.groupBySubTag.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.groupBySubTag.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.buttons.filter": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.filter.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.buttons.filter": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.tree.buttons.filter.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.filter.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.buttons.refresh": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.refresh.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.buttons.refresh": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.tree.buttons.refresh.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.refresh.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.buttons.expand": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.expand.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.buttons.expand": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.tree.buttons.expand.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.expand.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.tree.buttons.export": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.export.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.tree.buttons.export": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.tree.buttons.export.markdownDescription%",
-                        "type": "boolean"
+                        "markdownDescription": "%better-todo-tree.configuration.tree.buttons.export.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
                     }
                 }
             },
             {
-                "title": "%todo-tree.configuration.regex%",
+                "title": "%better-todo-tree.configuration.regex%",
                 "order": 6,
                 "type": "object",
                 "properties": {
-                    "todo-tree.regex.regex": {
+                    "better-todo-tree.regex.regex": {
                         "default": "(^|//|#|<!--|;|/\\*|^[ \\t]*(-|\\d+.))\\s*(?=\\[x\\]|\\[ \\]|[A-Za-z0-9_])($TAGS)(?![A-Za-z0-9_])",
-                        "markdownDescription": "%todo-tree.configuration.regex.regex.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.regex.regex.markdownDescription%",
                         "type": "string",
                         "minLength": 1,
                         "scope": "language-overridable"
                     },
+                    "todo-tree.regex.regex": {
+                        "default": "(^|//|#|<!--|;|/\\*|^[ \\t]*(-|\\d+.))\\s*(?=\\[x\\]|\\[ \\]|[A-Za-z0-9_])($TAGS)(?![A-Za-z0-9_])",
+                        "markdownDescription": "%better-todo-tree.configuration.regex.regex.markdownDescription%",
+                        "type": "string",
+                        "minLength": 1,
+                        "scope": "language-overridable",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.regex.regexCaseSensitive": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.regex.regexCaseSensitive.markdownDescription%",
+                        "type": "boolean"
+                    },
                     "todo-tree.regex.regexCaseSensitive": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.regex.regexCaseSensitive.markdownDescription%",
-                        "type": "boolean"
+                        "markdownDescription": "%better-todo-tree.configuration.regex.regexCaseSensitive.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.regex.subTagRegex": {
+                        "default": "",
+                        "markdownDescription": "%better-todo-tree.configuration.regex.subTagRegex.markdownDescription%",
+                        "type": "string"
                     },
                     "todo-tree.regex.subTagRegex": {
                         "default": "",
-                        "markdownDescription": "%todo-tree.configuration.regex.subTagRegex.markdownDescription%",
-                        "type": "string"
+                        "markdownDescription": "%better-todo-tree.configuration.regex.subTagRegex.markdownDescription%",
+                        "type": "string",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.regex.enableMultiLine": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.regex.enableMultiLine%",
+                        "type": "boolean"
                     },
                     "todo-tree.regex.enableMultiLine": {
                         "default": false,
-                        "markdownDescription": "%todo-tree.configuration.regex.enableMultiLine%",
-                        "type": "boolean"
+                        "markdownDescription": "%better-todo-tree.configuration.regex.enableMultiLine%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.ripgrep.ripgrep": {
+                        "default": "",
+                        "markdownDescription": "%better-todo-tree.configuration.ripgrep.ripgrep.markdownDescription%",
+                        "type": "string"
                     },
                     "todo-tree.ripgrep.ripgrep": {
                         "default": "",
-                        "markdownDescription": "%todo-tree.configuration.ripgrep.ripgrep.markdownDescription%",
+                        "markdownDescription": "%better-todo-tree.configuration.ripgrep.ripgrep.markdownDescription%",
+                        "type": "string",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.ripgrep.ripgrepArgs": {
+                        "default": "--max-columns=1000 --no-config ",
+                        "markdownDescription": "%better-todo-tree.configuration.ripgrep.ripgrepArgs.markdownDescription%",
                         "type": "string"
                     },
                     "todo-tree.ripgrep.ripgrepArgs": {
                         "default": "--max-columns=1000 --no-config ",
-                        "markdownDescription": "%todo-tree.configuration.ripgrep.ripgrepArgs.markdownDescription%",
-                        "type": "string"
+                        "markdownDescription": "%better-todo-tree.configuration.ripgrep.ripgrepArgs.markdownDescription%",
+                        "type": "string",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
                     }
                 }
             },
             {
-                "title": "%todo-tree.configuration.ripgrep%",
+                "title": "%better-todo-tree.configuration.ripgrep%",
                 "order": 7,
                 "type": "object",
                 "properties": {
+                    "better-todo-tree.ripgrep.ripgrepMaxBuffer": {
+                        "default": 200,
+                        "markdownDescription": "%better-todo-tree.configuration.ripgrep.ripgrepMaxBuffer.markdownDescription%",
+                        "type": "integer"
+                    },
                     "todo-tree.ripgrep.ripgrepMaxBuffer": {
                         "default": 200,
-                        "markdownDescription": "%todo-tree.configuration.ripgrep.ripgrepMaxBuffer.markdownDescription%",
-                        "type": "integer"
+                        "markdownDescription": "%better-todo-tree.configuration.ripgrep.ripgrepMaxBuffer.markdownDescription%",
+                        "type": "integer",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.ripgrep.usePatternFile": {
+                        "default": true,
+                        "markdownDescription": "%better-todo-tree.configuration.ripgrep.usePatternFile.markdownDescription%",
+                        "type": "boolean"
                     },
                     "todo-tree.ripgrep.usePatternFile": {
                         "default": true,
-                        "markdownDescription": "%todo-tree.configuration.ripgrep.usePatternFile.markdownDescription%",
-                        "type": "boolean"
+                        "markdownDescription": "%better-todo-tree.configuration.ripgrep.usePatternFile.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
                     }
                 }
             }
         ]
-    },
-    "__metadata": {
-        "id": "261cac81-cd7b-4555-bb41-0c2d2bcd3e70",
-        "publisherId": "d4906d2e-f2ee-492d-9c7c-02b6160599ec",
-        "publisherDisplayName": "Gruntfuggly"
     },
     "dependencies": {
         "@primer/octicons": "^17.12.0",
@@ -1206,9 +1983,13 @@
         "parse-code-context": "^1.0.0",
         "qunit": "^2.25.0",
         "webpack": "^5.105.4",
-        "webpack-cli": "^7.0.2"
+        "webpack-cli": "^7.0.2",
+        "@vscode/vsce": "^3.7.1",
+        "ovsx": "^0.10.10"
     },
     "overrides": {
         "lodash": "^4.18.1"
-    }
+    },
+    "author": "FanaticPythoner",
+    "homepage": "https://github.com/FanaticPythoner/better-todo-tree#readme"
 }

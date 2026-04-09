@@ -1,0 +1,160 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*.*.*
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to release, e.g. v0.0.225
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      release_ref: ${{ steps.meta.outputs.release_ref }}
+      release_sha: ${{ steps.meta.outputs.release_sha }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve release metadata
+        id: meta
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: bash scripts/release/resolve-release-metadata.sh
+
+      - name: Run release test suite
+        run: npm test
+
+      - name: Build release bundle
+        run: npm run vscode:prepublish
+
+  build:
+    needs: preflight
+    uses: ./.github/workflows/reusable-build-vsix.yml
+    with:
+      ref: ${{ needs.preflight.outputs.release_ref }}
+      targets: '["win32-x64","win32-arm64","linux-x64","linux-arm64","linux-armhf","darwin-x64","darwin-arm64","alpine-x64","alpine-arm64","web"]'
+    secrets: inherit
+
+  publish:
+    needs:
+      - preflight
+      - build
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ needs.preflight.outputs.release_ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download VSIX artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          pattern: vsix-*
+          path: artifacts/release
+          merge-multiple: true
+
+      - name: Publish to VS Code Marketplace
+        id: publish_vscode_marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: bash scripts/release/publish-vscode-marketplace.sh
+
+      - name: Publish to Open VSX
+        id: publish_open_vsx
+        continue-on-error: true
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: bash scripts/release/publish-open-vsx.sh
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
+        with:
+          subject-path: artifacts/release/*.vsix
+
+      - name: Record registry publication outcomes
+        if: always()
+        run: |
+          {
+            echo '## Registry publication'
+            echo "- VS Code Marketplace: ${{ steps.publish_vscode_marketplace.outcome }}"
+            echo "- Open VSX: ${{ steps.publish_open_vsx.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "${{ steps.publish_open_vsx.outcome }}" == 'failure' ]]; then
+            echo '::warning::Open VSX publication failed after VS Code Marketplace publication completed.'
+          fi
+
+  github-release:
+    needs:
+      - preflight
+      - publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.release_ref }}
+
+      - name: Download VSIX artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          pattern: vsix-*
+          path: artifacts/release
+          merge-multiple: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          PRERELEASE: ${{ needs.preflight.outputs.prerelease }}
+        run: bash scripts/release/create-github-release.sh

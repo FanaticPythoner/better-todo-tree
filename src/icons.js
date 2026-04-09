@@ -8,6 +8,7 @@ var attributes = require( './attributes.js' );
 var themeColourNames = require( './themeColourNames.js' );
 var codiconNames = require( './codiconNames.js' );
 var productIconNames = require( './productIconNames.js' );
+var identity = require( './extensionIdentity.js' );
 
 function ensureStorageDirectory( context, debug )
 {
@@ -47,7 +48,7 @@ function writeIconFile( filePath, svg )
 function createTodoTreeIcon( context, iconName, colour )
 {
     var filePath = path.join( context.globalStorageUri.fsPath, iconName + "-" + compactColourName( colour ) + ".svg" );
-    var svg = iconName === 'todo-tree' ?
+    var svg = ( iconName === 'todo-tree' || iconName === 'better-todo-tree' ) ?
         ( "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">" +
             "<path d=\"M10.5268 1.22702C9.9895 1.4678 9.2269 2.20732 8.91492 2.79206C8.75894 3.08443 8.58562 3.13603 7.61503 3.08443C6.28048 3.01564 5.50054 3.30801 4.72061 4.18512C4.02733 4.97624 3.76736 6.00813 3.99267 7.00563L4.18332 7.77955L3.35139 8.50188C1.27156 10.3077 1.65287 13.541 4.07933 14.6589C4.56462 14.8996 5.10191 15.0888 5.27523 15.0888C5.43122 15.0888 5.70853 15.364 5.89918 15.6907C6.48846 16.671 8.30831 17.1354 9.48688 16.6023C10.0068 16.3615 10.1455 16.4991 10.4401 17.4794C10.6654 18.3221 10.2321 20.3859 9.50421 21.8305L8.91492 23H12.0347C14.4611 23 15 23 15 23L14.41 21.8305C13.68 20.39 13.6292 19.6979 13.4732 18.4253C13.3865 17.5998 13.4212 17.2386 13.6292 16.8258C13.9065 16.2927 13.9238 16.2927 14.4265 16.5507C15.605 17.1526 17.4769 16.7054 18.1008 15.6907C18.2915 15.364 18.5688 15.0888 18.7248 15.0888C18.8981 15.0888 19.4354 14.8996 19.9207 14.6589C22.3471 13.541 22.7284 10.3077 20.6486 8.50188L19.8167 7.77955L20.0073 7.00563C20.2326 6.00813 19.9727 4.97624 19.2794 4.18512C18.4995 3.30801 17.7195 3.01564 16.4023 3.08443C15.3277 3.13603 15.2757 3.11883 14.9638 2.62008C14.5478 1.93215 13.9238 1.39901 13.3346 1.17543C12.6586 0.917456 11.1507 0.951852 10.5268 1.22702Z\" stroke=\"" + colour + "\" stroke-width=\"1.5\" stroke-linejoin=\"bevel\" />" +
             "<path d=\"M7 9.5L10.5 13L16.5 7\" stroke=\"" + colour + "\" stroke-width=\"1.5\" /></svg>" ) :
@@ -106,7 +107,10 @@ function getFileBackedIcon( context, tag, debug )
     var darkIconPath = context.asAbsolutePath( path.join( "resources/icons", "dark", "todo-green.svg" ) );
     var lightIconPath = context.asAbsolutePath( path.join( "resources/icons", "light", "todo-green.svg" ) );
 
-    if( iconName === 'todo-tree' || iconName === 'todo-tree-filled' )
+    if( iconName === 'todo-tree' ||
+        iconName === 'todo-tree-filled' ||
+        iconName === 'better-todo-tree' ||
+        iconName === 'better-todo-tree-filled' )
     {
         darkIconPath = createTodoTreeIcon( context, iconName, colour );
         lightIconPath = darkIconPath;
@@ -161,7 +165,7 @@ function validateIcons( workspace )
 {
     function checkIcon( setting )
     {
-        var icon = workspace.getConfiguration( 'todo-tree.highlights' ).get( setting + ".icon" );
+        var icon = identity.getSetting( 'highlights.' + setting + ".icon", undefined );
         if( icon !== undefined )
         {
             if( utils.isCodicon( icon ) )
@@ -172,7 +176,11 @@ function validateIcons( workspace )
                     invalidIcons.push( setting + '.icon(' + icon + ')' );
                 }
             }
-            else if( !octicons[ icon ] && icon !== 'todo-tree' && icon !== 'todo-tree-filled' )
+            else if( !octicons[ icon ] &&
+                icon !== 'todo-tree' &&
+                icon !== 'todo-tree-filled' &&
+                icon !== 'better-todo-tree' &&
+                icon !== 'better-todo-tree-filled' )
             {
                 invalidIcons.push( setting + '.icon(' + icon + ')' );
             }
@@ -184,7 +192,9 @@ function validateIcons( workspace )
 
     checkIcon( 'defaultHighlight' );
 
-    var highlightsConfiguration = workspace.getConfiguration( 'todo-tree.highlights' );
+    var highlightsConfiguration = {
+        customHighlight: identity.getSetting( 'highlights.customHighlight', {} )
+    };
     Object.keys( highlightsConfiguration.customHighlight ).forEach( function( tag )
     {
         checkIcon( 'customHighlight.' + tag );

@@ -9,3 +9,5 @@ dist
 
 *.vsix
 TODOS_LISTS/
+.tools/
+.act-artifacts/

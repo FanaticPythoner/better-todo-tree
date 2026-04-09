@@ -5,6 +5,7 @@ var utils = require( './utils.js' );
 var attributes = require( './attributes.js' );
 var icons = require( './icons.js' );
 var detection = require( './detection.js' );
+var identity = require( './extensionIdentity.js' );
 
 var captureGroupArgument = "capture-groups";
 
@@ -196,7 +197,7 @@ function showInGutter( tag )
 
 function getType( tag )
 {
-    return attributes.getAttribute( tag, 'type', vscode.workspace.getConfiguration( 'todo-tree.highlights' ).get( 'highlight' ) );
+    return attributes.getAttribute( tag, 'type', identity.getSetting( 'highlights.highlight', undefined ) );
 }
 
 function editorId( editor )
@@ -257,7 +258,7 @@ function highlight( editor )
 
         decorations[ id ] = [];
 
-        if( vscode.workspace.getConfiguration( 'todo-tree.highlights' ).get( 'enabled', true ) )
+        if( identity.getSetting( 'highlights.enabled', true ) )
         {
             detection.scanDocument( editor.document ).forEach( function( match )
             {
@@ -362,7 +363,7 @@ function triggerHighlight( editor )
             }
 
             highlight( scheduledEditor );
-        }, vscode.workspace.getConfiguration( 'todo-tree.highlights' ).highlightDelay, editor, version );
+        }, identity.getSetting( 'highlights.highlightDelay', 500 ), editor, version );
     }
 }
 

@@ -2,7 +2,7 @@ var helpers = require( './moduleHelpers.js' );
 var matrixHelpers = require( './matrixHelpers.js' );
 var languageMatrix = require( './languageMatrix.js' );
 
-function createConfigurationSection( values )
+function createConfigurationSection( values, explicitTarget )
 {
     function getNestedValue( source, key )
     {
@@ -13,6 +13,7 @@ function createConfigurationSection( values )
     }
 
     var section = Object.assign( {}, values );
+    var target = explicitTarget || 'global';
     section.get = function( key, defaultValue )
     {
         var value = getNestedValue( values, key );
@@ -22,9 +23,15 @@ function createConfigurationSection( values )
     {
         return Promise.resolve();
     };
-    section.inspect = function()
+    section.inspect = function( key )
     {
-        return {};
+        var value = key ? getNestedValue( values, key ) : values;
+        return {
+            defaultValue: value,
+            globalValue: target === 'global' ? value : undefined,
+            workspaceValue: target === 'workspace' ? value : undefined,
+            workspaceFolderValue: target === 'workspaceFolder' ? value : undefined
+        };
     };
 
     return section;
@@ -172,9 +179,7 @@ function createVscodeStub( options )
         }
     } );
 
-    var sections = {
-        'todo-tree': rootSection,
-        'todo-tree.general': createConfigurationSection( {
+    var generalSection = createConfigurationSection( {
             debug: false,
             automaticGitRefreshInterval: 0,
             periodicRefreshInterval: 0,
@@ -186,8 +191,8 @@ function createVscodeStub( options )
             tags: languageMatrix.DEFAULT_TAGS.slice(),
             tagGroups: {},
             schemes: [ 'file' ]
-        } ),
-        'todo-tree.tree': createConfigurationSection( {
+        } );
+    var treeSection = createConfigurationSection( {
             autoRefresh: true,
             trackFile: false,
             showCountsInTree: false,
@@ -197,8 +202,8 @@ function createVscodeStub( options )
             scanAtStartup: true,
             hideTreeWhenEmpty: false,
             buttons: rootSection.get( 'tree.buttons' )
-        } ),
-        'todo-tree.filtering': createConfigurationSection( {
+        } );
+    var filteringSection = createConfigurationSection( {
             passGlobsToRipgrep: true,
             includeGlobs: [],
             excludeGlobs: [],
@@ -207,18 +212,32 @@ function createVscodeStub( options )
             excludedWorkspaces: [],
             useBuiltInExcludes: 'none',
             scopes: []
-        } ),
-        'todo-tree.regex': createConfigurationSection( {
+        } );
+    var regexSection = createConfigurationSection( {
             regex: options.regexSource || '($TAGS)',
             regexCaseSensitive: true,
             enableMultiLine: false,
             subTagRegex: ''
-        } ),
-        'todo-tree.ripgrep': createConfigurationSection( {
+        } );
+    var ripgrepSection = createConfigurationSection( {
             ripgrepArgs: '',
             ripgrepMaxBuffer: 200,
             usePatternFile: false
-        } ),
+        } );
+
+    var sections = {
+        'todo-tree': rootSection,
+        'better-todo-tree': rootSection,
+        'todo-tree.general': generalSection,
+        'better-todo-tree.general': generalSection,
+        'todo-tree.tree': treeSection,
+        'better-todo-tree.tree': treeSection,
+        'todo-tree.filtering': filteringSection,
+        'better-todo-tree.filtering': filteringSection,
+        'todo-tree.regex': regexSection,
+        'better-todo-tree.regex': regexSection,
+        'todo-tree.ripgrep': ripgrepSection,
+        'better-todo-tree.ripgrep': ripgrepSection,
         'files.exclude': createConfigurationSection( {} ),
         'search.exclude': createConfigurationSection( {} ),
         'explorer': createConfigurationSection( { compactFolders: false } )

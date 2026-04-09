@@ -1,10 +1,5 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-package_name := `sed -nE 's/^ *"name": *"([^"]+)".*/\1/p' package.json | head -n 1`
-package_version := `sed -nE 's/^ *"version": *"([^"]+)".*/\1/p' package.json | head -n 1`
-vsix_dir := "artifacts/vsix"
-all_platforms := "win32-x64 win32-arm64 linux-x64 linux-arm64 linux-armhf darwin-x64 darwin-arm64 alpine-x64 alpine-arm64 web"
-
 node_bootstrap := '''
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 
@@ -27,6 +22,34 @@ command -v npm >/dev/null 2>&1 || { echo "error: npm was not found after activat
 command -v npx >/dev/null 2>&1 || { echo "error: npx was not found after activating Node.js." >&2; exit 1; }
 '''
 
+actions_bootstrap := '''
+tools_root="$PWD/.tools"
+bin_dir="$tools_root/bin"
+downloads_dir="$tools_root/downloads"
+
+mkdir -p "$bin_dir" "$downloads_dir"
+
+if [[ ! -x "$bin_dir/actionlint" ]]; then
+  curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz" -o "$downloads_dir/actionlint_1.7.12_linux_amd64.tar.gz"
+  tar -xzf "$downloads_dir/actionlint_1.7.12_linux_amd64.tar.gz" -C "$bin_dir" actionlint
+  chmod +x "$bin_dir/actionlint"
+fi
+
+if [[ ! -x "$bin_dir/act" ]]; then
+  curl -fsSL "https://github.com/nektos/act/releases/download/v0.2.87/act_Linux_x86_64.tar.gz" -o "$downloads_dir/act_Linux_x86_64.tar.gz"
+  tar -xzf "$downloads_dir/act_Linux_x86_64.tar.gz" -C "$bin_dir" act
+  chmod +x "$bin_dir/act"
+fi
+
+export PATH="$bin_dir:$PATH"
+
+command -v actionlint >/dev/null 2>&1 || { echo "error: actionlint is not available." >&2; exit 1; }
+command -v act >/dev/null 2>&1 || { echo "error: act is not available." >&2; exit 1; }
+command -v docker >/dev/null 2>&1 || { echo "error: docker is required for workflow verification." >&2; exit 1; }
+command -v curl >/dev/null 2>&1 || { echo "error: curl is required for workflow verifier bootstrap." >&2; exit 1; }
+command -v tar >/dev/null 2>&1 || { echo "error: tar is required for workflow verifier bootstrap." >&2; exit 1; }
+'''
+
 default:
   @just --list --unsorted
 
@@ -42,64 +65,100 @@ test:
   {{node_bootstrap}}
   npm test
 
-build-ext *platforms:
+bootstrap-release-env:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  bash scripts/release/bootstrap-release-environment.sh
+
+lint-actions:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  {{actions_bootstrap}}
+  actionlint .github/workflows/*.yml
+
+test-actions-ci:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  {{actions_bootstrap}}
+  rm -rf .act-artifacts
+  mkdir -p .act-artifacts
+  act pull_request \
+    -W .github/workflows/ci.yml \
+    -j test-build \
+    -P ubuntu-24.04=ghcr.io/catthehacker/ubuntu:act-24.04 \
+    --container-architecture linux/amd64 \
+    --artifact-server-path .act-artifacts
+
+test-actions-release-build:
   #!/usr/bin/env bash
   set -euo pipefail
   {{node_bootstrap}}
 
-  readonly package_name="{{package_name}}"
-  readonly package_version="{{package_version}}"
-  readonly vsix_dir="{{vsix_dir}}"
-  readonly all_platforms_string="{{all_platforms}}"
-  readonly requested_platforms_raw="{{platforms}}"
+  temp_root="$(mktemp -d)"
+  trap 'rm -rf "$temp_root"' EXIT
 
-  mkdir -p "$vsix_dir"
+  temp_repo="$temp_root/repo"
 
-  read -r -a supported_platforms <<< "$all_platforms_string"
-  declare -A supported_lookup=()
-  declare -A selected_lookup=()
-  selected_platforms=()
+  mkdir -p "$temp_repo"
 
-  for platform in "${supported_platforms[@]}"; do
-    supported_lookup["$platform"]=1
-  done
+  rsync -a --delete \
+    --exclude '.git' \
+    --exclude 'node_modules' \
+    --exclude 'dist' \
+    --exclude 'artifacts' \
+    --exclude '.tools' \
+    --exclude '.act-artifacts' \
+    ./ "$temp_repo/"
 
-  normalized_requested_platforms="${requested_platforms_raw//,/ }"
+  (
+    cd "$temp_repo"
+    temp_remote="$temp_repo/.act-origin.git"
+    release_version="$(node -p "require('./package.json').version")"
+    expected_count="$(node -e "console.log(require('./scripts/release/targets.json').length)")"
+    git init -b master >/dev/null
+    git config user.name Codex
+    git config user.email codex@example.invalid
+    git add .
+    git commit -m 'test release workflow' >/dev/null
+    git tag -a "v$release_version" -m "release"
+    git init --bare "$temp_remote" >/dev/null
+    git remote add origin "$temp_remote"
+    git remote add github https://github.com/FanaticPythoner/better-todo-tree
+    git push -u origin master >/dev/null
+    git push origin --tags >/dev/null
+    GITHUB_OUTPUT="$temp_root/release-meta.out" \
+      INPUT_TAG="v$release_version" \
+      REF_NAME=master \
+      REF_TYPE=branch \
+      bash scripts/release/resolve-release-metadata.sh
+    rm -rf "$temp_remote"
+    npm ci
+    npm test
+    npm run vscode:prepublish
+    rm -rf artifacts/vsix
+    node scripts/release/build-vsix.mjs
+    actual_count="$(find artifacts/vsix -maxdepth 1 -type f -name '*.vsix' | wc -l | tr -d '[:space:]')"
+    [[ "$actual_count" == "$expected_count" ]]
+    unzip -l "artifacts/vsix/better-todo-tree-${release_version}-linux-x64.vsix" | grep -q 'extension/readme.md'
+    if unzip -l "artifacts/vsix/better-todo-tree-${release_version}-linux-x64.vsix" | grep -Eq 'extension/(\\.tools|MIGRATION\\.md|OPEN_VSX_CERTIFICATE_REPORT\\.md|\\.act-origin\\.git)'; then
+      echo 'error: release VSIX contains local workflow tooling or migration-only documents.' >&2
+      exit 1
+    fi
+  )
 
-  if [[ -z "$normalized_requested_platforms" ]]; then
-    selected_platforms=("${supported_platforms[@]}")
-  else
-    read -r -a requested_platforms <<< "$normalized_requested_platforms"
+test-actions:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  just test
+  just lint-actions
+  just test-actions-ci
+  just test-actions-release-build
 
-    for requested_platform in "${requested_platforms[@]}"; do
-      normalized_platform="${requested_platform#--}"
-
-      if [[ "$normalized_platform" == "all" ]]; then
-        selected_platforms=("${supported_platforms[@]}")
-        selected_lookup=()
-        for platform in "${selected_platforms[@]}"; do
-          selected_lookup["$platform"]=1
-        done
-        continue
-      fi
-
-      if [[ -z "${supported_lookup[$normalized_platform]+x}" ]]; then
-        echo "error: unsupported platform '$requested_platform'. Supported platforms: $all_platforms_string" >&2
-        exit 1
-      fi
-
-      if [[ -z "${selected_lookup[$normalized_platform]+x}" ]]; then
-        selected_lookup["$normalized_platform"]=1
-        selected_platforms+=("$normalized_platform")
-      fi
-    done
-  fi
-
-  for platform in "${selected_platforms[@]}"; do
-    output_path="$vsix_dir/$package_name-$package_version-$platform.vsix"
-    npx --yes @vscode/vsce package --no-dependencies --target "$platform" --out "$output_path"
-    echo "$output_path"
-  done
+build-ext *platforms:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  {{node_bootstrap}}
+  node scripts/release/build-vsix.mjs {{platforms}}
 
 clean *flags:
   #!/usr/bin/env bash
