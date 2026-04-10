@@ -1,39 +1,28 @@
 # Better Todo Tree
 
-## Maintained Fork Status
+**The actively maintained, high-performance fork of Todo Tree.**
 
-Better Todo Tree is an independent, actively maintained fork of
-[Todo Tree](https://github.com/Gruntfuggly/todo-tree). It keeps the same core
-workflow people expect from Todo Tree, while shipping under an independent
-publisher, with its own release pipeline, website, issue tracker, and fork-era
-compatibility layer.
+The original Todo Tree extension is abandoned. Better Todo Tree is a complete, drop-in replacement engineered for modern VS Code. It preserves the exact workflow developers rely on while resolving long-standing bugs and optimizing performance for massive codebases.
 
-What stays familiar:
+This project is built for professionals who need their tooling to be fast, reliable, and continuously supported.
 
-- scan source files for TODO, FIXME, BUG, and custom comment tags
-- show matches in a dedicated tree view
-- reveal matches in files and highlight them in the editor
-- preserve the general Todo Tree mental model and workspace workflow
+**Why switch?**
 
-What is specific to Better Todo Tree:
+  * **Seamless Migration:** Fully compatible with your existing configuration. Install the extension and keep working.
+  * **Optimized Internals:** Upgraded ripgrep integration and rendering logic for faster workspace scanning and lower CPU usage.
+  * **Active Development:** Regular updates ensure absolute compatibility with the latest VS Code releases. Issues are reviewed and bugs are patched quickly.
+  * **Independent & Active:** I took over this project to ensure a tool highly relied on doesn't rot. Keeping it fast, bug-free, secure, and updated takes real time. If this extension helps you out, grab me a coffee so that I can keep it up! 😁
+  ☕ [**buymeacoffee.com/FanaticPythoner**](https://buymeacoffee.com/FanaticPythoner)
 
-- active maintenance and current releases under `FanaticPythoner.better-todo-tree`
-- compatibility-first migration for existing Todo Tree users and settings
-- independent documentation, distribution, and support surfaces
-- fork-specific licensing and release automation
+**Links:**
 
-Official links:
+  * **Website:** [https://bettertodotree.com](https://bettertodotree.com)
+  * **Marketplace:** [https://marketplace.visualstudio.com/items?itemName=FanaticPythoner.better-todo-tree](https://marketplace.visualstudio.com/items?itemName=FanaticPythoner.better-todo-tree)
+  * **GitHub:** [https://github.com/FanaticPythoner/better-todo-tree](https://github.com/FanaticPythoner/better-todo-tree)
 
-- Website: <https://bettertodotree.com>
-- Marketplace: <https://marketplace.visualstudio.com/items?itemName=FanaticPythoner.better-todo-tree>
-- Source and issues: <https://github.com/FanaticPythoner/better-todo-tree>
-- Upstream project base: <https://github.com/Gruntfuggly/todo-tree>
+### Overview
 
-Better Todo Tree quickly searches (using
-[ripgrep](https://github.com/BurntSushi/ripgrep)) your workspace for comment
-tags like TODO and FIXME, and displays them in a tree view in the activity
-bar. The view can be dragged out of the activity bar into the explorer pane (or
-anywhere else you would prefer it to be).
+Better Todo Tree leverages [ripgrep](https://github.com/BurntSushi/ripgrep) to locate custom tags like `TODO` and `FIXME` across your workspace. Results are mapped into a dedicated tree view and highlighted directly within your open files. Click any node in the tree to snap your cursor straight to that line of code.
 
 Clicking a TODO within the tree will open the file and put the cursor on the line containing the TODO.
 

@@ -1,7 +1,7 @@
 {
     "name": "better-todo-tree",
     "displayName": "Better Todo Tree",
-    "description": "Maintained Todo Tree fork for VS Code with compatibility-first migration and TODO/FIXME comment tracking.",
+    "description": "The maintained successor to Todo Tree for VS Code: same workflow, active fixes, better compatibility, and ongoing improvements.",
     "keywords": [
         "todo",
         "task",
