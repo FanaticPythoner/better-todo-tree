@@ -8,8 +8,24 @@ source "$script_dir/release-versioning.sh"
 bump='patch'
 push_release=0
 
+require_clean_worktree()
+{
+  local status_output
+
+  status_output="$(git status --short)"
+  if [[ -n "$status_output" ]]; then
+    echo 'The working tree must be clean before creating a release.' >&2
+    echo 'Commit or stash the pending changes first:' >&2
+    printf '%s\n' "$status_output" >&2
+    return 1
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --)
+      shift
+      ;;
     --bump)
       bump="$2"
       shift 2
@@ -25,8 +41,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-git diff --quiet
-git diff --cached --quiet
+require_clean_worktree
 
 latest_tag="$(latest_release_tag)"
 if [[ -z "$latest_tag" ]]; then

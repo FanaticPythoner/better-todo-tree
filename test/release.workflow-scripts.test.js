@@ -579,10 +579,10 @@ QUnit.test( 'write-release-notes excludes upstream history when no stable releas
     assert.ok( notes.indexOf( 'fork change one' ) < notes.indexOf( 'fork change two' ) );
 } );
 
-QUnit.test( 'create-next-release increments the last stable tag, commits, tags, and writes notes', function( assert )
+QUnit.test( 'create-next-release accepts the just argument separator and creates the next release', function( assert )
 {
     var workspace = createWorkspace();
-    var remotePath = path.join( workspace.root, 'origin.git' );
+    var remotePath = path.join( fs.mkdtempSync( path.join( os.tmpdir(), 'better-todo-tree-origin-' ) ), 'origin.git' );
     var env = Object.assign( {}, process.env, {
         GIT_AUTHOR_NAME: 'Codex',
         GIT_AUTHOR_EMAIL: 'codex@example.invalid',
@@ -604,7 +604,7 @@ QUnit.test( 'create-next-release increments the last stable tag, commits, tags, 
 
     var result = childProcess.spawnSync(
         'bash',
-        [ path.join( __dirname, '..', 'scripts', 'release', 'create-next-release.sh' ) ],
+        [ path.join( __dirname, '..', 'scripts', 'release', 'create-next-release.sh' ), '--', '--bump', 'patch' ],
         {
             cwd: workspace.root,
             encoding: 'utf8',
@@ -625,6 +625,45 @@ QUnit.test( 'create-next-release increments the last stable tag, commits, tags, 
     assert.ok( result.stdout.indexOf( 'Created v0.0.226 from v0.0.225.' ) !== -1 );
     assert.ok( notes.indexOf( '# Better Todo Tree 0.0.226' ) !== -1 );
     assert.ok( notes.indexOf( 'release: v0.0.226' ) !== -1 );
+} );
+
+QUnit.test( 'create-next-release reports pending changes before creating a release', function( assert )
+{
+    var workspace = createWorkspace();
+    var remotePath = path.join( fs.mkdtempSync( path.join( os.tmpdir(), 'better-todo-tree-origin-' ) ), 'origin.git' );
+    var env = Object.assign( {}, process.env, {
+        GIT_AUTHOR_NAME: 'Codex',
+        GIT_AUTHOR_EMAIL: 'codex@example.invalid',
+        GIT_COMMITTER_NAME: 'Codex',
+        GIT_COMMITTER_EMAIL: 'codex@example.invalid',
+        RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree'
+    } );
+
+    fs.writeFileSync( path.join( workspace.root, 'package.json' ), JSON.stringify( { name: 'better-todo-tree', version: '0.0.225' }, null, 4 ) + '\n' );
+    fs.writeFileSync( path.join( workspace.root, 'package-lock.json' ), JSON.stringify( { name: 'better-todo-tree', version: '0.0.225', lockfileVersion: 3, packages: { '': { version: '0.0.225' } } }, null, 4 ) + '\n' );
+    childProcess.spawnSync( 'git', [ 'init', '-b', 'master' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'add', 'package.json', 'package-lock.json' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'commit', '-m', 'release fixture' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'tag', '-a', 'v0.0.225', '-m', 'release 0.0.225' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'init', '--bare', remotePath ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'remote', 'add', 'origin', remotePath ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'push', '-u', 'origin', 'master' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'push', 'origin', '--tags' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    fs.writeFileSync( path.join( workspace.root, 'dirty.txt' ), 'pending change\n' );
+
+    var result = childProcess.spawnSync(
+        'bash',
+        [ path.join( __dirname, '..', 'scripts', 'release', 'create-next-release.sh' ), '--', '--bump', 'patch' ],
+        {
+            cwd: workspace.root,
+            encoding: 'utf8',
+            env: env
+        }
+    );
+
+    assert.notStrictEqual( result.status, 0 );
+    assert.ok( result.stderr.indexOf( 'The working tree must be clean before creating a release.' ) !== -1 );
+    assert.ok( result.stderr.indexOf( '?? dirty.txt' ) !== -1 );
 } );
 
 QUnit.test( 'resolve-release-metadata validates the tag and emits release outputs', function( assert )
