@@ -32,7 +32,8 @@ function createReleaseGitWorkspace()
         GIT_AUTHOR_NAME: 'Codex',
         GIT_AUTHOR_EMAIL: 'codex@example.invalid',
         GIT_COMMITTER_NAME: 'Codex',
-        GIT_COMMITTER_EMAIL: 'codex@example.invalid'
+        GIT_COMMITTER_EMAIL: 'codex@example.invalid',
+        RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree'
     } );
 
     fs.writeFileSync( path.join( workspace.root, 'package.json' ), JSON.stringify( { version: '0.0.225' }, null, 2 ) + '\n' );
@@ -56,7 +57,8 @@ function createReleaseNotesWorkspace()
         GIT_AUTHOR_NAME: 'Codex',
         GIT_AUTHOR_EMAIL: 'codex@example.invalid',
         GIT_COMMITTER_NAME: 'Codex',
-        GIT_COMMITTER_EMAIL: 'codex@example.invalid'
+        GIT_COMMITTER_EMAIL: 'codex@example.invalid',
+        RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree'
     } );
 
     fs.writeFileSync( path.join( workspace.root, 'package.json' ), JSON.stringify( { version: '0.0.225' }, null, 2 ) + '\n' );
@@ -67,10 +69,10 @@ function createReleaseNotesWorkspace()
     childProcess.spawnSync( 'git', [ 'tag', '-a', 'v0.0.225', '-m', 'release 0.0.225' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
     fs.writeFileSync( path.join( workspace.root, 'feature.txt' ), 'first feature\n' );
     childProcess.spawnSync( 'git', [ 'add', 'feature.txt' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
-    childProcess.spawnSync( 'git', [ 'commit', '-m', 'first post-release change' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'commit', '-m', 'first post-release change\n\nfirst detail line\nsecond detail line' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
     fs.writeFileSync( path.join( workspace.root, 'feature.txt' ), 'first feature\nsecond feature\n' );
     childProcess.spawnSync( 'git', [ 'add', 'feature.txt' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
-    childProcess.spawnSync( 'git', [ 'commit', '-m', 'second post-release change' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'commit', '-m', 'second post-release change\n\nfinal detail line' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
     childProcess.spawnSync( 'git', [ 'tag', '-a', 'v0.0.226', '-m', 'release 0.0.226' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
     childProcess.spawnSync( 'git', [ 'init', '--bare', remotePath ], { cwd: workspace.root, encoding: 'utf8', env: env } );
     childProcess.spawnSync( 'git', [ 'remote', 'add', 'origin', remotePath ], { cwd: workspace.root, encoding: 'utf8', env: env } );
@@ -87,7 +89,8 @@ function createForkedReleaseNotesWorkspace()
         GIT_AUTHOR_NAME: 'Codex',
         GIT_AUTHOR_EMAIL: 'codex@example.invalid',
         GIT_COMMITTER_NAME: 'Codex',
-        GIT_COMMITTER_EMAIL: 'codex@example.invalid'
+        GIT_COMMITTER_EMAIL: 'codex@example.invalid',
+        RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree'
     } );
 
     fs.writeFileSync( path.join( workspace.root, 'package.json' ), JSON.stringify( { version: '0.0.225' }, null, 2 ) + '\n' );
@@ -104,10 +107,10 @@ function createForkedReleaseNotesWorkspace()
     childProcess.spawnSync( 'git', [ 'branch', 'upstream-base' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
     fs.writeFileSync( path.join( workspace.root, 'fork.txt' ), 'fork one\n' );
     childProcess.spawnSync( 'git', [ 'add', 'fork.txt' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
-    childProcess.spawnSync( 'git', [ 'commit', '-m', 'fork change one' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'commit', '-m', 'fork change one\n\nfork detail one' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
     fs.writeFileSync( path.join( workspace.root, 'fork.txt' ), 'fork one\nfork two\n' );
     childProcess.spawnSync( 'git', [ 'add', 'fork.txt' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
-    childProcess.spawnSync( 'git', [ 'commit', '-m', 'fork change two' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'commit', '-m', 'fork change two\n\nfork detail two' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
 
     return workspace;
 }
@@ -516,7 +519,9 @@ QUnit.test( 'write-release-notes lists included commits in chronological order',
         {
             cwd: workspace.root,
             encoding: 'utf8',
-            env: process.env
+            env: Object.assign( {}, process.env, {
+                RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree'
+            } )
         }
     );
     var notes = fs.readFileSync( notesFilePath, 'utf8' );
@@ -524,7 +529,12 @@ QUnit.test( 'write-release-notes lists included commits in chronological order',
     assert.strictEqual( result.status, 0, result.stderr );
     assert.ok( notes.indexOf( '# Better Todo Tree 0.0.226' ) !== -1 );
     assert.ok( notes.indexOf( '- previous release: `v0.0.225`' ) !== -1 );
-    assert.ok( notes.indexOf( '- `') !== -1 );
+    assert.ok( notes.indexOf( '- [`') !== -1 );
+    assert.ok( notes.indexOf( '/commit/' ) !== -1 );
+    assert.notOk( /\n- \[`?\s*\n/.test( notes ), notes );
+    assert.ok( notes.indexOf( '  > first detail line' ) !== -1 );
+    assert.ok( notes.indexOf( '  > second detail line' ) !== -1 );
+    assert.ok( notes.indexOf( '  > final detail line' ) !== -1 );
     assert.ok( notes.indexOf( 'first post-release change' ) < notes.indexOf( 'second post-release change' ) );
 } );
 
@@ -533,7 +543,8 @@ QUnit.test( 'write-release-notes excludes upstream history when no stable releas
     var workspace = createForkedReleaseNotesWorkspace();
     var notesFilePath = path.join( workspace.root, 'release-notes.md' );
     var env = Object.assign( {}, process.env, {
-        RELEASE_UPSTREAM_REF: 'upstream-base'
+        RELEASE_UPSTREAM_REF: 'upstream-base',
+        RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree'
     } );
     var result = childProcess.spawnSync(
         'bash',
@@ -555,10 +566,14 @@ QUnit.test( 'write-release-notes excludes upstream history when no stable releas
 
     assert.strictEqual( result.status, 0, result.stderr );
     assert.ok( notes.indexOf( '- base stable release: none' ) !== -1 );
-    assert.ok( notes.indexOf( '- fork point: `') !== -1 );
+    assert.ok( notes.indexOf( '- target commit: [`') !== -1 );
+    assert.ok( notes.indexOf( '- fork point: [`') !== -1 );
     assert.ok( notes.indexOf( '## Included commits since fork point' ) !== -1 );
+    assert.notOk( /\n- \[`?\s*\n/.test( notes ), notes );
     assert.ok( notes.indexOf( 'fork change one' ) !== -1 );
     assert.ok( notes.indexOf( 'fork change two' ) !== -1 );
+    assert.ok( notes.indexOf( '  > fork detail one' ) !== -1 );
+    assert.ok( notes.indexOf( '  > fork detail two' ) !== -1 );
     assert.ok( notes.indexOf( 'upstream fixture change one' ) === -1 );
     assert.ok( notes.indexOf( 'upstream fixture change two' ) === -1 );
     assert.ok( notes.indexOf( 'fork change one' ) < notes.indexOf( 'fork change two' ) );
@@ -572,7 +587,8 @@ QUnit.test( 'create-next-release increments the last stable tag, commits, tags, 
         GIT_AUTHOR_NAME: 'Codex',
         GIT_AUTHOR_EMAIL: 'codex@example.invalid',
         GIT_COMMITTER_NAME: 'Codex',
-        GIT_COMMITTER_EMAIL: 'codex@example.invalid'
+        GIT_COMMITTER_EMAIL: 'codex@example.invalid',
+        RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree'
     } );
 
     fs.writeFileSync( path.join( workspace.root, 'package.json' ), JSON.stringify( { name: 'better-todo-tree', version: '0.0.225' }, null, 4 ) + '\n' );

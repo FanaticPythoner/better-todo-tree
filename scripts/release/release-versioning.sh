@@ -114,3 +114,33 @@ release_fork_point()
   upstream_ref="$(resolve_release_upstream_ref)"
   git merge-base "$target_ref" "$upstream_ref"
 }
+
+release_repository_url()
+{
+  local remote_url
+
+  if [[ -n "${RELEASE_REPOSITORY_URL:-}" ]]; then
+    printf '%s\n' "${RELEASE_REPOSITORY_URL%/}"
+    return 0
+  fi
+
+  remote_url="$(git config --get remote.origin.url)"
+
+  if [[ "$remote_url" =~ ^https?:// ]]; then
+    printf '%s\n' "${remote_url%.git}"
+    return 0
+  fi
+
+  if [[ "$remote_url" =~ ^git@([^:]+):(.+)$ ]]; then
+    printf 'https://%s/%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]%.git}"
+    return 0
+  fi
+
+  if [[ "$remote_url" =~ ^ssh://git@([^/]+)/(.+)$ ]]; then
+    printf 'https://%s/%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]%.git}"
+    return 0
+  fi
+
+  echo "Unsupported remote.origin.url '$remote_url'." >&2
+  return 1
+}

@@ -56,6 +56,7 @@ fi
 
 target_sha="$(git rev-parse "$target_ref")"
 previous_tag="$(previous_release_tag "$release_tag" || true)"
+repository_url="$(release_repository_url)"
 history_base=''
 history_base_label=''
 mkdir -p "$(dirname "$output_file")"
@@ -69,9 +70,9 @@ else
 fi
 
 if [[ -n "$history_base" ]]; then
-  mapfile -t commits < <(git log --reverse --format='%h%x09%s' "${history_base}..${target_sha}")
+  mapfile -d '' -t commits < <(git log --reverse -z --format='%H%x1f%h%x1f%s%x1f%b' "${history_base}..${target_sha}")
 else
-  mapfile -t commits < <(git log --reverse --format='%h%x09%s' "${target_sha}")
+  mapfile -d '' -t commits < <(git log --reverse -z --format='%H%x1f%h%x1f%s%x1f%b' "${target_sha}")
 fi
 
 {
@@ -81,12 +82,12 @@ fi
     if [[ -n "$target_branch" ]]; then
       echo "- branch: \`$target_branch\`"
     fi
-    echo "- target commit: \`$target_sha\`"
+    echo "- target commit: [\`${target_sha}\`](${repository_url}/commit/${target_sha})"
     if [[ -n "$previous_tag" ]]; then
       echo "- base stable release: \`$previous_tag\`"
     else
       echo "- base stable release: none"
-      echo "- fork point: \`$history_base\`"
+      echo "- fork point: [\`${history_base}\`](${repository_url}/commit/${history_base})"
     fi
     echo
     if [[ -n "$previous_tag" ]]; then
@@ -100,12 +101,12 @@ fi
     echo "# Better Todo Tree ${release_tag#v}"
     echo
     echo "- release tag: \`$release_tag\`"
-    echo "- target commit: \`$target_sha\`"
+    echo "- target commit: [\`${target_sha}\`](${repository_url}/commit/${target_sha})"
     if [[ -n "$previous_tag" ]]; then
       echo "- previous release: \`$previous_tag\`"
     else
       echo "- previous release: none"
-      echo "- fork point: \`$history_base\`"
+      echo "- fork point: [\`${history_base}\`](${repository_url}/commit/${history_base})"
     fi
     echo
     if [[ -n "$previous_tag" ]]; then
@@ -122,8 +123,24 @@ fi
     echo "- No commits beyond the previous release boundary."
   else
     for commit in "${commits[@]}"; do
-      IFS=$'\t' read -r short_sha subject <<<"$commit"
-      printf -- '- `%s` %s\n' "$short_sha" "$subject"
+      commit="${commit#$'\n'}"
+      full_sha="${commit%%$'\x1f'*}"
+      if [[ -z "$full_sha" ]]; then
+        continue
+      fi
+      remainder="${commit#*$'\x1f'}"
+      short_sha="${remainder%%$'\x1f'*}"
+      remainder="${remainder#*$'\x1f'}"
+      subject="${remainder%%$'\x1f'*}"
+      body="${remainder#*$'\x1f'}"
+
+      printf -- '- [`%s`](%s/commit/%s) %s\n' "$short_sha" "$repository_url" "$full_sha" "$subject"
+
+      if [[ -n "$body" ]]; then
+        while IFS= read -r body_line; do
+          printf '  > %s\n' "$body_line"
+        done <<<"$body"
+      fi
     done
   fi
 } > "$output_file"
