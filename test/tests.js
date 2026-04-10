@@ -271,7 +271,7 @@ QUnit.test( "utils.getRegexSource returns the regex source and escapes backslash
     testConfig.tagList = [ "\\TWO", "ONE\\" ];
     utils.init( testConfig );
 
-    assert.equal( utils.getRegexSource(), "(\\\\\\TWO|ONE\\\\\\)" );
+    assert.equal( utils.getRegexSource(), "(\\\\TWO|ONE\\\\)" );
 } );
 
 QUnit.test( "utils.getRegexSource sorts the tags in reverse order to allow more specific tags to be found first", function( assert )

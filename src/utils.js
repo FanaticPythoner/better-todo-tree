@@ -215,14 +215,17 @@ function getTagRegex()
     return getTagRegexSource();
 }
 
+function escapeRegexLiteral( value )
+{
+    return value.replace( /[|\\{}()[\]^$+*?.-]/g, '\\$&' );
+}
+
 function getTagRegexSource( uri, tagList )
 {
     var tags = ( tagList || config.tags() ).slice().sort().reverse();
     tags = tags.map( function( tag )
     {
-        tag = tag.replace( /\\/g, '\\\\\\' );
-        tag = tag.replace( /[|{}()[\]^$+*?.-]/g, '\\$&' );
-        return tag;
+        return escapeRegexLiteral( tag );
     } );
     tags = tags.join( '|' );
     return tags;
