@@ -332,7 +332,7 @@ Stable release notes published to GitHub are mirrored here for Marketplace versi
   > Repository, licensing, and packaging hardening:
   > - standardize on LICENSE and remove the old License.txt path
   > - distribute the fork as GPL-3.0-only while preserving the upstream Todo Tree
-  >   Expat/MIT notice in LICENSE.upstream
+  >   Expat/MIT notice in UPSTREAM-NOTICE.md
   > - align package metadata and docs with the GPL-3.0-only fork license
   > - document migration behavior, compatibility boundaries, release setup, and
   >   licensing in MIGRATION.md

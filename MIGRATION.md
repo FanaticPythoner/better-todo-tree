@@ -73,4 +73,4 @@ Recommended repository Actions settings:
 ## Licensing
 
 The fork is distributed under `GPL-3.0-only`. The preserved upstream Todo Tree
-Expat/MIT notice remains in [`LICENSE.upstream`](./LICENSE.upstream).
+Expat/MIT notice remains in [`UPSTREAM-NOTICE.md`](./UPSTREAM-NOTICE.md).

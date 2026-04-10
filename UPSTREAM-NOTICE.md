@@ -1,9 +1,14 @@
-Todo Tree upstream notice retained for code originally distributed under the
-Expat/MIT license.
+# Upstream Todo Tree Notice
 
-Original work copyright (c) Nigel Scott
+Better Todo Tree is a fork of [Todo Tree](https://github.com/Gruntfuggly/todo-tree).
+Code originating from that upstream project was originally distributed under
+the Expat/MIT license, reproduced below for attribution and notice retention.
+
+## Upstream MIT Notice
 
 MIT License
+
+Copyright (c) Nigel Scott
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

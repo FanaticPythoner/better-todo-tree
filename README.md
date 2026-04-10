@@ -628,4 +628,4 @@ Simplified Chinese translation by [loniceras](https://github.com/loniceras).
 This fork is distributed under **GPL-3.0-only**. The original Todo Tree code
 that this fork builds on was originally distributed under the Expat/MIT
 license, and that upstream notice is preserved in
-[`LICENSE.upstream`](./LICENSE.upstream).
+[`UPSTREAM-NOTICE.md`](./UPSTREAM-NOTICE.md).
