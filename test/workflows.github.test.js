@@ -52,6 +52,24 @@ QUnit.test( 'release workflow requests provenance-related permissions', function
     assert.ok( contents.indexOf( 'contents: write' ) !== -1 );
 } );
 
+QUnit.test( 'latest workflow publishes a moving prerelease from master', function( assert )
+{
+    var latestWorkflow = fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', 'latest.yml' ), 'utf8' );
+    var movingReleaseScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'create-or-update-moving-github-release.sh' ), 'utf8' );
+
+    assert.ok( latestWorkflow.indexOf( 'push:\n    branches:\n      - master' ) !== -1 );
+    assert.ok( latestWorkflow.indexOf( 'schedule:' ) !== -1 );
+    assert.ok( latestWorkflow.indexOf( 'group: latest-master' ) !== -1 );
+    assert.ok( latestWorkflow.indexOf( "RELEASE_TAG: latest" ) !== -1 );
+    assert.ok( latestWorkflow.indexOf( 'RELEASE_TARGET_BRANCH: master' ) !== -1 );
+    assert.ok( latestWorkflow.indexOf( 'run: bash scripts/release/create-or-update-moving-github-release.sh' ) !== -1 );
+    assert.ok( movingReleaseScript.indexOf( 'git push --force origin "refs/tags/$RELEASE_TAG"' ) !== -1 );
+    assert.ok( movingReleaseScript.indexOf( 'gh release delete "$RELEASE_TAG" --yes' ) !== -1 );
+    assert.ok( movingReleaseScript.indexOf( 'write-release-notes.sh' ) !== -1 );
+    assert.ok( movingReleaseScript.indexOf( '--channel latest' ) !== -1 );
+    assert.ok( movingReleaseScript.indexOf( '--prerelease' ) !== -1 );
+} );
+
 QUnit.test( 'release workflows build and publish from the resolved release ref', function( assert )
 {
     var releaseWorkflow = fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', 'release.yml' ), 'utf8' );
@@ -107,11 +125,14 @@ QUnit.test( 'justfile exposes GitHub Actions verification recipes', function( as
 {
     var justfile = fs.readFileSync( path.join( __dirname, '..', 'justfile' ), 'utf8' );
     var releaseWorkflow = fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', 'release.yml' ), 'utf8' );
+    var latestWorkflow = fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', 'latest.yml' ), 'utf8' );
 
     assert.ok( justfile.indexOf( 'bootstrap-release-env:' ) !== -1 );
     assert.ok( justfile.indexOf( 'lint-actions:' ) !== -1 );
     assert.ok( justfile.indexOf( 'test-actions-ci:' ) !== -1 );
     assert.ok( justfile.indexOf( 'test-actions-release-build:' ) !== -1 );
+    assert.ok( justfile.indexOf( 'test-actions-latest-build:' ) !== -1 );
     assert.ok( justfile.indexOf( 'test-actions:' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0' ) !== -1 );
+    assert.ok( latestWorkflow.indexOf( 'actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0' ) !== -1 );
 } );

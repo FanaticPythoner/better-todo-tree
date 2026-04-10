@@ -70,6 +70,12 @@ bootstrap-release-env:
   set -euo pipefail
   bash scripts/release/bootstrap-release-environment.sh
 
+next-release *args:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  {{node_bootstrap}}
+  bash scripts/release/create-next-release.sh {{args}}
+
 lint-actions:
   #!/usr/bin/env bash
   set -euo pipefail
@@ -146,6 +152,12 @@ test-actions-release-build:
     fi
   )
 
+test-actions-latest-build:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  {{node_bootstrap}}
+  npx qunit test/workflows.github.test.js test/release.workflow-scripts.test.js
+
 test-actions:
   #!/usr/bin/env bash
   set -euo pipefail
@@ -153,6 +165,7 @@ test-actions:
   just lint-actions
   just test-actions-ci
   just test-actions-release-build
+  just test-actions-latest-build
 
 build-ext *platforms:
   #!/usr/bin/env bash

@@ -1,0 +1,92 @@
+name: Latest
+
+on:
+  push:
+    branches:
+      - master
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: latest-master
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    outputs:
+      release_ref: ${{ steps.meta.outputs.release_ref }}
+      release_sha: ${{ steps.meta.outputs.release_sha }}
+      release_short_sha: ${{ steps.meta.outputs.release_short_sha }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve latest release metadata
+        id: meta
+        run: |
+          echo "release_ref=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "release_short_sha=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Run test suite
+        run: npm test
+
+      - name: Build production bundle
+        run: npm run vscode:prepublish
+
+  build:
+    needs: preflight
+    uses: ./.github/workflows/reusable-build-vsix.yml
+    with:
+      ref: ${{ needs.preflight.outputs.release_ref }}
+      targets: '["win32-x64","win32-arm64","linux-x64","linux-arm64","linux-armhf","darwin-x64","darwin-arm64","alpine-x64","alpine-arm64","web"]'
+    secrets: inherit
+
+  github-release:
+    needs:
+      - preflight
+      - build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.release_ref }}
+
+      - name: Download VSIX artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          pattern: vsix-*
+          path: artifacts/release
+          merge-multiple: true
+
+      - name: Create or update latest GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: latest
+          RELEASE_TITLE: Latest Nightly Build (${{ needs.preflight.outputs.release_short_sha }})
+          RELEASE_TARGET_SHA: ${{ needs.preflight.outputs.release_sha }}
+          RELEASE_TARGET_BRANCH: master
+        run: bash scripts/release/create-or-update-moving-github-release.sh

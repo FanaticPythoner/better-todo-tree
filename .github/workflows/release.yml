@@ -157,4 +157,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
           PRERELEASE: ${{ needs.preflight.outputs.prerelease }}
+          RELEASE_TARGET_SHA: ${{ needs.preflight.outputs.release_sha }}
         run: bash scripts/release/create-github-release.sh
