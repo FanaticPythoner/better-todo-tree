@@ -2,6 +2,9 @@
 set -euo pipefail
 
 release_semver_tag_pattern='^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'
+release_upstream_repository_default='https://github.com/Gruntfuggly/todo-tree.git'
+release_upstream_branch_default='master'
+release_upstream_ref_default='refs/remotes/release-upstream/master'
 
 release_semver_tags()
 {
@@ -78,4 +81,36 @@ increment_release_version()
   esac
 
   printf '%s.%s.%s\n' "$major" "$minor" "$patch"
+}
+
+resolve_release_upstream_ref()
+{
+  local configured_ref="${RELEASE_UPSTREAM_REF:-}"
+  local upstream_branch="${RELEASE_UPSTREAM_BRANCH:-$release_upstream_branch_default}"
+  local upstream_ref="$release_upstream_ref_default"
+  local upstream_repository="${RELEASE_UPSTREAM_REPOSITORY:-$release_upstream_repository_default}"
+
+  if [[ -n "$configured_ref" ]]; then
+    git rev-parse --verify "$configured_ref" >/dev/null 2>&1
+    printf '%s\n' "$configured_ref"
+    return 0
+  fi
+
+  if git rev-parse --verify "refs/remotes/upstream/${upstream_branch}" >/dev/null 2>&1; then
+    printf 'refs/remotes/upstream/%s\n' "$upstream_branch"
+    return 0
+  fi
+
+  git fetch --no-tags "$upstream_repository" "${upstream_branch}:${upstream_ref}" >/dev/null 2>&1
+  git rev-parse --verify "$upstream_ref" >/dev/null 2>&1
+  printf '%s\n' "$upstream_ref"
+}
+
+release_fork_point()
+{
+  local target_ref="${1:-HEAD}"
+  local upstream_ref
+
+  upstream_ref="$(resolve_release_upstream_ref)"
+  git merge-base "$target_ref" "$upstream_ref"
 }

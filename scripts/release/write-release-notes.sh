@@ -56,10 +56,20 @@ fi
 
 target_sha="$(git rev-parse "$target_ref")"
 previous_tag="$(previous_release_tag "$release_tag" || true)"
+history_base=''
+history_base_label=''
 mkdir -p "$(dirname "$output_file")"
 
 if [[ -n "$previous_tag" ]]; then
-  mapfile -t commits < <(git log --reverse --format='%h%x09%s' "${previous_tag}..${target_sha}")
+  history_base="$previous_tag"
+  history_base_label="previous release"
+else
+  history_base="$(release_fork_point "$target_sha")"
+  history_base_label='fork point'
+fi
+
+if [[ -n "$history_base" ]]; then
+  mapfile -t commits < <(git log --reverse --format='%h%x09%s' "${history_base}..${target_sha}")
 else
   mapfile -t commits < <(git log --reverse --format='%h%x09%s' "${target_sha}")
 fi
@@ -76,10 +86,13 @@ fi
       echo "- base stable release: \`$previous_tag\`"
     else
       echo "- base stable release: none"
+      echo "- fork point: \`$history_base\`"
     fi
     echo
     if [[ -n "$previous_tag" ]]; then
       echo "## Included commits since \`$previous_tag\`"
+    elif [[ -n "$history_base" ]]; then
+      echo "## Included commits since fork point"
     else
       echo "## Included commits"
     fi
@@ -92,9 +105,16 @@ fi
       echo "- previous release: \`$previous_tag\`"
     else
       echo "- previous release: none"
+      echo "- fork point: \`$history_base\`"
     fi
     echo
-    echo "## Included commits"
+    if [[ -n "$previous_tag" ]]; then
+      echo "## Included commits"
+    elif [[ -n "$history_base" ]]; then
+      echo "## Included commits since fork point"
+    else
+      echo "## Included commits"
+    fi
   fi
   echo
 

@@ -80,6 +80,38 @@ function createReleaseNotesWorkspace()
     return workspace;
 }
 
+function createForkedReleaseNotesWorkspace()
+{
+    var workspace = createWorkspace();
+    var env = Object.assign( {}, process.env, {
+        GIT_AUTHOR_NAME: 'Codex',
+        GIT_AUTHOR_EMAIL: 'codex@example.invalid',
+        GIT_COMMITTER_NAME: 'Codex',
+        GIT_COMMITTER_EMAIL: 'codex@example.invalid'
+    } );
+
+    fs.writeFileSync( path.join( workspace.root, 'package.json' ), JSON.stringify( { version: '0.0.225' }, null, 2 ) + '\n' );
+    fs.writeFileSync( path.join( workspace.root, 'package-lock.json' ), JSON.stringify( { name: 'better-todo-tree', version: '0.0.225', lockfileVersion: 3, packages: { '': { version: '0.0.225' } } }, null, 2 ) + '\n' );
+    childProcess.spawnSync( 'git', [ 'init', '-b', 'master' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'add', 'package.json', 'package-lock.json' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'commit', '-m', 'upstream fixture start' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    fs.writeFileSync( path.join( workspace.root, 'upstream.txt' ), 'upstream one\n' );
+    childProcess.spawnSync( 'git', [ 'add', 'upstream.txt' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'commit', '-m', 'upstream fixture change one' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    fs.writeFileSync( path.join( workspace.root, 'upstream.txt' ), 'upstream one\nupstream two\n' );
+    childProcess.spawnSync( 'git', [ 'add', 'upstream.txt' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'commit', '-m', 'upstream fixture change two' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'branch', 'upstream-base' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    fs.writeFileSync( path.join( workspace.root, 'fork.txt' ), 'fork one\n' );
+    childProcess.spawnSync( 'git', [ 'add', 'fork.txt' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'commit', '-m', 'fork change one' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    fs.writeFileSync( path.join( workspace.root, 'fork.txt' ), 'fork one\nfork two\n' );
+    childProcess.spawnSync( 'git', [ 'add', 'fork.txt' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'commit', '-m', 'fork change two' ], { cwd: workspace.root, encoding: 'utf8', env: env } );
+
+    return workspace;
+}
+
 function runScript( scriptPath, options )
 {
     return childProcess.spawnSync( 'bash', [ scriptPath ], {
@@ -494,6 +526,42 @@ QUnit.test( 'write-release-notes lists included commits in chronological order',
     assert.ok( notes.indexOf( '- previous release: `v0.0.225`' ) !== -1 );
     assert.ok( notes.indexOf( '- `') !== -1 );
     assert.ok( notes.indexOf( 'first post-release change' ) < notes.indexOf( 'second post-release change' ) );
+} );
+
+QUnit.test( 'write-release-notes excludes upstream history when no stable release exists yet', function( assert )
+{
+    var workspace = createForkedReleaseNotesWorkspace();
+    var notesFilePath = path.join( workspace.root, 'release-notes.md' );
+    var env = Object.assign( {}, process.env, {
+        RELEASE_UPSTREAM_REF: 'upstream-base'
+    } );
+    var result = childProcess.spawnSync(
+        'bash',
+        [
+            path.join( __dirname, '..', 'scripts', 'release', 'write-release-notes.sh' ),
+            '--channel', 'latest',
+            '--tag', 'latest',
+            '--target', 'HEAD',
+            '--target-branch', 'master',
+            '--output', notesFilePath
+        ],
+        {
+            cwd: workspace.root,
+            encoding: 'utf8',
+            env: env
+        }
+    );
+    var notes = fs.readFileSync( notesFilePath, 'utf8' );
+
+    assert.strictEqual( result.status, 0, result.stderr );
+    assert.ok( notes.indexOf( '- base stable release: none' ) !== -1 );
+    assert.ok( notes.indexOf( '- fork point: `') !== -1 );
+    assert.ok( notes.indexOf( '## Included commits since fork point' ) !== -1 );
+    assert.ok( notes.indexOf( 'fork change one' ) !== -1 );
+    assert.ok( notes.indexOf( 'fork change two' ) !== -1 );
+    assert.ok( notes.indexOf( 'upstream fixture change one' ) === -1 );
+    assert.ok( notes.indexOf( 'upstream fixture change two' ) === -1 );
+    assert.ok( notes.indexOf( 'fork change one' ) < notes.indexOf( 'fork change two' ) );
 } );
 
 QUnit.test( 'create-next-release increments the last stable tag, commits, tags, and writes notes', function( assert )
