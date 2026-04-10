@@ -1,6 +1,39 @@
 # Better Todo Tree
 
-This extension quickly searches (using [ripgrep](https://github.com/BurntSushi/ripgrep)) your workspace for comment tags like TODO and FIXME, and displays them in a tree view in the activity bar. The view can be dragged out of the activity bar into the explorer pane (or anywhere else you would prefer it to be).
+## Maintained Fork Status
+
+Better Todo Tree is an independent, actively maintained fork of
+[Todo Tree](https://github.com/Gruntfuggly/todo-tree). It keeps the same core
+workflow people expect from Todo Tree, while shipping under an independent
+publisher, with its own release pipeline, website, issue tracker, and fork-era
+compatibility layer.
+
+What stays familiar:
+
+- scan source files for TODO, FIXME, BUG, and custom comment tags
+- show matches in a dedicated tree view
+- reveal matches in files and highlight them in the editor
+- preserve the general Todo Tree mental model and workspace workflow
+
+What is specific to Better Todo Tree:
+
+- active maintenance and current releases under `FanaticPythoner.better-todo-tree`
+- compatibility-first migration for existing Todo Tree users and settings
+- independent documentation, distribution, and support surfaces
+- fork-specific licensing and release automation
+
+Official links:
+
+- Website: <https://bettertodotree.com>
+- Marketplace: <https://marketplace.visualstudio.com/items?itemName=FanaticPythoner.better-todo-tree>
+- Source and issues: <https://github.com/FanaticPythoner/better-todo-tree>
+- Upstream project base: <https://github.com/Gruntfuggly/todo-tree>
+
+Better Todo Tree quickly searches (using
+[ripgrep](https://github.com/BurntSushi/ripgrep)) your workspace for comment
+tags like TODO and FIXME, and displays them in a tree view in the activity
+bar. The view can be dragged out of the activity bar into the explorer pane (or
+anywhere else you would prefer it to be).
 
 Clicking a TODO within the tree will open the file and put the cursor on the line containing the TODO.
 
