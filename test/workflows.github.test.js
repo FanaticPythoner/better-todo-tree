@@ -97,6 +97,7 @@ QUnit.test( 'release workflows build and publish from the resolved release ref',
     assert.ok( releaseWorkflow.indexOf( 'publish-open-vsx:' ) === -1 );
     assert.ok( reusableBuildWorkflow.indexOf( 'ref:' ) !== -1 );
     assert.ok( reusableBuildWorkflow.indexOf( 'ref: ${{ inputs.ref }}' ) !== -1 );
+    assert.ok( reusableBuildWorkflow.indexOf( 'fetch-depth: 0' ) !== -1 );
     assert.ok( reusableBuildWorkflow.indexOf( 'release_tag:' ) !== -1 );
     assert.ok( reusableBuildWorkflow.indexOf( 'run: bash scripts/release/render-marketplace-changelog.sh --through-tag "${{ inputs.release_tag }}"' ) !== -1 );
     assert.ok( publishVsCodeScript.indexOf( '@vscode/vsce publish' ) !== -1 );

@@ -9,6 +9,21 @@ output_file='CHANGELOG.md'
 through_tag=''
 upstream_history_file='CHANGELOG.upstream.md'
 
+ensure_release_tag_available()
+{
+  local requested_tag="$1"
+
+  if git rev-parse --verify "refs/tags/$requested_tag" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if git config --get remote.origin.url >/dev/null 2>&1; then
+    git fetch --tags origin >/dev/null 2>&1
+  fi
+
+  git rev-parse --verify "refs/tags/$requested_tag" >/dev/null 2>&1
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output)
@@ -36,6 +51,11 @@ fi
 
 if [[ -z "$through_tag" ]]; then
   echo 'No release tags were found for Marketplace changelog rendering.' >&2
+  exit 1
+fi
+
+if ! ensure_release_tag_available "$through_tag"; then
+  echo "Release tag '$through_tag' was not found." >&2
   exit 1
 fi
 

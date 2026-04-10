@@ -34,7 +34,8 @@ function createReleaseGitWorkspace()
         GIT_AUTHOR_EMAIL: 'codex@example.invalid',
         GIT_COMMITTER_NAME: 'Codex',
         GIT_COMMITTER_EMAIL: 'codex@example.invalid',
-        RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree'
+        RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree',
+        RELEASE_UPSTREAM_REF: 'v0.0.225'
     } );
 
     fs.writeFileSync( path.join( workspace.root, 'package.json' ), JSON.stringify( { version: '0.0.225' }, null, 2 ) + '\n' );
@@ -59,7 +60,8 @@ function createReleaseNotesWorkspace()
         GIT_AUTHOR_EMAIL: 'codex@example.invalid',
         GIT_COMMITTER_NAME: 'Codex',
         GIT_COMMITTER_EMAIL: 'codex@example.invalid',
-        RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree'
+        RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree',
+        RELEASE_UPSTREAM_REF: 'v0.0.225'
     } );
 
     fs.writeFileSync( path.join( workspace.root, 'package.json' ), JSON.stringify( { version: '0.0.225' }, null, 2 ) + '\n' );
@@ -91,7 +93,8 @@ function createForkedReleaseNotesWorkspace()
         GIT_AUTHOR_EMAIL: 'codex@example.invalid',
         GIT_COMMITTER_NAME: 'Codex',
         GIT_COMMITTER_EMAIL: 'codex@example.invalid',
-        RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree'
+        RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree',
+        RELEASE_UPSTREAM_REF: 'v0.0.225'
     } );
 
     fs.writeFileSync( path.join( workspace.root, 'package.json' ), JSON.stringify( { version: '0.0.225' }, null, 2 ) + '\n' );
@@ -625,6 +628,64 @@ QUnit.test( 'render-marketplace-changelog mirrors stable release notes and prese
     assert.ok( changelog.indexOf( '## Upstream Todo Tree history' ) !== -1 );
     assert.ok( changelog.indexOf( 'preserved upstream entry' ) !== -1 );
     assert.ok( changelog.indexOf( '# Better Todo Tree Change Log\n\n## v0.0.224' ) === -1, changelog );
+} );
+
+QUnit.test( 'render-marketplace-changelog fetches release tags when running from a shallow tag checkout', function( assert )
+{
+    var fixtureRoot = fs.mkdtempSync( path.join( os.tmpdir(), 'better-todo-tree-shallow-source-' ) );
+    var remotePath = path.join( fs.mkdtempSync( path.join( os.tmpdir(), 'better-todo-tree-shallow-origin-' ) ), 'origin.git' );
+    var checkoutRoot = fs.mkdtempSync( path.join( os.tmpdir(), 'better-todo-tree-shallow-checkout-' ) );
+    var env = Object.assign( {}, process.env, {
+        GIT_AUTHOR_NAME: 'Codex',
+        GIT_AUTHOR_EMAIL: 'codex@example.invalid',
+        GIT_COMMITTER_NAME: 'Codex',
+        GIT_COMMITTER_EMAIL: 'codex@example.invalid',
+        RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree',
+        RELEASE_UPSTREAM_REF: 'v0.0.225'
+    } );
+    var result;
+    var changelog;
+
+    fs.writeFileSync( path.join( fixtureRoot, 'package.json' ), JSON.stringify( { version: '0.0.225' }, null, 2 ) + '\n' );
+    fs.writeFileSync( path.join( fixtureRoot, 'package-lock.json' ), JSON.stringify( { name: 'better-todo-tree', version: '0.0.225', lockfileVersion: 3, packages: { '': { version: '0.0.225' } } }, null, 2 ) + '\n' );
+    fs.writeFileSync( path.join( fixtureRoot, 'CHANGELOG.upstream.md' ), '# Better Todo Tree Change Log\n\n## v0.0.224 - 2023-02-09\n\n- upstream entry\n' );
+    childProcess.spawnSync( 'git', [ 'init', '-b', 'master' ], { cwd: fixtureRoot, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'add', 'package.json', 'package-lock.json', 'CHANGELOG.upstream.md' ], { cwd: fixtureRoot, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'commit', '-m', 'initial fixture' ], { cwd: fixtureRoot, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'tag', '-a', 'v0.0.225', '-m', 'release 0.0.225' ], { cwd: fixtureRoot, encoding: 'utf8', env: env } );
+    fs.writeFileSync( path.join( fixtureRoot, 'feature.txt' ), 'new release\n' );
+    childProcess.spawnSync( 'git', [ 'add', 'feature.txt' ], { cwd: fixtureRoot, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'commit', '-m', 'fork release change' ], { cwd: fixtureRoot, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'tag', '-a', 'v0.0.226', '-m', 'release 0.0.226' ], { cwd: fixtureRoot, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'init', '--bare', remotePath ], { cwd: fixtureRoot, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'remote', 'add', 'origin', remotePath ], { cwd: fixtureRoot, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'push', '-u', 'origin', 'master' ], { cwd: fixtureRoot, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'push', 'origin', '--tags' ], { cwd: fixtureRoot, encoding: 'utf8', env: env } );
+
+    childProcess.spawnSync( 'git', [ 'init' ], { cwd: checkoutRoot, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'remote', 'add', 'origin', remotePath ], { cwd: checkoutRoot, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'fetch', '--depth=1', 'origin', 'refs/tags/v0.0.226' ], { cwd: checkoutRoot, encoding: 'utf8', env: env } );
+    childProcess.spawnSync( 'git', [ 'checkout', 'FETCH_HEAD' ], { cwd: checkoutRoot, encoding: 'utf8', env: env } );
+
+    result = childProcess.spawnSync(
+        'bash',
+        [
+            path.join( __dirname, '..', 'scripts', 'release', 'render-marketplace-changelog.sh' ),
+            '--through-tag', 'v0.0.226',
+            '--output', path.join( checkoutRoot, 'CHANGELOG.md' )
+        ],
+        {
+            cwd: checkoutRoot,
+            encoding: 'utf8',
+            env: env
+        }
+    );
+    changelog = fs.readFileSync( path.join( checkoutRoot, 'CHANGELOG.md' ), 'utf8' );
+
+    assert.strictEqual( result.status, 0, result.stderr );
+    assert.ok( changelog.indexOf( '## v0.0.226 - ' ) !== -1 );
+    assert.ok( changelog.indexOf( 'fork release change' ) !== -1 );
+    assert.ok( changelog.indexOf( '## v0.0.225 - ' ) !== -1 );
 } );
 
 QUnit.test( 'verify-vscode-marketplace waits for public version metadata and changelog parity', function( assert )
