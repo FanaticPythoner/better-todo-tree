@@ -1,5 +1,6 @@
 var childProcess = require( 'child_process' );
 var fs = require( 'fs' );
+var http = require( 'http' );
 var os = require( 'os' );
 var path = require( 'path' );
 
@@ -577,6 +578,179 @@ QUnit.test( 'write-release-notes excludes upstream history when no stable releas
     assert.ok( notes.indexOf( 'upstream fixture change one' ) === -1 );
     assert.ok( notes.indexOf( 'upstream fixture change two' ) === -1 );
     assert.ok( notes.indexOf( 'fork change one' ) < notes.indexOf( 'fork change two' ) );
+} );
+
+QUnit.test( 'render-marketplace-changelog mirrors stable release notes and preserves upstream history', function( assert )
+{
+    var workspace = createReleaseNotesWorkspace();
+    var changelogPath = path.join( workspace.root, 'CHANGELOG.md' );
+    var upstreamHistoryPath = path.join( workspace.root, 'CHANGELOG.upstream.md' );
+    var env = Object.assign( {}, process.env, {
+        RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree',
+        RELEASE_UPSTREAM_REF: 'v0.0.225'
+    } );
+    var result;
+    var changelog;
+
+    fs.writeFileSync(
+        upstreamHistoryPath,
+        '# Better Todo Tree Change Log\n\n## v0.0.224 - 2023-02-09\n\n- preserved upstream entry\n'
+    );
+
+    result = childProcess.spawnSync(
+        'bash',
+        [
+            path.join( __dirname, '..', 'scripts', 'release', 'render-marketplace-changelog.sh' ),
+            '--through-tag', 'v0.0.226',
+            '--output', changelogPath,
+            '--upstream-history', upstreamHistoryPath
+        ],
+        {
+            cwd: workspace.root,
+            encoding: 'utf8',
+            env: env
+        }
+    );
+    changelog = fs.readFileSync( changelogPath, 'utf8' );
+
+    assert.strictEqual( result.status, 0, result.stderr );
+    assert.ok( changelog.indexOf( '# Better Todo Tree Change Log' ) !== -1 );
+    assert.ok( changelog.indexOf( 'Stable release notes published to GitHub are mirrored here for Marketplace version history.' ) !== -1 );
+    assert.ok( changelog.indexOf( '## v0.0.226 - ' ) !== -1 );
+    assert.ok( changelog.indexOf( '- release tag: `v0.0.226`' ) !== -1 );
+    assert.ok( changelog.indexOf( '- target commit: [`' ) !== -1 );
+    assert.ok( changelog.indexOf( '## Included commits' ) !== -1 );
+    assert.ok( changelog.indexOf( 'first post-release change' ) !== -1 );
+    assert.ok( changelog.indexOf( 'second post-release change' ) !== -1 );
+    assert.ok( changelog.indexOf( '## Upstream Todo Tree history' ) !== -1 );
+    assert.ok( changelog.indexOf( 'preserved upstream entry' ) !== -1 );
+    assert.ok( changelog.indexOf( '# Better Todo Tree Change Log\n\n## v0.0.224' ) === -1, changelog );
+} );
+
+QUnit.test( 'verify-vscode-marketplace waits for public version metadata and changelog parity', function( assert )
+{
+    var done = assert.async();
+    var workspace = createWorkspace();
+    var expectedChangelogPath = path.join( workspace.root, 'expected-changelog.md' );
+    var server;
+    var child;
+    var state = {
+        queryCount: 0
+    };
+    var stdout = '';
+    var stderr = '';
+
+    fs.writeFileSync(
+        path.join( workspace.root, 'package.json' ),
+        JSON.stringify( {
+            name: 'better-todo-tree',
+            publisher: 'FanaticPythoner',
+            description: 'Marketplace verification fixture'
+        }, null, 4 ) + '\n'
+    );
+    fs.mkdirSync( path.join( workspace.root, 'scripts', 'release' ), { recursive: true } );
+    fs.writeFileSync(
+        path.join( workspace.root, 'scripts', 'release', 'targets.json' ),
+        JSON.stringify( [ 'linux-x64', 'web' ], null, 4 ) + '\n'
+    );
+    fs.writeFileSync( expectedChangelogPath, '# Better Todo Tree Change Log\n\n## v0.0.228 - 2026-04-10\n' );
+
+    server = http.createServer( function( req, res )
+    {
+        if( req.method === 'POST' && req.url === '/query' )
+        {
+            state.queryCount += 1;
+            res.setHeader( 'Content-Type', 'application/json' );
+            res.end( JSON.stringify( {
+                results: [
+                    {
+                        extensions: [
+                            {
+                                shortDescription: 'Marketplace verification fixture',
+                                versions: [
+                                    {
+                                        version: '0.0.228',
+                                        targetPlatform: 'linux-x64',
+                                        files: [
+                                            {
+                                                assetType: 'Microsoft.VisualStudio.Services.Content.Changelog',
+                                                source: 'http://127.0.0.1:' + server.address().port + '/changelog'
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        version: '0.0.228',
+                                        targetPlatform: state.queryCount > 1 ? 'web' : 'missing',
+                                        files: [
+                                            {
+                                                assetType: 'Microsoft.VisualStudio.Services.Content.Changelog',
+                                                source: 'http://127.0.0.1:' + server.address().port + '/changelog'
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            } ) );
+            return;
+        }
+
+        if( req.method === 'GET' && req.url === '/changelog' )
+        {
+            res.setHeader( 'Content-Type', 'text/plain; charset=utf-8' );
+            res.end( '# Better Todo Tree Change Log\n\n## v0.0.228 - 2026-04-10\n' );
+            return;
+        }
+
+        res.statusCode = 404;
+        res.end( 'not found' );
+    } );
+
+    server.listen( 0, '127.0.0.1', function()
+    {
+        child = childProcess.spawn(
+            'python3',
+            [
+                path.join( __dirname, '..', 'scripts', 'release', 'verify-vscode-marketplace.py' ),
+                '--tag', 'v0.0.228',
+                '--package-json', 'package.json',
+                '--targets', 'scripts/release/targets.json',
+                '--expected-changelog', 'expected-changelog.md',
+                '--query-url', 'http://127.0.0.1:' + server.address().port + '/query',
+                '--interval-seconds', '0',
+                '--timeout-seconds', '5'
+            ],
+            {
+                cwd: workspace.root,
+                encoding: 'utf8',
+                env: process.env
+            }
+        );
+
+        child.stdout.on( 'data', function( chunk )
+        {
+            stdout += chunk.toString();
+        } );
+
+        child.stderr.on( 'data', function( chunk )
+        {
+            stderr += chunk.toString();
+        } );
+
+        child.on( 'close', function( code )
+        {
+            server.close( function()
+            {
+                assert.strictEqual( code, 0, stderr );
+                assert.ok( stdout.indexOf( 'Marketplace version 0.0.228 is publicly available' ) !== -1 );
+                assert.ok( stdout.indexOf( 'linux-x64, web' ) !== -1 );
+                assert.ok( state.queryCount >= 2, String( state.queryCount ) );
+                done();
+            } );
+        } );
+    } );
 } );
 
 QUnit.test( 'create-next-release accepts the just argument separator and creates the next release', function( assert )

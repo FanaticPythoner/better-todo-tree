@@ -78,10 +78,13 @@ QUnit.test( 'release workflows build and publish from the resolved release ref',
     var publishOpenVsxScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'publish-open-vsx.sh' ), 'utf8' );
     var githubReleaseScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'create-github-release.sh' ), 'utf8' );
     var releaseArtifactsScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'release-artifacts.sh' ), 'utf8' );
+    var renderMarketplaceChangelogScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'render-marketplace-changelog.sh' ), 'utf8' );
+    var verifyMarketplaceScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'verify-vscode-marketplace.sh' ), 'utf8' );
 
     assert.ok( releaseWorkflow.indexOf( 'release_ref: ${{ steps.meta.outputs.release_ref }}' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'ref: ${{ needs.preflight.outputs.release_ref }}' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'run: bash scripts/release/resolve-release-metadata.sh' ) !== -1 );
+    assert.ok( releaseWorkflow.indexOf( 'verify-marketplace:' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'publish:' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'run: bash scripts/release/publish-vscode-marketplace.sh' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'run: bash scripts/release/publish-open-vsx.sh' ) !== -1 );
@@ -89,10 +92,13 @@ QUnit.test( 'release workflows build and publish from the resolved release ref',
     assert.ok( releaseWorkflow.indexOf( 'steps.publish_open_vsx.outcome }}" == \'failure\'' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( '::warning::Open VSX publication failed after VS Code Marketplace publication completed.' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'run: bash scripts/release/create-github-release.sh' ) !== -1 );
+    assert.ok( releaseWorkflow.indexOf( 'run: bash scripts/release/verify-vscode-marketplace.sh' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'github-release:\n    needs:\n      - preflight\n      - publish' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'publish-open-vsx:' ) === -1 );
     assert.ok( reusableBuildWorkflow.indexOf( 'ref:' ) !== -1 );
     assert.ok( reusableBuildWorkflow.indexOf( 'ref: ${{ inputs.ref }}' ) !== -1 );
+    assert.ok( reusableBuildWorkflow.indexOf( 'release_tag:' ) !== -1 );
+    assert.ok( reusableBuildWorkflow.indexOf( 'run: bash scripts/release/render-marketplace-changelog.sh --through-tag "${{ inputs.release_tag }}"' ) !== -1 );
     assert.ok( publishVsCodeScript.indexOf( '@vscode/vsce publish' ) !== -1 );
     assert.ok( publishVsCodeScript.indexOf( '--skip-duplicate' ) !== -1 );
     assert.ok( publishOpenVsxScript.indexOf( 'ovsx publish' ) !== -1 );
@@ -101,6 +107,10 @@ QUnit.test( 'release workflows build and publish from the resolved release ref',
     assert.ok( githubReleaseScript.indexOf( 'release_artifact_files' ) !== -1 );
     assert.ok( githubReleaseScript.indexOf( "gh release view \"$RELEASE_TAG\"" ) !== -1 );
     assert.ok( githubReleaseScript.indexOf( 'gh release upload "$RELEASE_TAG" "${files[@]}" --clobber' ) !== -1 );
+    assert.ok( renderMarketplaceChangelogScript.indexOf( 'Stable release notes published to GitHub are mirrored here for Marketplace version history.' ) !== -1 );
+    assert.ok( renderMarketplaceChangelogScript.indexOf( '## Upstream Todo Tree history' ) !== -1 );
+    assert.ok( verifyMarketplaceScript.indexOf( 'render-marketplace-changelog.sh' ) !== -1 );
+    assert.ok( verifyMarketplaceScript.indexOf( 'verify-vscode-marketplace.py' ) !== -1 );
 } );
 
 QUnit.test( 'ci workflow uploads only the smoke-test linux artifact', function( assert )

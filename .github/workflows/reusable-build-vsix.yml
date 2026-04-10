@@ -7,6 +7,10 @@ on:
         description: Git ref to build from.
         required: true
         type: string
+      release_tag:
+        description: Stable release tag to mirror into the packaged Marketplace changelog.
+        required: false
+        type: string
       targets:
         description: JSON array of VSIX targets to build.
         required: true
@@ -38,6 +42,10 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Render Marketplace changelog
+        if: ${{ inputs.release_tag != '' }}
+        run: bash scripts/release/render-marketplace-changelog.sh --through-tag "${{ inputs.release_tag }}"
 
       - name: Build VSIX
         run: node scripts/release/build-vsix.mjs ${{ matrix.target }}

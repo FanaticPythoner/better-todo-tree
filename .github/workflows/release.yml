@@ -62,6 +62,7 @@ jobs:
     uses: ./.github/workflows/reusable-build-vsix.yml
     with:
       ref: ${{ needs.preflight.outputs.release_ref }}
+      release_tag: ${{ needs.preflight.outputs.tag }}
       targets: '["win32-x64","win32-arm64","linux-x64","linux-arm64","linux-armhf","darwin-x64","darwin-arm64","alpine-x64","alpine-arm64","web"]'
     secrets: inherit
 
@@ -159,3 +160,24 @@ jobs:
           PRERELEASE: ${{ needs.preflight.outputs.prerelease }}
           RELEASE_TARGET_SHA: ${{ needs.preflight.outputs.release_sha }}
         run: bash scripts/release/create-github-release.sh
+
+  verify-marketplace:
+    needs:
+      - preflight
+      - publish
+      - github-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.release_ref }}
+
+      - name: Verify public VS Code Marketplace publication
+        env:
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: bash scripts/release/verify-vscode-marketplace.sh
