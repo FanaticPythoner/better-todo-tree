@@ -583,6 +583,36 @@ QUnit.test( 'write-release-notes excludes upstream history when no stable releas
     assert.ok( notes.indexOf( 'fork change one' ) < notes.indexOf( 'fork change two' ) );
 } );
 
+QUnit.test( 'release-versioning resolves latest and previous tags without pipefail noise', function( assert )
+{
+    var workspace = createReleaseNotesWorkspace();
+    var result = childProcess.spawnSync(
+        'bash',
+        [
+            '-lc',
+            'set -euo pipefail\n' +
+            'source "' + path.join( __dirname, '..', 'scripts', 'release', 'release-versioning.sh' ) + '"\n' +
+            'latest_release_tag\n' +
+            'previous_release_tag v0.0.226\n'
+        ],
+        {
+            cwd: workspace.root,
+            encoding: 'utf8',
+            env: Object.assign( {}, process.env, {
+                RELEASE_REPOSITORY_URL: 'https://github.com/FanaticPythoner/better-todo-tree',
+                RELEASE_UPSTREAM_REF: 'v0.0.225'
+            } )
+        }
+    );
+
+    assert.strictEqual( result.status, 0, result.stderr );
+    assert.strictEqual( result.stderr, '' );
+    assert.deepEqual(
+        result.stdout.trim().split( /\r?\n/ ),
+        [ 'v0.0.226', 'v0.0.225' ]
+    );
+} );
+
 QUnit.test( 'render-marketplace-changelog mirrors stable release notes and preserves upstream history', function( assert )
 {
     var workspace = createReleaseNotesWorkspace();

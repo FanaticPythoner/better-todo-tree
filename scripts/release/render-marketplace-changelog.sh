@@ -59,7 +59,8 @@ if ! ensure_release_tag_available "$through_tag"; then
   exit 1
 fi
 
-mapfile -t all_release_tags < <(release_semver_tags)
+all_release_tags=()
+release_semver_tags_array all_release_tags
 
 include_tags=0
 selected_tags=()

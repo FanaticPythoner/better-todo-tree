@@ -6,26 +6,40 @@ release_upstream_repository_default='https://github.com/Gruntfuggly/todo-tree.gi
 release_upstream_branch_default='master'
 release_upstream_ref_default='refs/remotes/release-upstream/master'
 
+release_semver_tags_array()
+{
+  local output_name="$1"
+  local -n output_ref="$output_name"
+  local tag=''
+
+  output_ref=()
+
+  while read -r tag; do
+    if [[ "$tag" =~ $release_semver_tag_pattern ]]; then
+      output_ref+=( "$tag" )
+    fi
+  done < <(git tag --sort=-v:refname)
+}
+
 release_semver_tags()
 {
-  git tag --sort=-v:refname | while read -r tag; do
-    if [[ "$tag" =~ $release_semver_tag_pattern ]]; then
-      printf '%s\n' "$tag"
-    fi
+  local tags=()
+  local tag=''
+
+  release_semver_tags_array tags
+
+  for tag in "${tags[@]}"; do
+    printf '%s\n' "$tag"
   done
 }
 
 latest_release_tag()
 {
-  local latest_tag=''
+  local tags=()
+  release_semver_tags_array tags
 
-  while read -r tag; do
-    latest_tag="$tag"
-    break
-  done < <(release_semver_tags)
-
-  if [[ -n "$latest_tag" ]]; then
-    printf '%s\n' "$latest_tag"
+  if [[ "${#tags[@]}" -gt 0 ]]; then
+    printf '%s\n' "${tags[0]}"
   fi
 }
 
@@ -33,8 +47,12 @@ previous_release_tag()
 {
   local current_tag="$1"
   local seen_current=0
+  local tags=()
+  local tag=''
 
-  while read -r tag; do
+  release_semver_tags_array tags
+
+  for tag in "${tags[@]}"; do
     if [[ "$current_tag" == "latest" ]]; then
       printf '%s\n' "$tag"
       return 0
@@ -48,7 +66,7 @@ previous_release_tag()
     if [[ "$tag" == "$current_tag" ]]; then
       seen_current=1
     fi
-  done < <(release_semver_tags)
+  done
 }
 
 increment_release_version()
