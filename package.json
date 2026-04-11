@@ -1982,7 +1982,7 @@
     "devDependencies": {
         "parse-code-context": "^1.0.0",
         "qunit": "^2.25.0",
-        "webpack": "^5.105.4",
+        "webpack": "^5.106.1",
         "webpack-cli": "^7.0.2",
         "@vscode/vsce": "^3.7.1",
         "ovsx": "^0.10.10"
