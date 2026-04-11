@@ -1972,7 +1972,7 @@
     },
     "dependencies": {
         "@primer/octicons": "^17.12.0",
-        "comment-patterns": "^0.10.1",
+        "comment-patterns": "^0.12.2",
         "fast-strftime": "^1.1.1",
         "find": "^0.3.0",
         "micromatch": "^4.0.8",
