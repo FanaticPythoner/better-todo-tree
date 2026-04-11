@@ -233,4 +233,39 @@ QUnit.module( "behavioral tree", function()
         var rootLabels = provider.getChildren().map( function( node ) { return node.label; } );
         assert.deepEqual( rootLabels, [ 'TODO', 'FIXME' ] );
     } );
+
+    QUnit.test( "grouped tree children follow configured tag order after incremental updates", function( assert )
+    {
+        var configStub = createConfig( {
+            shouldGroupByTag: function() { return true; }
+        } );
+        var tree = loadTreeModule( configStub );
+        var provider = new tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+        var workspaceFolder = {
+            name: 'workspace',
+            uri: {
+                scheme: 'file',
+                fsPath: '/workspace'
+            }
+        };
+
+        provider.clear( [ workspaceFolder ] );
+        provider.replaceDocument( createResult( '/workspace/b.js', 'FIXME', 'later' ).uri, [
+            createResult( '/workspace/b.js', 'FIXME', 'later' )
+        ] );
+        provider.replaceDocument( createResult( '/workspace/a.js', 'TODO', 'first' ).uri, [
+            createResult( '/workspace/a.js', 'TODO', 'first' )
+        ] );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+
+        var workspaceRoot = provider.getChildren()[ 0 ];
+        assert.deepEqual( provider.getChildren( workspaceRoot ).map( function( node ) { return node.label; } ), [ 'TODO', 'FIXME' ] );
+
+        provider.replaceDocument( createResult( '/workspace/c.js', 'TODO', 'updated' ).uri, [
+            createResult( '/workspace/c.js', 'TODO', 'updated' )
+        ] );
+        provider.finalizePendingChanges( undefined, { fullSort: false } );
+
+        assert.deepEqual( provider.getChildren( workspaceRoot ).map( function( node ) { return node.label; } ), [ 'TODO', 'FIXME' ] );
+    } );
 } );

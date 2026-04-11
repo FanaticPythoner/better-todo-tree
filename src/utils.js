@@ -11,6 +11,11 @@ var themeColourNames = require( './themeColourNames.js' );
 var config;
 
 var DEFAULT_REGEX_SOURCE = '(^|//|#|<!--|;|/\\*|^[ \\t]*(-|\\d+.))\\s*(?=\\[x\\]|\\[ \\]|[A-Za-z0-9_])($TAGS)(?![A-Za-z0-9_])';
+var COMMENT_PATTERN_FILE_ALIASES = Object.freeze( {
+    ".jsonc": ".js",
+    ".vue": ".html",
+    ".dart": ".js"
+} );
 
 var envRegex = new RegExp( "\\$\\{(.*?)\\}", "g" );
 var rgbRegex = new RegExp( "^rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*(\\d+(?:\\.\\d+)?))?\\)$", "gi" );
@@ -78,15 +83,12 @@ function hexToRgba( hex, opacity )
 function normaliseCommentPatternFileName( fileName )
 {
     var baseName = path.basename( fileName );
-    var extension = path.extname( baseName );
+    var rawExtension = path.extname( baseName );
+    var aliasedExtension = COMMENT_PATTERN_FILE_ALIASES[ rawExtension.toLowerCase() ];
 
-    if( extension === ".jsonc" )
+    if( aliasedExtension )
     {
-        return path.basename( baseName, extension ) + ".js";
-    }
-    if( extension === ".vue" )
-    {
-        return path.basename( baseName, extension ) + ".html";
+        return path.basename( baseName, rawExtension ) + aliasedExtension;
     }
 
     return baseName || fileName;

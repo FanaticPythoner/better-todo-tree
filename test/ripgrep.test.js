@@ -86,6 +86,49 @@ QUnit.module( "ripgrep streaming search", function( hooks )
         } );
     } );
 
+    QUnit.test( "search groups multiline streamed output into one logical match for remote-style paths", function( assert )
+    {
+        var testConfig = stubs.getTestConfig();
+        testConfig.tagList = [ 'TODO' ];
+        testConfig.regexSource = '($TAGS):[\\s\\S]*?END';
+        testConfig.enableMultiLineFlag = true;
+        utils.init( testConfig );
+
+        childProcess.spawn = function()
+        {
+            var fakeProcess = createFakeProcess();
+
+            process.nextTick( function()
+            {
+                fakeProcess.stdout.emit( 'data', Buffer.from(
+                    '/home/azureuser/localfiles/my-project/pipeline-deploy-api-policies.yaml:1:1:TODO: first\n' +
+                    '/home/azureuser/localfiles/my-project/pipeline-deploy-api-policies.yaml:2:1:second\n'
+                ) );
+                fakeProcess.stdout.emit( 'data', Buffer.from(
+                    '/home/azureuser/localfiles/my-project/pipeline-deploy-api-policies.yaml:3:1:END\n'
+                ) );
+                fakeProcess.emit( 'close', 0, null );
+            } );
+
+            return fakeProcess;
+        };
+
+        return ripgrep.search( '/', {
+            rgPath: fakeRgPath,
+            regex: '($TAGS):[\\s\\S]*?END',
+            unquotedRegex: '($TAGS):[\\s\\S]*?END',
+            additional: '',
+            globs: [],
+            multiline: true
+        } ).then( function( matches )
+        {
+            assert.equal( matches.length, 1 );
+            assert.equal( matches[ 0 ].fsPath, '/home/azureuser/localfiles/my-project/pipeline-deploy-api-policies.yaml' );
+            assert.equal( matches[ 0 ].match, 'TODO: first' );
+            assert.deepEqual( matches[ 0 ].extraLines.map( function( line ) { return line.match; } ), [ 'second', 'END' ] );
+        } );
+    } );
+
     QUnit.test( "kill cancels the active search", function( assert )
     {
         childProcess.spawn = function()
@@ -139,6 +182,44 @@ QUnit.module( "ripgrep streaming search", function( hooks )
         } ).then( function()
         {
             assert.equal( seenArgs[ seenArgs.length - 1 ], '/tmp/project (feature branch)/file name.js' );
+        } );
+    } );
+
+    QUnit.test( "search passes ripgrep executable paths with spaces and parentheses directly to spawn", function( assert )
+    {
+        var seenExecutable;
+        var spacedRgPath = path.join( os.tmpdir(), 'todo tree (rg binary)' );
+
+        fs.writeFileSync( spacedRgPath, '' );
+
+        childProcess.spawn = function( executable )
+        {
+            seenExecutable = executable;
+
+            var fakeProcess = createFakeProcess();
+            process.nextTick( function()
+            {
+                fakeProcess.emit( 'close', 1, null );
+            } );
+            return fakeProcess;
+        };
+
+        return ripgrep.search( '/', {
+            rgPath: spacedRgPath,
+            regex: '(TODO)',
+            unquotedRegex: '(TODO)',
+            additional: '',
+            globs: [],
+            multiline: false
+        } ).then( function()
+        {
+            assert.equal( seenExecutable, spacedRgPath );
+        } ).finally( function()
+        {
+            if( fs.existsSync( spacedRgPath ) )
+            {
+                fs.unlinkSync( spacedRgPath );
+            }
         } );
     } );
 } );

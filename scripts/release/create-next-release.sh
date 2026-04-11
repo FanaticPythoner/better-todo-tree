@@ -4,6 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./release-versioning.sh
 source "$script_dir/release-versioning.sh"
+release_activate_node_runtime
 
 bump='patch'
 push_release=0

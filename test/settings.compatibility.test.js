@@ -95,6 +95,88 @@ QUnit.test( 'legacy namespace values remain active when current namespace is uns
     assert.deepEqual( identity.getSetting( 'general.tags', [] ), [ 'LEGACY' ] );
 } );
 
+QUnit.test( 'current namespace highlight settings override legacy highlight settings', function( assert )
+{
+    var identity = createIdentity(
+        {
+            highlights: {
+                customHighlight: {
+                    TODO: {
+                        foreground: '#ffffff'
+                    }
+                },
+                useColourScheme: true,
+                backgroundColourScheme: [ '#d61' ]
+            }
+        },
+        {
+            highlights: {
+                customHighlight: {
+                    TODO: {
+                        foreground: '#000000'
+                    }
+                },
+                useColourScheme: false,
+                backgroundColourScheme: [ '#000000' ]
+            }
+        },
+        {
+            highlights: {
+                customHighlight: {},
+                useColourScheme: false,
+                backgroundColourScheme: []
+            }
+        }
+    );
+
+    assert.deepEqual( identity.getSetting( 'highlights.customHighlight', {} ), {
+        TODO: {
+            foreground: '#ffffff'
+        }
+    } );
+    assert.strictEqual( identity.getSetting( 'highlights.useColourScheme', false ), true );
+    assert.deepEqual( identity.getSetting( 'highlights.backgroundColourScheme', [] ), [ '#d61' ] );
+} );
+
+QUnit.test( 'legacy highlight settings remain active when current namespace is unset', function( assert )
+{
+    var identity = createIdentity(
+        {},
+        {
+            highlights: {
+                defaultHighlight: {
+                    gutterIcon: true,
+                    type: 'text'
+                },
+                customHighlight: {
+                    FIXME: {
+                        foreground: '#8F1BDC'
+                    }
+                },
+                enabled: true
+            }
+        },
+        {
+            highlights: {
+                defaultHighlight: {},
+                customHighlight: {},
+                enabled: false
+            }
+        }
+    );
+
+    assert.deepEqual( identity.getSetting( 'highlights.defaultHighlight', {} ), {
+        gutterIcon: true,
+        type: 'text'
+    } );
+    assert.deepEqual( identity.getSetting( 'highlights.customHighlight', {} ), {
+        FIXME: {
+            foreground: '#8F1BDC'
+        }
+    } );
+    assert.strictEqual( identity.getSetting( 'highlights.enabled', false ), true );
+} );
+
 QUnit.test( 'manifest exposes current and legacy settings namespaces together', function( assert )
 {
     var identity = createIdentity( {}, {}, {} );

@@ -6,6 +6,49 @@ release_upstream_repository_default='https://github.com/Gruntfuggly/todo-tree.gi
 release_upstream_branch_default='master'
 release_upstream_ref_default='refs/remotes/release-upstream/master'
 
+release_nvm_dir()
+{
+  printf '%s\n' "${NVM_DIR:-$HOME/.nvm}"
+}
+
+release_activate_node_runtime()
+{
+  local nvm_dir=''
+  local latest_node_dir=''
+  local resolved_node_path=''
+
+  if command -v node >/dev/null 2>&1; then
+    return 0
+  fi
+
+  nvm_dir="$(release_nvm_dir)"
+
+  if [[ -s "$nvm_dir/nvm.sh" ]]; then
+    # shellcheck disable=SC1090
+    . "$nvm_dir/nvm.sh"
+    if command -v nvm >/dev/null 2>&1; then
+      if resolved_node_path="$(nvm which default 2>/dev/null)" && [[ -x "$resolved_node_path" ]]; then
+        export PATH="$(dirname "$resolved_node_path"):$PATH"
+      elif [[ -f .nvmrc ]] && resolved_node_path="$(nvm which 2>/dev/null)" && [[ -x "$resolved_node_path" ]]; then
+        export PATH="$(dirname "$resolved_node_path"):$PATH"
+      fi
+    fi
+  fi
+
+  if command -v node >/dev/null 2>&1; then
+    return 0
+  fi
+
+  latest_node_dir="$(find "$nvm_dir/versions/node" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | LC_ALL=C sort -V | tail -n 1)"
+  if [[ -n "$latest_node_dir" && -x "$latest_node_dir/bin/node" ]]; then
+    export PATH="$latest_node_dir/bin:$PATH"
+    return 0
+  fi
+
+  echo "Node.js was not found in PATH or ${nvm_dir}." >&2
+  return 1
+}
+
 release_semver_tags_array()
 {
   local output_name="$1"

@@ -1,4 +1,6 @@
 var helpers = require( './moduleHelpers.js' );
+var actualUtils = require( '../src/utils.js' );
+var actualAttributes = require( '../src/attributes.js' );
 
 function createVscodeStub( highlightConfiguration, decorationLog )
 {
@@ -107,6 +109,41 @@ function createDocument( text )
     };
 }
 
+function createAttributeConfig( overrides )
+{
+    return Object.assign( {
+        tagList: [ 'TODO', 'FIXME' ],
+        tags: function()
+        {
+            return this.tagList;
+        },
+        isRegexCaseSensitive: function()
+        {
+            return true;
+        },
+        shouldUseColourScheme: function()
+        {
+            return false;
+        },
+        foregroundColourScheme: function()
+        {
+            return [];
+        },
+        backgroundColourScheme: function()
+        {
+            return [];
+        },
+        defaultHighlight: function()
+        {
+            return {};
+        },
+        customHighlight: function()
+        {
+            return {};
+        }
+    }, overrides || {} );
+}
+
 QUnit.module( "behavioral highlights", function( hooks )
 {
     var originalVscode;
@@ -157,6 +194,12 @@ QUnit.module( "behavioral highlights", function( hooks )
                 {
                     return [];
                 }
+            },
+            './extensionIdentity.js': {
+                getSetting: function( setting, defaultValue )
+                {
+                    return defaultValue;
+                }
             }
         } );
 
@@ -166,7 +209,160 @@ QUnit.module( "behavioral highlights", function( hooks )
         assert.equal( decoration.gutterIconPath, '/tmp/gutter-dark.svg' );
     } );
 
-    QUnit.test( "text-and-comment highlights are clipped to the detected comment range", function( assert )
+    QUnit.test( "customHighlight colours and defaultHighlight fallback flow into editor decorations", function( assert )
+    {
+        var decorationLog = [];
+        var config = createAttributeConfig( {
+            defaultHighlight: function()
+            {
+                return {
+                    background: '#ff1493',
+                    gutterIcon: true,
+                    type: 'text'
+                };
+            },
+            customHighlight: function()
+            {
+                return {
+                    TODO: {
+                        foreground: '#ffffff',
+                        background: '#ff7e14',
+                        gutterIcon: true,
+                        type: 'tag'
+                    },
+                    FIXME: {
+                        foreground: '#111111'
+                    }
+                };
+            }
+        } );
+
+        actualUtils.init( config );
+        actualAttributes.init( config );
+
+        var highlights = helpers.loadWithStubs( '../src/highlights.js', {
+            vscode: createVscodeStub( { enabled: true }, decorationLog ),
+            './config.js': {
+                customHighlight: config.customHighlight.bind( config ),
+                subTagRegex: function() { return '(^:\\s*)'; },
+                tagGroup: function() { return undefined; }
+            },
+            './utils.js': actualUtils,
+            './attributes.js': actualAttributes,
+            './icons.js': {
+                getGutterIcon: function()
+                {
+                    return { dark: '/tmp/editor-gutter.svg', light: '/tmp/editor-gutter.svg' };
+                }
+            },
+            './detection.js': {
+                scanDocument: function()
+                {
+                    return [];
+                }
+            },
+            './extensionIdentity.js': {
+                getSetting: function( setting, defaultValue )
+                {
+                    return defaultValue;
+                }
+            }
+        } );
+
+        highlights.init( { subscriptions: { push: function() {} } }, function() {} );
+
+        var todoDecoration = highlights.getDecoration( 'TODO' );
+        var fixmeDecoration = highlights.getDecoration( 'FIXME' );
+
+        assert.equal( todoDecoration.light.color, '#ffffff' );
+        assert.equal( todoDecoration.light.backgroundColor, 'rgba(255,126,20,1)' );
+        assert.equal( todoDecoration.gutterIconPath, '/tmp/editor-gutter.svg' );
+        assert.equal( fixmeDecoration.light.color, '#111111' );
+        assert.equal( fixmeDecoration.light.backgroundColor, 'rgba(255,20,147,1)' );
+        assert.equal( fixmeDecoration.gutterIconPath, '/tmp/editor-gutter.svg' );
+    } );
+
+    QUnit.test( "useColourScheme overrides defaultHighlight but not customHighlight in editor decorations", function( assert )
+    {
+        var decorationLog = [];
+        var config = createAttributeConfig( {
+            tagList: [ 'TODO', 'FIXME' ],
+            shouldUseColourScheme: function()
+            {
+                return true;
+            },
+            foregroundColourScheme: function()
+            {
+                return [ 'white', 'black' ];
+            },
+            backgroundColourScheme: function()
+            {
+                return [ '#ff8855', '#00bff9' ];
+            },
+            defaultHighlight: function()
+            {
+                return {
+                    foreground: '#101010',
+                    background: '#202020'
+                };
+            },
+            customHighlight: function()
+            {
+                return {
+                    TODO: {
+                        foreground: '#ffffff',
+                        background: '#ff8855',
+                        type: 'whole-line'
+                    }
+                };
+            }
+        } );
+
+        actualUtils.init( config );
+        actualAttributes.init( config );
+
+        var highlights = helpers.loadWithStubs( '../src/highlights.js', {
+            vscode: createVscodeStub( { enabled: true }, decorationLog ),
+            './config.js': {
+                customHighlight: config.customHighlight.bind( config ),
+                subTagRegex: function() { return '(^:\\s*)'; },
+                tagGroup: function() { return undefined; }
+            },
+            './utils.js': actualUtils,
+            './attributes.js': actualAttributes,
+            './icons.js': {
+                getGutterIcon: function()
+                {
+                    return { dark: '/tmp/editor-gutter.svg', light: '/tmp/editor-gutter.svg' };
+                }
+            },
+            './detection.js': {
+                scanDocument: function()
+                {
+                    return [];
+                }
+            },
+            './extensionIdentity.js': {
+                getSetting: function( setting, defaultValue )
+                {
+                    return defaultValue;
+                }
+            }
+        } );
+
+        highlights.init( { subscriptions: { push: function() {} } }, function() {} );
+
+        var todoDecoration = highlights.getDecoration( 'TODO' );
+        var fixmeDecoration = highlights.getDecoration( 'FIXME' );
+
+        assert.equal( todoDecoration.light.color, '#ffffff' );
+        assert.equal( todoDecoration.light.backgroundColor, 'rgba(255,136,85,1)' );
+        assert.equal( todoDecoration.isWholeLine, true );
+        assert.equal( fixmeDecoration.light.color, 'black' );
+        assert.equal( fixmeDecoration.light.backgroundColor, 'rgba(0,191,249,1)' );
+    } );
+
+    QUnit.test( "issue #812 text-and-comment highlights are clipped to the detected inline comment range", function( assert )
     {
         var recorded = [];
         var highlights = helpers.loadWithStubs( '../src/highlights.js', {
@@ -215,6 +411,12 @@ QUnit.module( "behavioral highlights", function( hooks )
                         tagStartOffset: 15,
                         tagEndOffset: 19
                     } ];
+                }
+            },
+            './extensionIdentity.js': {
+                getSetting: function( setting, defaultValue )
+                {
+                    return defaultValue;
                 }
             }
         } );
@@ -283,6 +485,12 @@ QUnit.module( "behavioral highlights", function( hooks )
                         tagStartOffset: 3,
                         tagEndOffset: 7
                     } ];
+                }
+            },
+            './extensionIdentity.js': {
+                getSetting: function( setting, defaultValue )
+                {
+                    return defaultValue;
                 }
             }
         } );

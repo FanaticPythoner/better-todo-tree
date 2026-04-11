@@ -290,6 +290,35 @@ function splitTextLines( text )
     return splitPhysicalLines( text, 0 );
 }
 
+function createPassThroughLines( text )
+{
+    return splitPhysicalLines( text, 0 ).map( function( line )
+    {
+        return {
+            text: line.rawText,
+            rawCommentStartOffset: line.rawStartOffset,
+            rawCommentEndOffset: line.rawEndOffset,
+            contentStartOffset: line.rawStartOffset,
+            contentEndOffset: line.rawEndOffset
+        };
+    } );
+}
+
+var markdownTaskListPrefixSource = '[ \\t]*(?:[-*+]|\\d+\\.)\\s*';
+var markdownTaskListLineRegex = new RegExp( '^(' + markdownTaskListPrefixSource + ')\\[[ xX]\\]' );
+
+function sortResultsByLocation( results )
+{
+    results.sort( function( a, b )
+    {
+        return a.matchStartOffset - b.matchStartOffset ||
+            a.commentStartOffset - b.commentStartOffset ||
+            a.tagStartOffset - b.tagStartOffset;
+    } );
+
+    return results;
+}
+
 function scanMultiLineCommentBlocks( text, pattern )
 {
     if( !pattern.multiLineComment )
@@ -346,6 +375,55 @@ function isInsideMultiLineBlock( offset, multiLineBlocks )
     {
         return offset >= block.startOffset && offset < block.startOffset + block.wholeCommentText.length;
     } );
+}
+
+function collectCommentPatternMatches( uri, text, pattern, lineOffsets, resourceConfig )
+{
+    var results = [];
+    var multiLineBlocks = scanMultiLineCommentBlocks( text, pattern );
+
+    multiLineBlocks.forEach( function( block )
+    {
+        var normalizedLines = createNormalizedCommentLines( block.wholeCommentText, block.startOffset, pattern, block.variant );
+        results = results.concat( collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resourceConfig ) );
+    } );
+
+    scanSingleLineCommentBlocks( text, pattern, multiLineBlocks ).forEach( function( normalizedLines )
+    {
+        results = results.concat( collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resourceConfig ) );
+    } );
+
+    return results;
+}
+
+function resolveMarkdownCommentPattern()
+{
+    var markdownCommentPattern = utils.getCommentPattern( '.html' );
+
+    if( markdownCommentPattern === undefined )
+    {
+        throw new Error( 'HTML comment pattern is required for Markdown scanning.' );
+    }
+
+    return markdownCommentPattern;
+}
+
+function scanMarkdownText( uri, text, pattern, lineOffsets, resourceConfig )
+{
+    var markdownCommentPattern = resolveMarkdownCommentPattern();
+    var results = collectCommentPatternMatches( uri, text, markdownCommentPattern, lineOffsets, resourceConfig );
+    var markdownTaskLines = createPassThroughLines( text ).filter( function( line )
+    {
+        markdownTaskListLineRegex.lastIndex = 0;
+        return markdownTaskListLineRegex.test( line.text );
+    } );
+
+    if( markdownTaskLines.length > 0 )
+    {
+        results = results.concat( collectLogicalCommentMatches( uri, markdownTaskLines, lineOffsets, resourceConfig, { allowMarkdownPrefix: true } ) );
+    }
+
+    return sortResultsByLocation( results );
 }
 
 function scanSingleLineCommentBlocks( text, pattern, multiLineBlocks )
@@ -433,16 +511,17 @@ function findActualTag( tags, tag, caseSensitive )
     } ) || tag;
 }
 
-function buildBuiltInTagRegex( resourceConfig )
+function buildBuiltInTagRegex( resourceConfig, allowMarkdownPrefix )
 {
-    var flags = resourceConfig.regexCaseSensitive === true ? 'g' : 'gi';
-    return new RegExp( '(^|[^A-Za-z0-9_])(' + utils.getTagRegexSource( undefined, resourceConfig.tags ) + ')(?![A-Za-z0-9_])', flags );
+    var flags = resourceConfig.regexCaseSensitive === true ? '' : 'i';
+    var prefix = allowMarkdownPrefix === true ? '(' + markdownTaskListPrefixSource + ')' : '(\\s*)';
+    return new RegExp( '^' + prefix + '(' + utils.getTagRegexSource( undefined, resourceConfig.tags ) + ')(?![A-Za-z0-9_])', flags );
 }
 
-function collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resourceConfig )
+function collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resourceConfig, options )
 {
     var results = [];
-    var tagRegex = buildBuiltInTagRegex( resourceConfig );
+    var tagRegex = buildBuiltInTagRegex( resourceConfig, options && options.allowMarkdownPrefix === true );
     var current = undefined;
 
     function finalizeCurrent()
@@ -519,7 +598,7 @@ function collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resour
 
             var tagPrefixLength = tagMatch[ 1 ] ? tagMatch[ 1 ].length : 0;
             var actualTag = findActualTag( resourceConfig.tags, tagMatch[ 2 ], resourceConfig.regexCaseSensitive === true );
-            var tagStartOffset = line.contentStartOffset + tagMatch.index + tagPrefixLength;
+            var tagStartOffset = line.contentStartOffset + tagPrefixLength;
 
             current = {
                 tag: actualTag,
@@ -547,17 +626,7 @@ function scanCommentPatternText( uri, text, resourceConfig )
 
     if( pattern === undefined )
     {
-        var genericLines = splitPhysicalLines( text, 0 ).map( function( line )
-        {
-            return {
-                text: line.rawText,
-                rawCommentStartOffset: line.rawStartOffset,
-                rawCommentEndOffset: line.rawEndOffset,
-                contentStartOffset: line.rawStartOffset,
-                contentEndOffset: line.rawEndOffset
-            };
-        } );
-
+        var genericLines = createPassThroughLines( text );
         return collectLogicalCommentMatches( uri, genericLines, lineOffsets, resourceConfig );
     }
 
@@ -565,41 +634,13 @@ function scanCommentPatternText( uri, text, resourceConfig )
     {
         if( path.extname( fsPath ).toLowerCase() === '.md' || pattern.name === 'Markdown' )
         {
-            var markdownLines = splitPhysicalLines( text, 0 ).map( function( line )
-            {
-                return {
-                    text: line.rawText,
-                    rawCommentStartOffset: line.rawStartOffset,
-                    rawCommentEndOffset: line.rawEndOffset,
-                    contentStartOffset: line.rawStartOffset,
-                    contentEndOffset: line.rawEndOffset
-                };
-            } ).filter( function( line )
-            {
-                return /^([ \t]*)(?:[-*+]|\d+\.)\s*\[[ xX]\]/.test( line.text );
-            } );
-
-            return collectLogicalCommentMatches( uri, markdownLines, lineOffsets, resourceConfig );
+            return scanMarkdownText( uri, text, pattern, lineOffsets, resourceConfig );
         }
 
         return [];
     }
 
-    var results = [];
-    var multiLineBlocks = scanMultiLineCommentBlocks( text, pattern );
-
-    multiLineBlocks.forEach( function( block )
-    {
-        var normalizedLines = createNormalizedCommentLines( block.wholeCommentText, block.startOffset, pattern, block.variant );
-        results = results.concat( collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resourceConfig ) );
-    } );
-
-    scanSingleLineCommentBlocks( text, pattern, multiLineBlocks ).forEach( function( normalizedLines )
-    {
-        results = results.concat( collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resourceConfig ) );
-    } );
-
-    return results;
+    return collectCommentPatternMatches( uri, text, pattern, lineOffsets, resourceConfig );
 }
 
 function normalizeRegexExecMatch( uri, text, match, resourceConfig )

@@ -176,6 +176,49 @@ QUnit.module( "detection regex matrix", function()
         } );
     } );
 
+    QUnit.test( "issue 898 punctuation-heavy custom tags normalize through custom regexes", function( assert )
+    {
+        var results = scanWithConfig( '/tmp/issue-898-punctuation.js', [
+            '// TODO: first',
+            '// BUG: second',
+            '// FIXME: third',
+            '// HACK: fourth',
+            '// ?: fifth'
+        ].join( '\n' ), function( config )
+        {
+            config.tagList = [ 'TODO:', 'BUG:', 'FIXME:', 'HACK:', '?:' ];
+            config.regexSource = '(?://|#)\\s*($TAGS).*';
+            config.shouldBeCaseSensitive = false;
+        } );
+
+        assert.deepEqual( results.map( function( result ) { return result.actualTag; } ), [ 'TODO:', 'BUG:', 'FIXME:', 'HACK:', '?:' ] );
+        assert.deepEqual( results.map( function( result ) { return result.displayText; } ), [ 'first', 'second', 'third', 'fourth', 'fifth' ] );
+    } );
+
+    QUnit.test( "issue 898 custom word tags and spaced tags normalize through custom regexes", function( assert )
+    {
+        var results = scanWithConfig( '/tmp/issue-898-custom-tags.js', [
+            '// ChangeNote queued',
+            '// Change_Note aliased',
+            '// CHANGE NOTE spaced',
+            '// ToTest pending',
+            '// NOTE documented'
+        ].join( '\n' ), function( config )
+        {
+            config.tagList = [ 'NOTE', 'ChangeNote', 'Change_Note', 'CHANGE NOTE', 'ToTest' ];
+            config.regexSource = '(?://|#)\\s*($TAGS).*';
+        } );
+
+        assert.deepEqual(
+            results.map( function( result ) { return result.actualTag; } ),
+            [ 'ChangeNote', 'Change_Note', 'CHANGE NOTE', 'ToTest', 'NOTE' ]
+        );
+        assert.deepEqual(
+            results.map( function( result ) { return result.displayText; } ),
+            [ 'queued', 'aliased', 'spaced', 'pending', 'documented' ]
+        );
+    } );
+
     QUnit.test( "ripgrep style normalization matches editor normalization for multiline results", function( assert )
     {
         var config = matrixHelpers.createConfig( {

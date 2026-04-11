@@ -1,6 +1,8 @@
 var helpers = require( './moduleHelpers.js' );
 var matrixHelpers = require( './matrixHelpers.js' );
 var languageMatrix = require( './languageMatrix.js' );
+var actualUtils = require( '../src/utils.js' );
+var actualDetection = require( '../src/detection.js' );
 
 function createConfigurationSection( values, explicitTarget )
 {
@@ -462,11 +464,19 @@ function createExtensionHarness( options )
             scanDocument: function( document )
             {
                 scanDocumentCalls.push( document );
+                if( typeof ( options.scanDocumentImpl ) === 'function' )
+                {
+                    return options.scanDocumentImpl( document );
+                }
                 return options.documentResults || [];
             },
             scanText: function( uri, text )
             {
                 scanTextCalls.push( { uri: uri, text: text } );
+                if( typeof ( options.scanTextImpl ) === 'function' )
+                {
+                    return options.scanTextImpl( uri, text );
+                }
                 return options.workspaceResults || [];
             },
             normalizeRegexMatch: function( uri, text, match )
@@ -535,6 +545,56 @@ QUnit.test( "open-files mode stores canonical document results through the refre
     } );
 } );
 
+QUnit.test( "current-file mode clears stale results when the active editor changes to a file without matches", function( assert )
+{
+    var firstDocument = matrixHelpers.createDocument( '/tmp/first.js', '// TODO first item' );
+    var secondDocument = matrixHelpers.createDocument( '/tmp/second.js', 'const clean = true;' );
+    var harness = createExtensionHarness( {
+        scanMode: 'current file',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        visibleTextEditors: [ { document: firstDocument }, { document: secondDocument } ],
+        activeTextEditor: { document: firstDocument },
+        scanDocumentImpl: function( document )
+        {
+            if( document.fileName === '/tmp/first.js' )
+            {
+                return [ {
+                    uri: matrixHelpers.createUri( '/tmp/first.js' ),
+                    actualTag: 'TODO',
+                    displayText: 'first item',
+                    continuationText: []
+                } ];
+            }
+
+            return [];
+        },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 1 );
+        assert.equal( harness.provider.replaceCalls[ 0 ].uri.fsPath, '/tmp/first.js' );
+        assert.equal( harness.provider.replaceCalls[ 0 ].results.length, 1 );
+
+        harness.vscode.window.activeTextEditor = { document: secondDocument };
+        return harness.vscode.workspaceListeners.activeEditor( { document: secondDocument } );
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        var lastReplaceCall = harness.provider.replaceCalls[ harness.provider.replaceCalls.length - 1 ];
+
+        assert.equal( harness.scanDocumentCalls.length, 2 );
+        assert.equal( harness.scanDocumentCalls[ 1 ].fileName, '/tmp/second.js' );
+        assert.equal( lastReplaceCall.uri.fsPath, '/tmp/second.js' );
+        assert.deepEqual( lastReplaceCall.results, [] );
+    } );
+} );
+
 QUnit.test( "workspace mode built-in scanning reparses candidate files through detection.scanText", function( assert )
 {
     var fixture = [ {
@@ -562,6 +622,96 @@ QUnit.test( "workspace mode built-in scanning reparses candidate files through d
         assert.equal( harness.scanTextCalls.length, 1 );
         assert.equal( harness.scanTextCalls[ 0 ].uri.fsPath, '/workspace/src/file.js' );
         assert.equal( harness.readFileCalls[ 0 ], '/workspace/src/file.js' );
+        assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, fixture );
+        assert.equal( harness.normalizeCalls.length, 0 );
+    } );
+} );
+
+QUnit.test( "workspace-only mode ignores external open documents", function( assert )
+{
+    var externalDocument = matrixHelpers.createDocument( '/external/open.js', '// TODO external item' );
+    var workspaceFixture = [ {
+        uri: matrixHelpers.createUri( '/workspace/src/file.js' ),
+        actualTag: 'TODO',
+        displayText: 'workspace item',
+        continuationText: []
+    } ];
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace only',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        visibleTextEditors: [ { document: externalDocument } ],
+        activeTextEditor: { document: externalDocument },
+        ripgrepMatches: [ { fsPath: '/workspace/src/file.js' } ],
+        workspaceResults: workspaceFixture,
+        documentResults: [ {
+            uri: matrixHelpers.createUri( '/external/open.js' ),
+            actualTag: 'TODO',
+            displayText: 'external item',
+            continuationText: []
+        } ],
+        fileContents: {
+            '/workspace/src/file.js': '// TODO workspace item'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.ripgrepSearchCalls.length, 1 );
+        assert.equal( harness.scanTextCalls.length, 1 );
+        assert.equal( harness.scanDocumentCalls.length, 0 );
+        assert.deepEqual( harness.provider.replaceCalls.map( function( call ) { return call.uri.fsPath; } ), [
+            '/workspace/src/file.js'
+        ] );
+    } );
+} );
+
+QUnit.test( "issue #820 workspace mode uses tag-only candidate search before reparsing Python files", function( assert )
+{
+    var pythonText = [
+        "\"\"\"",
+        "TODO first",
+        "detail line",
+        "\"\"\"",
+        "# TODO second"
+    ].join( "\n" );
+    var fixture = [
+        {
+            uri: matrixHelpers.createUri( '/workspace/app.py' ),
+            actualTag: 'TODO',
+            displayText: 'first',
+            continuationText: [ 'detail line' ]
+        },
+        {
+            uri: matrixHelpers.createUri( '/workspace/app.py' ),
+            actualTag: 'TODO',
+            displayText: 'second',
+            continuationText: []
+        }
+    ];
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [ { fsPath: '/workspace/app.py' } ],
+        workspaceResults: fixture,
+        fileContents: {
+            '/workspace/app.py': pythonText
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.ripgrepSearchCalls.length, 1 );
+        assert.equal( harness.ripgrepSearchCalls[ 0 ].regex, '(TODO|FIXME|BUG|HACK|XXX|\\[ \\]|\\[x\\])' );
+        assert.equal( harness.ripgrepSearchCalls[ 0 ].unquotedRegex, '(TODO|FIXME|BUG|HACK|XXX|\\[ \\]|\\[x\\])' );
+        assert.equal( harness.scanTextCalls.length, 1 );
+        assert.equal( harness.scanTextCalls[ 0 ].uri.fsPath, '/workspace/app.py' );
+        assert.equal( harness.scanTextCalls[ 0 ].text, pythonText );
         assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, fixture );
         assert.equal( harness.normalizeCalls.length, 0 );
     } );
@@ -613,6 +763,70 @@ QUnit.test( "workspace scan mode merges workspace results with external open doc
     } );
 } );
 
+QUnit.test( "open-files mode removes document-backed results when a document closes", function( assert )
+{
+    var document = matrixHelpers.createDocument( '/tmp/open.js', '// TODO open item' );
+    var fixture = [ {
+        uri: matrixHelpers.createUri( '/tmp/open.js' ),
+        actualTag: 'TODO',
+        displayText: 'open item',
+        continuationText: []
+    } ];
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        visibleTextEditors: [ { document: document } ],
+        documentResults: fixture,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, fixture );
+
+        harness.vscode.workspaceListeners.close( document );
+
+        var lastReplaceCall = harness.provider.replaceCalls[ harness.provider.replaceCalls.length - 1 ];
+        assert.equal( lastReplaceCall.uri.fsPath, '/tmp/open.js' );
+        assert.deepEqual( lastReplaceCall.results, [] );
+    } );
+} );
+
+QUnit.test( "workspace mode keeps workspace-backed results when a workspace document closes", function( assert )
+{
+    var workspaceDocument = matrixHelpers.createDocument( '/workspace/src/file.js', '// TODO workspace item' );
+    var workspaceFixture = [ {
+        uri: matrixHelpers.createUri( '/workspace/src/file.js' ),
+        actualTag: 'TODO',
+        displayText: 'workspace item',
+        continuationText: []
+    } ];
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        visibleTextEditors: [ { document: workspaceDocument } ],
+        ripgrepMatches: [ { fsPath: '/workspace/src/file.js' } ],
+        workspaceResults: workspaceFixture,
+        fileContents: {
+            '/workspace/src/file.js': '// TODO workspace item'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.provider.replaceCalls.length, 1 );
+
+        harness.vscode.workspaceListeners.close( workspaceDocument );
+
+        assert.equal( harness.provider.replaceCalls.length, 1 );
+    } );
+} );
+
 QUnit.test( "workspace mode custom regex scanning normalizes ripgrep matches into canonical results", function( assert )
 {
     var canonicalFixture = [
@@ -655,5 +869,135 @@ QUnit.test( "workspace mode custom regex scanning normalizes ripgrep matches int
         assert.equal( harness.normalizeCalls.length, 2 );
         assert.equal( harness.scanTextCalls.length, 0 );
         assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, canonicalFixture );
+    } );
+} );
+
+QUnit.test( "workspace mode forwards multiline remote-path regex matches through normalization", function( assert )
+{
+    var remotePath = '/home/azureuser/localfiles/my-project/pipeline-deploy-api-policies.yaml';
+    var canonicalFixture = [
+        {
+            uri: matrixHelpers.createUri( remotePath ),
+            actualTag: 'TODO',
+            displayText: 'first custom item',
+            continuationText: [ 'second line', 'END' ]
+        }
+    ];
+    var ripgrepMatches = [
+        {
+            fsPath: remotePath,
+            line: 1,
+            column: 1,
+            match: 'TODO: first custom item',
+            extraLines: [ { match: 'second line' }, { match: 'END' } ]
+        }
+    ];
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        regexSource: '($TAGS):[\\s\\S]*?END',
+        resourceConfig: { isDefaultRegex: false, enableMultiLine: true, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/home/azureuser/localfiles/my-project' ), name: 'my-project' } ],
+        ripgrepMatches: ripgrepMatches,
+        normalizeResult: function( match )
+        {
+            return canonicalFixture[ ripgrepMatches.indexOf( match ) ];
+        },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.normalizeCalls.length, 1 );
+        assert.equal( harness.normalizeCalls[ 0 ].uri.fsPath, remotePath );
+        assert.equal( harness.normalizeCalls[ 0 ].match.extraLines.length, 2 );
+        assert.deepEqual( harness.normalizeCalls[ 0 ].match.extraLines.map( function( line ) { return line.match; } ), [ 'second line', 'END' ] );
+        assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, canonicalFixture );
+    } );
+} );
+
+QUnit.test( "remote custom-regex workspace results stay in parity with open-file results for issue-style yaml content", function( assert )
+{
+    function stripCaptureGroupOffsets( results )
+    {
+        return results.map( function( result )
+        {
+            var copy = Object.assign( {}, result );
+            delete copy.captureGroupOffsets;
+            return copy;
+        } );
+    }
+
+    var remotePath = '/home/azureuser/localfiles/my-project/pipeline-deploy-api-policies.yaml';
+    var remoteText = [
+        'TODO This is a test TODO',
+        'BUG',
+        'FIXME'
+    ].join( '\n' );
+    var remoteUri = matrixHelpers.createUri( remotePath );
+    var actualConfig = matrixHelpers.createConfig( {
+        tagList: [ 'TODO', 'FIXME', 'BUG' ],
+        regexSource: '($TAGS).*',
+        shouldBeCaseSensitive: true
+    } );
+    var openDocument = matrixHelpers.createDocument( remotePath, remoteText );
+
+    actualUtils.init( actualConfig );
+
+    var openResults = actualDetection.scanText( remoteUri, remoteText );
+    var ripgrepMatches = openResults.map( function( result )
+    {
+        return {
+            fsPath: remotePath,
+            line: result.line,
+            column: result.column,
+            match: result.match
+        };
+    } );
+    var workspaceResults = ripgrepMatches.map( function( match )
+    {
+        return actualDetection.normalizeRegexMatch( remoteUri, remoteText, match );
+    } );
+
+    var openFilesHarness = createExtensionHarness( {
+        scanMode: 'open files',
+        regexSource: '($TAGS).*',
+        resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
+        visibleTextEditors: [ { document: openDocument } ],
+        documentResults: openResults,
+        fileContents: {}
+    } );
+    var workspaceHarness = createExtensionHarness( {
+        scanMode: 'workspace',
+        regexSource: '($TAGS).*',
+        resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/home/azureuser/localfiles/my-project' ), name: 'my-project' } ],
+        ripgrepMatches: ripgrepMatches,
+        normalizeResult: function( match )
+        {
+            return workspaceResults[ ripgrepMatches.indexOf( match ) ];
+        },
+        fileContents: {
+            '/home/azureuser/localfiles/my-project/pipeline-deploy-api-policies.yaml': remoteText
+        }
+    } );
+
+    openFilesHarness.extension.activate( openFilesHarness.context );
+    workspaceHarness.extension.activate( workspaceHarness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( openResults.length, 3 );
+        assert.deepEqual( openResults.map( function( result ) { return result.actualTag; } ), [ 'TODO', 'BUG', 'FIXME' ] );
+        assert.deepEqual( stripCaptureGroupOffsets( workspaceResults ), stripCaptureGroupOffsets( openResults ) );
+        assert.equal( openFilesHarness.scanDocumentCalls.length, 1 );
+        assert.equal( workspaceHarness.normalizeCalls.length, 3 );
+        assert.equal( workspaceHarness.readFileCalls[ 0 ], remotePath );
+        assert.deepEqual( stripCaptureGroupOffsets( openFilesHarness.provider.replaceCalls[ 0 ].results ), stripCaptureGroupOffsets( openResults ) );
+        assert.deepEqual( stripCaptureGroupOffsets( workspaceHarness.provider.replaceCalls[ 0 ].results ), stripCaptureGroupOffsets( openResults ) );
     } );
 } );

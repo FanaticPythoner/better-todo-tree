@@ -69,7 +69,9 @@ QUnit.test( "utils.getCommentPattern resolves basename matched languages from fu
 QUnit.test( "utils.getCommentPattern and getCommentPatternRegex apply alias mappings", function( assert )
 {
     assert.equal( utils.getCommentPattern( "/tmp/file.jsonc" ).name, "JavaScript" );
+    assert.equal( utils.getCommentPattern( "/tmp/sample.dart" ).name, "JavaScript" );
     assert.equal( utils.getCommentPattern( "/tmp/component.vue" ).name, "HTML" );
+    assert.ok( utils.getCommentPatternRegex( "/tmp/sample.dart" ).regex instanceof RegExp );
     assert.ok( utils.getCommentPatternRegex( "/tmp/component.vue" ).regex instanceof RegExp );
 } );
 
@@ -595,6 +597,71 @@ QUnit.test( "attributes.getBackground uses colour scheme", function( assert )
     assert.equal( attributes.getBackground( "FIXME" ), "white" );
     assert.equal( attributes.getBackground( "TODO" ), "#000" );
     assert.equal( attributes.getBackground( "BUG" ), "white" );
+} );
+
+QUnit.test( "customHighlight overrides colour schemes while defaultHighlight still fills unset attributes", function( assert )
+{
+    var testConfig = stubs.getTestConfig();
+    testConfig.useColourScheme = true;
+    testConfig.tagList = [ 'TODO', 'FIXME' ];
+    testConfig.foregroundColours = [ 'white', 'black' ];
+    testConfig.backgroundColours = [ '#ff8855', '#00bff9' ];
+    testConfig.defaultHighlight = function()
+    {
+        return {
+            foreground: '#101010',
+            background: '#202020',
+            iconColour: '#303030'
+        };
+    };
+    testConfig.customHighlight = function()
+    {
+        return {
+            TODO: {
+                foreground: '#ffffff',
+                background: '#ff7e14',
+                iconColour: '#ff7e14'
+            }
+        };
+    };
+    attributes.init( testConfig );
+
+    assert.equal( attributes.getForeground( 'TODO' ), '#ffffff' );
+    assert.equal( attributes.getBackground( 'TODO' ), '#ff7e14' );
+    assert.equal( attributes.getIconColour( 'TODO' ), '#ff7e14' );
+    assert.equal( attributes.getForeground( 'FIXME' ), 'black' );
+    assert.equal( attributes.getBackground( 'FIXME' ), '#00bff9' );
+    assert.equal( attributes.getIconColour( 'FIXME' ), '#00bff9' );
+} );
+
+QUnit.test( "defaultHighlight provides fallback attributes when customHighlight only overrides some fields", function( assert )
+{
+    var testConfig = stubs.getTestConfig();
+    testConfig.useColourScheme = false;
+    testConfig.defaultHighlight = function()
+    {
+        return {
+            background: '#ff1493',
+            iconColour: '#ff1493',
+            gutterIcon: true,
+            type: 'text'
+        };
+    };
+    testConfig.customHighlight = function()
+    {
+        return {
+            FIXME: {
+                foreground: '#8F1BDC'
+            }
+        };
+    };
+    attributes.init( testConfig );
+
+    assert.equal( attributes.getForeground( 'FIXME' ), '#8F1BDC' );
+    assert.equal( attributes.getBackground( 'FIXME' ), '#ff1493' );
+    assert.equal( attributes.getIconColour( 'FIXME' ), '#ff1493' );
+    assert.equal( attributes.getAttribute( 'FIXME', 'gutterIcon', false ), true );
+    assert.equal( attributes.getAttribute( 'FIXME', 'type', undefined ), 'text' );
 } );
 
 QUnit.test( "utils.formatLabel replaces afterOrBefore tag", function( assert )
