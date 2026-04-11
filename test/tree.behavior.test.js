@@ -114,16 +114,19 @@ function createConfig( overrides )
     }, overrides || {} );
 }
 
-function createResult( fsPath, actualTag, displayText, continuationText )
+function createResult( fsPath, actualTag, displayText, continuationText, options )
 {
+    options = options || {};
+
     return {
-        uri: {
+        uri: options.uri || {
             fsPath: fsPath,
             toString: function()
             {
                 return fsPath;
             }
         },
+        revealUri: options.revealUri,
         line: 3,
         column: 5,
         endLine: 4,
@@ -134,7 +137,8 @@ function createResult( fsPath, actualTag, displayText, continuationText )
         after: displayText,
         displayText: displayText,
         continuationText: continuationText || [],
-        match: actualTag + ' ' + displayText
+        match: actualTag + ' ' + displayText,
+        sourceId: options.sourceId
     };
 }
 
@@ -189,6 +193,28 @@ QUnit.module( "behavioral tree", function()
         assert.equal( treeItem.tooltip, 'first line\nsecond line' );
     } );
 
+    QUnit.test( "issue #888 renders the multiline banner match as a single tree label", function( assert )
+    {
+        var configStub = createConfig( {
+            tags: function() { return [ '@todo', '*' ]; }
+        } );
+        var tree = loadTreeModule( configStub );
+        var provider = new tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+        var result = createResult( '/tmp/issue-888.js', '*', 'Helpers', [] );
+
+        provider.clear( [] );
+        provider.replaceDocument( result.uri, [ result ] );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+
+        var fileNode = provider.getChildren()[ 0 ];
+        var todoNode = provider.getChildren( fileNode )[ 0 ];
+        var treeItem = provider.getTreeItem( todoNode );
+
+        assert.equal( todoNode.label, '* Helpers' );
+        assert.deepEqual( todoNode.continuationText, [] );
+        assert.equal( treeItem.label, '* Helpers' );
+    } );
+
     QUnit.test( "todo ids remain stable across rebuilds for unchanged matches", function( assert )
     {
         var configStub = createConfig();
@@ -208,6 +234,39 @@ QUnit.module( "behavioral tree", function()
         var secondId = provider.getChildren( provider.getChildren()[ 0 ] )[ 0 ].id;
 
         assert.equal( firstId, secondId );
+    } );
+
+    QUnit.test( "notebook todos reveal the originating cell while remaining grouped under the notebook file", function( assert )
+    {
+        var configStub = createConfig();
+        var tree = loadTreeModule( configStub );
+        var provider = new tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+        var notebookUri = {
+            fsPath: '/tmp/notebook.ipynb',
+            toString: function() { return '/tmp/notebook.ipynb'; }
+        };
+        var cellUri = {
+            fsPath: '/tmp/notebook.ipynb',
+            toString: function() { return 'vscode-notebook-cell:///tmp/notebook.ipynb#cell-0'; }
+        };
+        var result = createResult( '/tmp/notebook.ipynb', 'TODO', 'cell item', [], {
+            uri: notebookUri,
+            revealUri: cellUri,
+            sourceId: 'notebook-cell:0:' + cellUri.toString()
+        } );
+
+        provider.clear( [] );
+        provider.replaceDocument( notebookUri, [ result ] );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+
+        var fileNode = provider.getChildren()[ 0 ];
+        var todoNode = provider.getChildren( fileNode )[ 0 ];
+        var treeItem = provider.getTreeItem( todoNode );
+
+        assert.equal( todoNode.fsPath, '/tmp/notebook.ipynb' );
+        assert.equal( todoNode.uri, cellUri );
+        assert.equal( treeItem.command.arguments[ 0 ], cellUri );
+        assert.equal( todoNode.id.indexOf( 'notebook-cell:0:' ) > -1, true );
     } );
 
     QUnit.test( "tag grouped roots follow configured tag order", function( assert )

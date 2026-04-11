@@ -246,7 +246,7 @@ function getResourceConfig( uri )
     };
 }
 
-function extractTag( text, matchOffset, uri )
+function extractTag( text, matchOffset, uri, preferredTagOffset )
 {
     var resourceConfig = getResourceConfig( uri );
     var flags = resourceConfig.regexCaseSensitive ? '' : 'i';
@@ -262,7 +262,31 @@ function extractTag( text, matchOffset, uri )
     {
         var tagRegex = new RegExp( '(' + getTagRegexSource( uri, resourceConfig.tags ) + ')', flags );
         var subTagRegex = new RegExp( resourceConfig.subTagRegex, flags );
-        tagMatch = tagRegex.exec( text );
+        if( preferredTagOffset !== undefined )
+        {
+            var globalTagRegex = new RegExp( tagRegex.source, flags + 'g' );
+            var preferredMatch;
+
+            while( ( preferredMatch = globalTagRegex.exec( text ) ) !== null )
+            {
+                if( preferredMatch.index === preferredTagOffset )
+                {
+                    tagMatch = preferredMatch;
+                    break;
+                }
+
+                if( preferredMatch[ 0 ].length === 0 )
+                {
+                    globalTagRegex.lastIndex++;
+                }
+            }
+        }
+
+        if( tagMatch === null )
+        {
+            tagMatch = tagRegex.exec( text );
+        }
+
         if( tagMatch )
         {
             tagOffset = tagMatch.index;

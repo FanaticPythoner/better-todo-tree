@@ -1,6 +1,8 @@
 var helpers = require( './moduleHelpers.js' );
+var actualDetection = require( '../src/detection.js' );
 var actualUtils = require( '../src/utils.js' );
 var actualAttributes = require( '../src/attributes.js' );
+var issue888Helpers = require( './issue888Helpers.js' );
 
 function createVscodeStub( highlightConfiguration, decorationLog )
 {
@@ -509,5 +511,65 @@ QUnit.module( "behavioral highlights", function( hooks )
         assert.equal( recorded[ 0 ][ 0 ].range.start.character, 3 );
         assert.equal( recorded[ 0 ][ 0 ].range.end.line, 0 );
         assert.equal( recorded[ 0 ][ 0 ].range.end.character, 18 );
+    } );
+
+    QUnit.test( "issue #888 tag highlights anchor to the content-line asterisk", function( assert )
+    {
+        var recorded = [];
+        var issueConfig = issue888Helpers.createIssue888Config();
+        var text = issue888Helpers.createIssue888Text();
+
+        actualUtils.init( issueConfig );
+
+        var highlights = helpers.loadWithStubs( '../src/highlights.js', {
+            vscode: createVscodeStub( { highlight: 'tag', enabled: true }, [] ),
+            './config.js': {
+                customHighlight: function() { return {}; },
+                subTagRegex: function() { return '(^:\\s*)'; },
+                tagGroup: function() { return undefined; }
+            },
+            './utils.js': actualUtils,
+            './attributes.js': {
+                getForeground: function() { return undefined; },
+                getBackground: function() { return undefined; },
+                getAttribute: function( tag, attribute, defaultValue )
+                {
+                    if( attribute === 'type' )
+                    {
+                        return 'tag';
+                    }
+                    return defaultValue;
+                }
+            },
+            './icons.js': {
+                getGutterIcon: function()
+                {
+                    return { dark: '/tmp/gutter.svg', light: '/tmp/gutter.svg' };
+                }
+            },
+            './detection.js': actualDetection,
+            './extensionIdentity.js': {
+                getSetting: function( setting, defaultValue )
+                {
+                    return defaultValue;
+                }
+            }
+        } );
+
+        highlights.init( { subscriptions: { push: function() {} } }, function() {} );
+
+        highlights.highlight( {
+            viewColumn: 1,
+            document: createDocument( text ),
+            setDecorations: function( decoration, ranges )
+            {
+                recorded.push( ranges );
+            }
+        } );
+
+        assert.equal( recorded[ 0 ][ 0 ].range.start.line, 1 );
+        assert.equal( recorded[ 0 ][ 0 ].range.start.character, 1 );
+        assert.equal( recorded[ 0 ][ 0 ].range.end.line, 1 );
+        assert.equal( recorded[ 0 ][ 0 ].range.end.character, 2 );
     } );
 } );

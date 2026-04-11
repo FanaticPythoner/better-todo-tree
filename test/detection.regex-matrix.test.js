@@ -2,6 +2,7 @@ var utils = require( '../src/utils.js' );
 var detection = require( '../src/detection.js' );
 
 var languageMatrix = require( './languageMatrix.js' );
+var issue888Helpers = require( './issue888Helpers.js' );
 var matrixHelpers = require( './matrixHelpers.js' );
 var stubs = require( './stubs.js' );
 
@@ -219,6 +220,60 @@ QUnit.module( "detection regex matrix", function()
         );
     } );
 
+    QUnit.test( "issue 885 hash-prefixed custom tags in markdown stay repeatable across editor and ripgrep normalization", function( assert )
+    {
+        var uri = matrixHelpers.createUri( '/tmp/issue-885.md' );
+        var text = [
+            '#LATER alpha',
+            '#LATER beta',
+            '#LATER #TODO gamma',
+            '#LATER delta'
+        ].join( '\n' );
+        var config = matrixHelpers.createConfig( {
+            tagList: [ '#LATER' ],
+            regexSource: '($TAGS).*',
+            shouldBeCaseSensitive: true
+        } );
+
+        utils.init( config );
+
+        var scanned = detection.scanText( uri, text );
+        var normalized = scanned.map( function( result )
+        {
+            return detection.normalizeRegexMatch( uri, text, {
+                fsPath: uri.fsPath,
+                line: result.line,
+                column: result.column,
+                match: result.match
+            } );
+        } );
+
+        function comparableSnapshot( result )
+        {
+            return {
+                line: result.line,
+                column: result.column,
+                actualTag: result.actualTag,
+                displayText: result.displayText,
+                match: result.match
+            };
+        }
+
+        assert.equal( scanned.length, 4 );
+        assert.deepEqual(
+            scanned.map( function( result ) { return result.actualTag; } ),
+            [ '#LATER', '#LATER', '#LATER', '#LATER' ]
+        );
+        assert.deepEqual(
+            scanned.map( function( result ) { return result.displayText; } ),
+            [ 'alpha', 'beta', '#TODO gamma', 'delta' ]
+        );
+        assert.deepEqual(
+            normalized.map( comparableSnapshot ),
+            scanned.map( comparableSnapshot )
+        );
+    } );
+
     QUnit.test( "ripgrep style normalization matches editor normalization for multiline results", function( assert )
     {
         var config = matrixHelpers.createConfig( {
@@ -246,5 +301,29 @@ QUnit.module( "detection regex matrix", function()
         assert.deepEqual( normalized.continuationText, scanned.continuationText );
         assert.equal( normalized.line, scanned.line );
         assert.equal( normalized.endLine, scanned.endLine );
+    } );
+
+    QUnit.test( "issue #888 multiline banner regex anchors the star tag to the content line", function( assert )
+    {
+        var uri = matrixHelpers.createUri( '/tmp/issue-888.js' );
+        var text = issue888Helpers.createIssue888Text();
+        var config = issue888Helpers.createIssue888Config();
+        var tagLine = ' * Helpers';
+
+        utils.init( config );
+
+        var results = detection.scanText( uri, text );
+
+        assert.equal( results.length, 1 );
+        assert.equal( results[ 0 ].actualTag, '*' );
+        assert.equal( results[ 0 ].line, 2 );
+        assert.equal( results[ 0 ].column, 2 );
+        assert.equal( results[ 0 ].displayText, 'Helpers' );
+        assert.deepEqual( results[ 0 ].continuationText, [] );
+        assert.equal( results[ 0 ].match, tagLine );
+        assert.equal( results[ 0 ].matchStartOffset, text.indexOf( tagLine ) + 1 );
+        assert.equal( results[ 0 ].tagStartOffset, text.indexOf( tagLine ) + 1 );
+        assert.equal( results[ 0 ].matchEndOffset, text.indexOf( tagLine ) + tagLine.length );
+        assert.equal( results[ 0 ].commentStartOffset, 0 );
     } );
 } );

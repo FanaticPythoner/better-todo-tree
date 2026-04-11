@@ -22,7 +22,7 @@ function uriFsPath( uri )
 
 function matchKey( result )
 {
-    return result.line + ":" + result.column + ":" + result.match;
+    return ( result.sourceId || "" ) + ":" + result.line + ":" + result.column + ":" + result.match;
 }
 
 function toResultArray( resultMap )

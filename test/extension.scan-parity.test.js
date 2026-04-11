@@ -1,8 +1,12 @@
 var helpers = require( './moduleHelpers.js' );
+var issue888Helpers = require( './issue888Helpers.js' );
 var matrixHelpers = require( './matrixHelpers.js' );
 var languageMatrix = require( './languageMatrix.js' );
 var actualUtils = require( '../src/utils.js' );
 var actualDetection = require( '../src/detection.js' );
+
+var DEFAULT_INCLUDE_GLOBS = languageMatrix.findConfigurationProperty( 'better-todo-tree.filtering.includeGlobs' ).default.slice();
+var DEFAULT_EXCLUDE_GLOBS = languageMatrix.findConfigurationProperty( 'better-todo-tree.filtering.excludeGlobs' ).default.slice();
 
 function createConfigurationSection( values, explicitTarget )
 {
@@ -134,6 +138,13 @@ function createVscodeStub( options )
     var workspaceListeners = {};
     var windowListeners = {};
     var executedCommands = [];
+    var filteringDefaults = Object.assign( {
+        passGlobsToRipgrep: true,
+        includeGlobs: DEFAULT_INCLUDE_GLOBS.slice(),
+        excludeGlobs: DEFAULT_EXCLUDE_GLOBS.slice(),
+        includeHiddenFiles: false,
+        useBuiltInExcludes: 'none'
+    }, options.filteringOverrides || {} );
 
     var rootSection = createConfigurationSection( {
         tree: {
@@ -159,13 +170,7 @@ function createVscodeStub( options )
             scanAtStartup: true,
             scanMode: options.scanMode
         },
-        filtering: {
-            passGlobsToRipgrep: true,
-            includeGlobs: [],
-            excludeGlobs: [],
-            includeHiddenFiles: false,
-            useBuiltInExcludes: 'none'
-        },
+        filtering: filteringDefaults,
         general: {
             debug: false,
             automaticGitRefreshInterval: 0,
@@ -206,13 +211,13 @@ function createVscodeStub( options )
             buttons: rootSection.get( 'tree.buttons' )
         } );
     var filteringSection = createConfigurationSection( {
-            passGlobsToRipgrep: true,
-            includeGlobs: [],
-            excludeGlobs: [],
-            includeHiddenFiles: false,
+            passGlobsToRipgrep: filteringDefaults.passGlobsToRipgrep,
+            includeGlobs: filteringDefaults.includeGlobs.slice(),
+            excludeGlobs: filteringDefaults.excludeGlobs.slice(),
+            includeHiddenFiles: filteringDefaults.includeHiddenFiles,
             includedWorkspaces: [],
             excludedWorkspaces: [],
-            useBuiltInExcludes: 'none',
+            useBuiltInExcludes: filteringDefaults.useBuiltInExcludes,
             scopes: []
         } );
     var regexSection = createConfigurationSection( {
@@ -267,6 +272,20 @@ function createVscodeStub( options )
         commandHandlers: commandHandlers,
         workspaceListeners: workspaceListeners,
         executedCommands: executedCommands,
+        extensions: {
+            all: options.extensions || [ {
+                packageJSON: {
+                    contributes: {
+                        languages: [
+                            { id: 'python', extensions: [ '.py' ] },
+                            { id: 'markdown', extensions: [ '.md' ] },
+                            { id: 'javascript', extensions: [ '.js' ] },
+                            { id: 'typescriptreact', extensions: [ '.tsx', '.ts' ] }
+                        ]
+                    }
+                }
+            } ]
+        },
         StatusBarAlignment: { Left: 0 },
         ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
         ThemeColor: function( name ) { this.name = name; },
@@ -301,6 +320,7 @@ function createVscodeStub( options )
         window: {
             visibleTextEditors: options.visibleTextEditors || [],
             activeTextEditor: options.activeTextEditor,
+            activeNotebookEditor: options.activeNotebookEditor,
             createStatusBarItem: function()
             {
                 return {
@@ -341,9 +361,13 @@ function createVscodeStub( options )
             {
                 return sections[ section ] || createConfigurationSection( {} );
             },
+            notebookDocuments: options.notebookDocuments || [],
             onDidSaveTextDocument: function( listener ) { return registerListener( workspaceListeners, 'save', listener ); },
             onDidOpenTextDocument: function( listener ) { return registerListener( workspaceListeners, 'open', listener ); },
             onDidCloseTextDocument: function( listener ) { return registerListener( workspaceListeners, 'close', listener ); },
+            onDidOpenNotebookDocument: function( listener ) { return registerListener( workspaceListeners, 'openNotebook', listener ); },
+            onDidChangeNotebookDocument: function( listener ) { return registerListener( workspaceListeners, 'changeNotebook', listener ); },
+            onDidCloseNotebookDocument: function( listener ) { return registerListener( workspaceListeners, 'closeNotebook', listener ); },
             onDidChangeConfiguration: function( listener ) { return registerListener( workspaceListeners, 'configuration', listener ); },
             onDidChangeWorkspaceFolders: function( listener ) { return registerListener( workspaceListeners, 'workspaceFolders', listener ); },
             onDidChangeTextDocument: function( listener ) { return registerListener( workspaceListeners, 'changeText', listener ); },
@@ -361,6 +385,7 @@ function createExtensionHarness( options )
     var scanTextCalls = [];
     var normalizeCalls = [];
     var readFileCalls = [];
+    var validSchemes = options.validSchemes || [ 'file', 'vscode-notebook-cell' ];
 
     var vscodeStub = createVscodeStub( options );
     var context = {
@@ -418,7 +443,7 @@ function createExtensionHarness( options )
             tags: function() { return languageMatrix.DEFAULT_TAGS.slice(); },
             shouldShowIconsInsteadOfTagsInStatusBar: function() { return false; },
             shouldCompactFolders: function() { return false; },
-            isValidScheme: function( uri ) { return uri && uri.scheme === 'file'; },
+            isValidScheme: function( uri ) { return uri && validSchemes.indexOf( uri.scheme ) !== -1; },
             labelFormat: function() { return '${tag} ${after}'; },
             shouldShowScanModeInTree: function() { return false; },
             shouldExpand: function() { return false; },
@@ -444,14 +469,31 @@ function createExtensionHarness( options )
         './utils.js': {
             init: function() {},
             isCodicon: function() { return false; },
+            getCommentPattern: function( candidate ) { return actualUtils.getCommentPattern( candidate ); },
             getRegexSource: function() { return options.regexSource || '($TAGS)'; },
             getTagRegexSource: function() { return 'TODO|FIXME|BUG|HACK|XXX|\\[ \\]|\\[x\\]'; },
-            isIncluded: function() { return true; },
-            isHidden: function() { return false; },
+            isIncluded: function( name, includes, excludes )
+            {
+                if( typeof ( options.isIncludedImpl ) === 'function' )
+                {
+                    return options.isIncludedImpl( name, includes, excludes );
+                }
+
+                return actualUtils.isIncluded( name, includes, excludes );
+            },
+            isHidden: function( filePath )
+            {
+                if( typeof ( options.isHiddenImpl ) === 'function' )
+                {
+                    return options.isHiddenImpl( filePath );
+                }
+
+                return actualUtils.isHidden( filePath );
+            },
             replaceEnvironmentVariables: function( value ) { return value; },
             getSubmoduleExcludeGlobs: function() { return []; },
             formatLabel: function( template ) { return template; },
-            toGlobArray: function( value ) { return value || []; },
+            toGlobArray: function( value ) { return actualUtils.toGlobArray( value ); },
             createFolderGlob: function() { return '**/*'; }
         },
         './attributes.js': {
@@ -516,6 +558,49 @@ function createExtensionHarness( options )
     };
 }
 
+function createNotebookFixture( notebookPath )
+{
+    notebookPath = notebookPath || '/workspace/notebook.ipynb';
+    var codeCell = matrixHelpers.createNotebookCellDocument( notebookPath, 'code', '# TODO code cell item', 'python' );
+    var markdownCell = matrixHelpers.createNotebookCellDocument( notebookPath, 'markdown', '- [ ] markdown cell item', 'markdown' );
+    var notebook = matrixHelpers.createNotebookDocument( notebookPath, [ codeCell, markdownCell ] );
+
+    function scanDocumentImpl( document )
+    {
+        if( document.uri.toString() === codeCell.uri.toString() )
+        {
+            return [ {
+                uri: codeCell.uri,
+                actualTag: 'TODO',
+                displayText: 'code cell item',
+                continuationText: []
+            } ];
+        }
+
+        return [ {
+            uri: markdownCell.uri,
+            actualTag: '[ ]',
+            displayText: 'markdown cell item',
+            continuationText: []
+        } ];
+    }
+
+    return {
+        notebook: notebook,
+        codeCell: codeCell,
+        markdownCell: markdownCell,
+        scanDocumentImpl: scanDocumentImpl
+    };
+}
+
+function waitForDelay( delay )
+{
+    return new Promise( function( resolve )
+    {
+        setTimeout( resolve, delay );
+    } );
+}
+
 QUnit.module( "extension scan parity" );
 
 QUnit.test( "open-files mode stores canonical document results through the refresh pipeline", function( assert )
@@ -541,6 +626,66 @@ QUnit.test( "open-files mode stores canonical document results through the refre
     {
         assert.equal( harness.scanDocumentCalls.length, 1 );
         assert.equal( harness.scanDocumentCalls[ 0 ].fileName, '/tmp/open.js' );
+        assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, fixture );
+    } );
+} );
+
+QUnit.test( "issue #883 open-files mode scans every cell in an open notebook instead of only the active cell", function( assert )
+{
+    var fixture = createNotebookFixture();
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        notebookDocuments: [ fixture.notebook ],
+        visibleTextEditors: [ { document: fixture.codeCell } ],
+        activeTextEditor: { document: fixture.codeCell },
+        scanDocumentImpl: fixture.scanDocumentImpl,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 2 );
+        assert.equal( harness.provider.replaceCalls.length, 1 );
+        assert.equal( harness.provider.replaceCalls[ 0 ].uri.fsPath, '/workspace/notebook.ipynb' );
+        assert.deepEqual(
+            harness.provider.replaceCalls[ 0 ].results.map( function( result )
+            {
+                return [ result.actualTag, result.displayText, result.revealUri.toString(), result.uri.fsPath ];
+            } ),
+            [
+                [ 'TODO', 'code cell item', fixture.codeCell.uri.toString(), '/workspace/notebook.ipynb' ],
+                [ '[ ]', 'markdown cell item', fixture.markdownCell.uri.toString(), '/workspace/notebook.ipynb' ]
+            ]
+        );
+    } );
+} );
+
+QUnit.test( "issue #905 open-files mode keeps Go documents included when filtering uses manifest defaults", function( assert )
+{
+    var fixture = [ {
+        uri: matrixHelpers.createUri( '/workspace/cmd/main.go' ),
+        actualTag: 'TODO',
+        displayText: 'go document item',
+        continuationText: []
+    } ];
+    var document = matrixHelpers.createDocument( '/workspace/cmd/main.go', '// TODO go document item' );
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        visibleTextEditors: [ { document: document } ],
+        documentResults: fixture,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 1 );
+        assert.equal( harness.scanDocumentCalls[ 0 ].fileName, '/workspace/cmd/main.go' );
         assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, fixture );
     } );
 } );
@@ -595,6 +740,41 @@ QUnit.test( "current-file mode clears stale results when the active editor chang
     } );
 } );
 
+QUnit.test( "issue #883 current-file mode keeps notebook results at notebook scope when the active cell changes", function( assert )
+{
+    var fixture = createNotebookFixture();
+    var harness = createExtensionHarness( {
+        scanMode: 'current file',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        notebookDocuments: [ fixture.notebook ],
+        visibleTextEditors: [ { document: fixture.codeCell }, { document: fixture.markdownCell } ],
+        activeTextEditor: { document: fixture.codeCell },
+        scanDocumentImpl: fixture.scanDocumentImpl,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.provider.replaceCalls[ 0 ].uri.fsPath, '/workspace/notebook.ipynb' );
+        assert.equal( harness.provider.replaceCalls[ 0 ].results.length, 2 );
+
+        harness.vscode.window.activeTextEditor = { document: fixture.markdownCell };
+        return harness.vscode.workspaceListeners.activeEditor( { document: fixture.markdownCell } );
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        var lastReplaceCall = harness.provider.replaceCalls[ harness.provider.replaceCalls.length - 1 ];
+
+        assert.equal( lastReplaceCall.uri.fsPath, '/workspace/notebook.ipynb' );
+        assert.equal( lastReplaceCall.results.length, 2 );
+        assert.equal( harness.scanDocumentCalls.length, 4 );
+    } );
+} );
+
 QUnit.test( "workspace mode built-in scanning reparses candidate files through detection.scanText", function( assert )
 {
     var fixture = [ {
@@ -624,6 +804,187 @@ QUnit.test( "workspace mode built-in scanning reparses candidate files through d
         assert.equal( harness.readFileCalls[ 0 ], '/workspace/src/file.js' );
         assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, fixture );
         assert.equal( harness.normalizeCalls.length, 0 );
+    } );
+} );
+
+QUnit.test( "issue #883 workspace mode keeps open notebook scans even when the notebook is inside a workspace root", function( assert )
+{
+    var fixture = createNotebookFixture();
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        notebookDocuments: [ fixture.notebook ],
+        visibleTextEditors: [ { document: fixture.codeCell } ],
+        activeTextEditor: { document: fixture.codeCell },
+        scanDocumentImpl: fixture.scanDocumentImpl,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 2 );
+        assert.equal( harness.provider.replaceCalls.length, 1 );
+        assert.equal( harness.provider.replaceCalls[ 0 ].uri.fsPath, '/workspace/notebook.ipynb' );
+        assert.deepEqual(
+            harness.provider.replaceCalls[ 0 ].results.map( function( result ) { return result.actualTag; } ),
+            [ 'TODO', '[ ]' ]
+        );
+    } );
+} );
+
+QUnit.test( "issue #883 open notebook events scan the full notebook after activation", function( assert )
+{
+    var fixture = createNotebookFixture();
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        scanDocumentImpl: fixture.scanDocumentImpl,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 0 );
+        return harness.vscode.workspaceListeners.openNotebook( fixture.notebook );
+    } ).then( function()
+    {
+        return waitForDelay( 250 );
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 2 );
+        assert.equal( harness.provider.replaceCalls[ 0 ].uri.fsPath, '/workspace/notebook.ipynb' );
+        assert.deepEqual( harness.provider.replaceCalls[ 0 ].results.map( function( result ) { return result.actualTag; } ), [ 'TODO', '[ ]' ] );
+    } );
+} );
+
+QUnit.test( "issue #883 notebook change events rescan every cell and replace notebook-scoped results", function( assert )
+{
+    var fixture = createNotebookFixture();
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        notebookDocuments: [ fixture.notebook ],
+        visibleTextEditors: [ { document: fixture.codeCell } ],
+        activeTextEditor: { document: fixture.codeCell },
+        scanDocumentImpl: fixture.scanDocumentImpl,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 2 );
+        fixture.notebook.version += 1;
+        fixture.codeCell.version += 1;
+        fixture.markdownCell.version += 1;
+
+        return harness.vscode.workspaceListeners.changeNotebook( { notebook: fixture.notebook } );
+    } ).then( function()
+    {
+        return waitForDelay( 550 );
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        var lastReplaceCall = harness.provider.replaceCalls[ harness.provider.replaceCalls.length - 1 ];
+
+        assert.equal( harness.scanDocumentCalls.length, 4 );
+        assert.equal( lastReplaceCall.uri.fsPath, '/workspace/notebook.ipynb' );
+        assert.deepEqual( lastReplaceCall.results.map( function( result ) { return result.actualTag; } ), [ 'TODO', '[ ]' ] );
+    } );
+} );
+
+QUnit.test( "issue #883 closing a notebook removes notebook-scoped results once and ignores cell close churn", function( assert )
+{
+    var fixture = createNotebookFixture();
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        notebookDocuments: [ fixture.notebook ],
+        visibleTextEditors: [ { document: fixture.codeCell } ],
+        activeTextEditor: { document: fixture.codeCell },
+        scanDocumentImpl: fixture.scanDocumentImpl,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.provider.replaceCalls.length, 1 );
+
+        harness.vscode.workspaceListeners.close( fixture.codeCell );
+        assert.equal( harness.provider.replaceCalls.length, 1 );
+
+        harness.vscode.workspaceListeners.closeNotebook( fixture.notebook );
+        assert.equal( harness.provider.replaceCalls.length, 2 );
+        assert.equal( harness.provider.replaceCalls[ 1 ].uri.fsPath, '/workspace/notebook.ipynb' );
+        assert.deepEqual( harness.provider.replaceCalls[ 1 ].results, [] );
+    } );
+} );
+
+QUnit.test( "issue #883 workspace-only mode ignores notebooks outside workspace roots", function( assert )
+{
+    var fixture = createNotebookFixture( '/external/notebook.ipynb' );
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace only',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        notebookDocuments: [ fixture.notebook ],
+        visibleTextEditors: [ { document: fixture.codeCell } ],
+        activeTextEditor: { document: fixture.codeCell },
+        scanDocumentImpl: fixture.scanDocumentImpl,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 0 );
+        assert.deepEqual( harness.provider.replaceCalls, [] );
+    } );
+} );
+
+QUnit.test( "issue #905 workspace mode keeps Go files in scope without adding file-type include globs", function( assert )
+{
+    var fixture = [ {
+        uri: matrixHelpers.createUri( '/workspace/cmd/main.go' ),
+        actualTag: 'TODO',
+        displayText: 'workspace go item',
+        continuationText: []
+    } ];
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [ { fsPath: '/workspace/cmd/main.go' } ],
+        workspaceResults: fixture,
+        fileContents: {
+            '/workspace/cmd/main.go': '// TODO workspace go item'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.ripgrepSearchCalls.length, 1 );
+        assert.equal( harness.scanTextCalls.length, 1 );
+        assert.equal( harness.scanTextCalls[ 0 ].uri.fsPath, '/workspace/cmd/main.go' );
+        assert.deepEqual( harness.ripgrepSearchCalls[ 0 ].globs, [ '!**/node_modules/*/**' ] );
+        assert.ok( harness.ripgrepSearchCalls[ 0 ].globs.every( function( glob ) { return glob.indexOf( '.go' ) === -1; } ) );
+        assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, fixture );
     } );
 } );
 
@@ -996,6 +1357,128 @@ QUnit.test( "remote custom-regex workspace results stay in parity with open-file
         assert.deepEqual( stripCaptureGroupOffsets( workspaceResults ), stripCaptureGroupOffsets( openResults ) );
         assert.equal( openFilesHarness.scanDocumentCalls.length, 1 );
         assert.equal( workspaceHarness.normalizeCalls.length, 3 );
+        assert.equal( workspaceHarness.readFileCalls[ 0 ], remotePath );
+        assert.deepEqual( stripCaptureGroupOffsets( openFilesHarness.provider.replaceCalls[ 0 ].results ), stripCaptureGroupOffsets( openResults ) );
+        assert.deepEqual( stripCaptureGroupOffsets( workspaceHarness.provider.replaceCalls[ 0 ].results ), stripCaptureGroupOffsets( openResults ) );
+    } );
+} );
+
+QUnit.test( "issue #888 workspace custom-regex normalization matches the open-file canonical banner result", function( assert )
+{
+    function stripCaptureGroupOffsets( results )
+    {
+        return results.map( function( result )
+        {
+            var copy = Object.assign( {}, result );
+            delete copy.captureGroupOffsets;
+            return copy;
+        } );
+    }
+
+    var uri = matrixHelpers.createUri( '/tmp/issue-888.js' );
+    var text = issue888Helpers.createIssue888Text();
+    var config = issue888Helpers.createIssue888Config();
+    var openResults;
+    var workspaceResults;
+
+    actualUtils.init( config );
+
+    openResults = actualDetection.scanText( uri, text );
+    workspaceResults = [
+        actualDetection.normalizeRegexMatch( uri, text, issue888Helpers.createIssue888RipgrepMatch( uri.fsPath ) )
+    ];
+
+    assert.equal( openResults.length, 1 );
+    assert.deepEqual( stripCaptureGroupOffsets( workspaceResults ), stripCaptureGroupOffsets( openResults ) );
+    assert.equal( workspaceResults[ 0 ].actualTag, '*' );
+    assert.equal( workspaceResults[ 0 ].displayText, 'Helpers' );
+    assert.equal( workspaceResults[ 0 ].line, 2 );
+    assert.equal( workspaceResults[ 0 ].column, 2 );
+} );
+
+QUnit.test( "issue #885 workspace and open-file scans keep every repeated hash-prefixed markdown tag", function( assert )
+{
+    function stripCaptureGroupOffsets( results )
+    {
+        return results.map( function( result )
+        {
+            var copy = Object.assign( {}, result );
+            delete copy.captureGroupOffsets;
+            return copy;
+        } );
+    }
+
+    var remotePath = '/tmp/issue-885.md';
+    var remoteText = [
+        '#LATER alpha',
+        '#LATER beta',
+        '#LATER #TODO gamma',
+        '#LATER delta'
+    ].join( '\n' );
+    var remoteUri = matrixHelpers.createUri( remotePath );
+    var actualConfig = matrixHelpers.createConfig( {
+        tagList: [ '#LATER' ],
+        regexSource: '($TAGS).*',
+        shouldBeCaseSensitive: true
+    } );
+    var openDocument = matrixHelpers.createDocument( remotePath, remoteText );
+
+    actualUtils.init( actualConfig );
+
+    var openResults = actualDetection.scanText( remoteUri, remoteText );
+    var ripgrepMatches = openResults.map( function( result )
+    {
+        return {
+            fsPath: remotePath,
+            line: result.line,
+            column: result.column,
+            match: result.match
+        };
+    } );
+    var workspaceResults = ripgrepMatches.map( function( match )
+    {
+        return actualDetection.normalizeRegexMatch( remoteUri, remoteText, match );
+    } );
+
+    var openFilesHarness = createExtensionHarness( {
+        scanMode: 'open files',
+        regexSource: '($TAGS).*',
+        resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
+        visibleTextEditors: [ { document: openDocument } ],
+        documentResults: openResults,
+        fileContents: {}
+    } );
+    var workspaceHarness = createExtensionHarness( {
+        scanMode: 'workspace',
+        regexSource: '($TAGS).*',
+        resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/tmp' ), name: 'tmp' } ],
+        ripgrepMatches: ripgrepMatches,
+        normalizeResult: function( match )
+        {
+            return workspaceResults[ ripgrepMatches.indexOf( match ) ];
+        },
+        fileContents: {
+            '/tmp/issue-885.md': remoteText
+        }
+    } );
+
+    openFilesHarness.extension.activate( openFilesHarness.context );
+    workspaceHarness.extension.activate( workspaceHarness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( openResults.length, 4 );
+        assert.deepEqual(
+            openResults.map( function( result ) { return result.displayText; } ),
+            [ 'alpha', 'beta', '#TODO gamma', 'delta' ]
+        );
+        assert.deepEqual( stripCaptureGroupOffsets( workspaceResults ), stripCaptureGroupOffsets( openResults ) );
+        assert.equal( openFilesHarness.scanDocumentCalls.length, 1 );
+        assert.equal( workspaceHarness.normalizeCalls.length, 4 );
         assert.equal( workspaceHarness.readFileCalls[ 0 ], remotePath );
         assert.deepEqual( stripCaptureGroupOffsets( openFilesHarness.provider.replaceCalls[ 0 ].results ), stripCaptureGroupOffsets( openResults ) );
         assert.deepEqual( stripCaptureGroupOffsets( workspaceHarness.provider.replaceCalls[ 0 ].results ), stripCaptureGroupOffsets( openResults ) );

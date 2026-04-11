@@ -138,3 +138,4 @@ module.exports.DEFAULT_TAGS = DEFAULT_TAGS;
 module.exports.DEFAULT_REGEX_SOURCE = DEFAULT_REGEX_SOURCE;
 module.exports.LANGUAGES = LANGUAGES;
 module.exports.HIGHLIGHT_TYPES = HIGHLIGHT_TYPES;
+module.exports.findConfigurationProperty = findConfigurationProperty;

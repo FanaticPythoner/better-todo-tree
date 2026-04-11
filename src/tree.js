@@ -64,7 +64,12 @@ var findPathNode = function( node )
 
 var findTodoNode = function( node )
 {
-    return isTodoNode( node ) && node.fsPath === this.fsPath && node.line === this.line && node.column === this.column && node.actualTag === this.actualTag;
+    return isTodoNode( node ) &&
+        node.fsPath === this.fsPath &&
+        node.line === this.line &&
+        node.column === this.column &&
+        node.actualTag === this.actualTag &&
+        ( node.sourceId || "" ) === ( this.sourceId || "" );
 };
 
 var sortFoldersFirst = function( a, b, same )
@@ -232,15 +237,17 @@ function createTodoNode( result )
 
     var tagGroup = config.tagGroup( result.actualTag );
     var fullText = [ displayText ].concat( result.continuationText || [] ).join( '\n' );
+    var sourceIdSegment = result.sourceId ? ":" + result.sourceId : "";
 
     var todo = {
         type: TODO,
         fsPath: result.uri.fsPath,
-        uri: result.uri,
+        uri: result.revealUri || result.uri,
         label: label,
         tag: tagGroup ? tagGroup : result.actualTag,
         subTag: result.subTag,
         actualTag: result.actualTag,
+        sourceId: result.sourceId,
         line: result.line - 1,
         column: result.column,
         endLine: ( result.endLine || result.line ) - 1,
@@ -250,7 +257,7 @@ function createTodoNode( result )
         displayText: displayText,
         continuationText: result.continuationText || [],
         fullText: fullText,
-        id: "todo:" + result.uri.fsPath + ":" + result.line + ":" + result.column + ":" + result.actualTag,
+        id: "todo:" + result.uri.fsPath + sourceIdSegment + ":" + result.line + ":" + result.column + ":" + result.actualTag,
         visible: true,
         parent: undefined
     };

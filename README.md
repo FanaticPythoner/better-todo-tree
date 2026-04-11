@@ -232,7 +232,7 @@ or</br>
 
 <sup>*Note: Other open files (outside of the rootFolder) will be shown (as they are opened) with their full path in brackets.*</sup>
 
-**better-todo-tree.general.schemes** (`['file','ssh','untitled']`)</br>
+**better-todo-tree.general.schemes** (`['file','ssh','untitled','vscode-notebook-cell']`)</br>
 Editor schemes to find TODOs in. To find TODOs in settings files, for instance, add `vscode-userdata` or for output windows, add `output`.
 
 **better-todo-tree.general.tags** (`["TODO","FIXME","BUG"]`)</br>

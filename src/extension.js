@@ -14,6 +14,8 @@ var icons = require( './icons.js' );
 var highlights = require( './highlights.js' );
 var config = require( './config.js' );
 var utils = require( './utils.js' );
+var notebooks = require( './notebooks.js' );
+var commentPatternLanguageResolver = require( './commentPatternLanguageResolver.js' );
 var attributes = require( './attributes.js' );
 var searchResults = require( './searchResults.js' );
 var detection = require( './detection.js' );
@@ -65,6 +67,7 @@ function activate( context )
     var outputChannel;
     var legacySettingImportMarker = 'importedLegacyNamespaceVersion';
     var currentManifestSettingSuffixes = identity.getManifestSettingSuffixes( packageJson );
+    var notebookRegistry = notebooks.createRegistry();
 
     function settingLocation( setting, uri )
     {
@@ -143,6 +146,8 @@ function activate( context )
     utils.init( config );
     attributes.init( config );
 
+    var resolveCommentPatternFileNameForLanguage = commentPatternLanguageResolver.createCommentPatternLanguageResolver( vscode, utils );
+
     provider = new tree.TreeNodeProvider( context, debug, setButtonsAndContext );
     var statusBarIndicator = vscode.window.createStatusBarItem( vscode.StatusBarAlignment.Left, 0 );
 
@@ -194,14 +199,7 @@ function activate( context )
 
         if( statusBar === STATUS_BAR_CURRENT_FILE )
         {
-            var fileFilter;
-
-            if( vscode.window.activeTextEditor && vscode.window.activeTextEditor.document )
-            {
-                fileFilter = vscode.window.activeTextEditor.document.fileName;
-            }
-
-            counts = provider.getTagCountsForStatusBar( fileFilter );
+            counts = provider.getTagCountsForStatusBar( getCurrentFileFilter() );
             total = Object.values( counts ).reduce( function( a, b ) { return a + b; }, 0 );
         }
 
@@ -595,6 +593,123 @@ function activate( context )
         return roots;
     }
 
+    function syncOpenNotebookDocuments()
+    {
+        notebookRegistry.sync( vscode.workspace.notebookDocuments );
+    }
+
+    function rememberNotebookDocument( notebook )
+    {
+        notebookRegistry.remember( notebook );
+    }
+
+    function clearQueuedRefreshForKey( key )
+    {
+        pendingDocumentRefreshes.delete( key );
+        documentVersions.delete( key );
+
+        if( documentRefreshTimers.has( key ) )
+        {
+            clearTimeout( documentRefreshTimers.get( key ) );
+            documentRefreshTimers.delete( key );
+        }
+    }
+
+    function forgetNotebookDocument( notebook )
+    {
+        var forgotten = notebookRegistry.forget( notebook );
+
+        forgotten.cellKeys.forEach( clearQueuedRefreshForKey );
+        clearQueuedRefreshForKey( forgotten.notebookKey );
+    }
+
+    function getNotebookForDocument( document )
+    {
+        var notebook = notebookRegistry.getForDocument( document );
+
+        if( notebook === undefined )
+        {
+            syncOpenNotebookDocuments();
+            notebook = notebookRegistry.getForDocument( document );
+        }
+
+        return notebook;
+    }
+
+    function isNotebookCellDocument( document )
+    {
+        return notebookRegistry.isCellDocument( document ) === true || getNotebookForDocument( document ) !== undefined;
+    }
+
+    function getActiveScanTarget()
+    {
+        if( vscode.window.activeNotebookEditor && notebooks.isNotebookDocument( vscode.window.activeNotebookEditor.notebook ) )
+        {
+            return vscode.window.activeNotebookEditor.notebook;
+        }
+
+        if( vscode.window.activeTextEditor && vscode.window.activeTextEditor.document )
+        {
+            var activeNotebook = getNotebookForDocument( vscode.window.activeTextEditor.document );
+            return activeNotebook || vscode.window.activeTextEditor.document;
+        }
+
+        return undefined;
+    }
+
+    function getOwnerUriForDocument( document )
+    {
+        var notebook = getNotebookForDocument( document );
+        return notebook ? notebook.uri : document.uri;
+    }
+
+    function getCurrentFileFilter()
+    {
+        var activeTarget = getActiveScanTarget();
+
+        if( !activeTarget || !activeTarget.uri )
+        {
+            return undefined;
+        }
+
+        if( activeTarget.uri.fsPath !== undefined )
+        {
+            return activeTarget.uri.fsPath;
+        }
+
+        if( vscode.window.activeTextEditor && vscode.window.activeTextEditor.document )
+        {
+            return vscode.window.activeTextEditor.document.fileName;
+        }
+
+        return undefined;
+    }
+
+    function getNotebookDocumentsForScan( workspaceRoots )
+    {
+        var scanMode = config.scanMode();
+        var openNotebookTargets = notebookRegistry.all().filter( function( notebook )
+        {
+            return notebook && config.isValidScheme( notebook.uri ) && isIncluded( notebook.uri );
+        } );
+
+        if( scanMode === SCAN_MODE_CURRENT_FILE )
+        {
+            var activeTarget = getActiveScanTarget();
+            return notebooks.isNotebookDocument( activeTarget ) ? [ activeTarget ] : [];
+        }
+
+        if( scanMode === SCAN_MODE_WORKSPACE_ONLY )
+        {
+            return openNotebookTargets.filter( function( notebook )
+            {
+                return notebook.uri.fsPath === undefined || isFileInSearchRoots( notebook.uri.fsPath, workspaceRoots );
+            } );
+        }
+
+        return openNotebookTargets;
+    }
+
     function getOpenDocumentsForScan( workspaceRoots )
     {
         var scanMode = config.scanMode();
@@ -603,14 +718,18 @@ function activate( context )
             return openDocuments[ key ];
         } ).filter( function( document )
         {
-            return document && config.isValidScheme( document.uri ) && isIncluded( document.uri );
+            return document &&
+                isNotebookCellDocument( document ) !== true &&
+                config.isValidScheme( document.uri ) &&
+                isIncluded( document.uri );
         } );
 
         if( scanMode === SCAN_MODE_CURRENT_FILE )
         {
-            if( vscode.window.activeTextEditor && vscode.window.activeTextEditor.document && config.isValidScheme( vscode.window.activeTextEditor.document.uri ) && isIncluded( vscode.window.activeTextEditor.document.uri ) )
+            var activeTarget = getActiveScanTarget();
+            if( activeTarget && notebooks.isNotebookDocument( activeTarget ) !== true && config.isValidScheme( activeTarget.uri ) && isIncluded( activeTarget.uri ) )
             {
-                return [ vscode.window.activeTextEditor.document ];
+                return [ activeTarget ];
             }
             return [];
         }
@@ -631,7 +750,18 @@ function activate( context )
         return [];
     }
 
-    function refreshDocumentResults( document )
+    function scanNotebookDocument( notebook )
+    {
+        return notebooks.scanDocument( notebook, detection, function( uri )
+        {
+            return config.isValidScheme( uri ) === true;
+        }, function( document )
+        {
+            return resolveCommentPatternFileNameForLanguage( document.languageId );
+        } );
+    }
+
+    function refreshTextDocumentResults( document )
     {
         if( !document || !config.isValidScheme( document.uri ) || isIncluded( document.uri ) !== true )
         {
@@ -641,7 +771,8 @@ function activate( context )
 
         if( config.scanMode() === SCAN_MODE_CURRENT_FILE )
         {
-            if( !vscode.window.activeTextEditor || vscode.window.activeTextEditor.document.fileName !== document.fileName )
+            var activeTarget = getActiveScanTarget();
+            if( activeTarget !== document )
             {
                 searchResults.replaceUriResults( document.uri, [] );
                 return;
@@ -649,6 +780,44 @@ function activate( context )
         }
 
         searchResults.replaceUriResults( document.uri, detection.scanDocument( document ) );
+    }
+
+    function refreshNotebookResults( notebook )
+    {
+        if( !notebook )
+        {
+            return;
+        }
+
+        if( !config.isValidScheme( notebook.uri ) || isIncluded( notebook.uri ) !== true )
+        {
+            searchResults.replaceUriResults( notebook.uri, [] );
+            return;
+        }
+
+        if( config.scanMode() === SCAN_MODE_CURRENT_FILE )
+        {
+            var activeTarget = getActiveScanTarget();
+            if( !activeTarget || !activeTarget.uri || activeTarget.uri.toString() !== notebook.uri.toString() )
+            {
+                searchResults.replaceUriResults( notebook.uri, [] );
+                return;
+            }
+        }
+
+        searchResults.replaceUriResults( notebook.uri, scanNotebookDocument( notebook ) );
+    }
+
+    function refreshScanTarget( target )
+    {
+        if( notebooks.isNotebookDocument( target ) )
+        {
+            refreshNotebookResults( target );
+        }
+        else
+        {
+            refreshTextDocumentResults( target );
+        }
     }
 
     function applyDirtyResultsToTree( options )
@@ -685,7 +854,7 @@ function activate( context )
 
         pendingDocumentRefreshes.forEach( function( document )
         {
-            refreshDocumentResults( document );
+            refreshScanTarget( document );
         } );
 
         pendingDocumentRefreshes.clear();
@@ -696,7 +865,12 @@ function activate( context )
     {
         getOpenDocumentsForScan( workspaceRoots ).forEach( function( document )
         {
-            refreshDocumentResults( document );
+            refreshScanTarget( document );
+        } );
+
+        getNotebookDocumentsForScan( workspaceRoots ).forEach( function( notebook )
+        {
+            refreshScanTarget( notebook );
         } );
     }
 
@@ -1119,22 +1293,18 @@ function activate( context )
             return;
         }
 
-        refreshDocumentResults( document );
+        refreshScanTarget( document );
         applyDirtyResultsToTree();
     }
 
-    function queueDocumentRefresh( document, reason )
+    function shouldRefreshFile()
     {
-        if( !document || !config.isValidScheme( document.uri ) || path.basename( document.fileName ) === "settings.json" || shouldRefreshFile() !== true )
-        {
-            return;
-        }
+        return getSetting( 'tree.autoRefresh', true ) === true && config.scanMode() !== SCAN_MODE_WORKSPACE_ONLY;
+    }
 
-        var key = document.uri.toString();
-        var delay = reason === 'change' ? 500 : 200;
-
-        openDocuments[ key ] = document;
-        documentVersions.set( key, document.version );
+    function scheduleRefreshForTarget( key, target, delay, lookupTarget )
+    {
+        documentVersions.set( key, target.version );
 
         if( documentRefreshTimers.has( key ) )
         {
@@ -1145,25 +1315,72 @@ function activate( context )
         {
             documentRefreshTimers.delete( key );
 
-            var currentDocument = openDocuments[ key ];
-            if( !currentDocument )
+            var currentTarget = lookupTarget( key );
+            if( !currentTarget )
             {
                 return;
             }
 
-            if( currentDocument.version !== documentVersions.get( key ) )
+            if( currentTarget.version !== documentVersions.get( key ) )
             {
                 return;
             }
 
             if( scanInFlight === true )
             {
-                pendingDocumentRefreshes.set( key, currentDocument );
+                pendingDocumentRefreshes.set( key, currentTarget );
                 return;
             }
 
-            refreshFile( currentDocument );
+            refreshFile( currentTarget );
         }, delay ) );
+    }
+
+    function queueNotebookRefresh( notebook, reason )
+    {
+        if( !notebook || !config.isValidScheme( notebook.uri ) || shouldRefreshFile() !== true )
+        {
+            return;
+        }
+
+        rememberNotebookDocument( notebook );
+        scheduleRefreshForTarget(
+            notebooks.getNotebookKey( notebook ),
+            notebook,
+            reason === 'change' ? 500 : 200,
+            function( key )
+            {
+                return notebookRegistry.getByKey( key );
+            }
+        );
+    }
+
+    function queueDocumentRefresh( document, reason )
+    {
+        if( !document || !config.isValidScheme( document.uri ) || path.basename( document.fileName ) === "settings.json" || shouldRefreshFile() !== true )
+        {
+            return;
+        }
+
+        var notebook = getNotebookForDocument( document );
+        if( notebook )
+        {
+            queueNotebookRefresh( notebook, reason );
+            return;
+        }
+
+        var key = document.uri.toString();
+
+        openDocuments[ key ] = document;
+        scheduleRefreshForTarget(
+            key,
+            document,
+            reason === 'change' ? 500 : 200,
+            function( lookupKey )
+            {
+                return openDocuments[ lookupKey ];
+            }
+        );
     }
 
     function refresh()
@@ -1565,7 +1782,15 @@ function activate( context )
                 {
                     if( shouldRefreshFile() )
                     {
-                        queueDocumentRefresh( document, 'change' );
+                        var notebook = getNotebookForDocument( document );
+                        if( notebook )
+                        {
+                            queueNotebookRefresh( notebook, 'change' );
+                        }
+                        else
+                        {
+                            queueDocumentRefresh( document, 'change' );
+                        }
                     }
                 }
             }
@@ -1615,11 +1840,6 @@ function activate( context )
             {
                 vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": Unexpected placeholders (" + unexpectedPlaceholders.join( "," ) + ")" );
             }
-        }
-
-        function shouldRefreshFile()
-        {
-            return getSetting( 'tree.autoRefresh', true ) === true && config.scanMode() !== SCAN_MODE_WORKSPACE_ONLY;
         }
 
         // We can't do anything if we can't find ripgrep
@@ -1891,7 +2111,7 @@ function activate( context )
         {
             if( vscode.window.activeTextEditor )
             {
-                showInTree( vscode.window.activeTextEditor.document.uri, { select: true } );
+                showInTree( getOwnerUriForDocument( vscode.window.activeTextEditor.document ), { select: true } );
             }
         } );
 
@@ -2080,7 +2300,16 @@ function activate( context )
         {
             if( e && e.document )
             {
-                openDocuments[ e.document.uri.toString() ] = e.document;
+                var activeNotebook = getNotebookForDocument( e.document );
+
+                if( activeNotebook )
+                {
+                    rememberNotebookDocument( activeNotebook );
+                }
+                else
+                {
+                    openDocuments[ e.document.uri.toString() ] = e.document;
+                }
 
                 if( config.scanMode() === SCAN_MODE_CURRENT_FILE )
                 {
@@ -2091,18 +2320,21 @@ function activate( context )
                 {
                     if( e.document.uri && config.isValidScheme( e.document.uri ) )
                     {
-                        if( selectedDocument !== e.document.fileName )
+                        var ownerUri = getOwnerUriForDocument( e.document );
+                        var ownerFileFilter = ownerUri && ownerUri.fsPath !== undefined ? ownerUri.fsPath : e.document.fileName;
+
+                        if( selectedDocument !== ownerFileFilter )
                         {
                             setTimeout( function()
                             {
-                                showInTree( e.document.uri, { select: false } );
+                                showInTree( ownerUri, { select: false } );
                             }, 500 );
                         }
                         selectedDocument = undefined;
                     }
                 }
 
-                if( e.document.fileName === undefined || isIncluded( e.document.uri ) )
+                if( e.document.fileName === undefined || isIncluded( getOwnerUriForDocument( e.document ) ) )
                 {
                     updateInformation();
                 }
@@ -2120,7 +2352,15 @@ function activate( context )
             {
                 if( shouldRefreshFile() )
                 {
-                    queueDocumentRefresh( document, 'save' );
+                    var notebook = getNotebookForDocument( document );
+                    if( notebook )
+                    {
+                        queueNotebookRefresh( notebook, 'save' );
+                    }
+                    else
+                    {
+                        queueDocumentRefresh( document, 'save' );
+                    }
                 }
             }
         } ) );
@@ -2131,8 +2371,18 @@ function activate( context )
             {
                 if( config.isValidScheme( document.uri ) )
                 {
-                    openDocuments[ document.uri.toString() ] = document;
-                    queueDocumentRefresh( document, 'open' );
+                    var notebook = getNotebookForDocument( document );
+
+                    if( notebook )
+                    {
+                        rememberNotebookDocument( notebook );
+                        queueNotebookRefresh( notebook, 'open' );
+                    }
+                    else
+                    {
+                        openDocuments[ document.uri.toString() ] = document;
+                        queueDocumentRefresh( document, 'open' );
+                    }
                 }
             }
         } ) );
@@ -2140,13 +2390,11 @@ function activate( context )
         context.subscriptions.push( vscode.workspace.onDidCloseTextDocument( document =>
         {
             delete openDocuments[ document.uri.toString() ];
-            documentVersions.delete( document.uri.toString() );
-            pendingDocumentRefreshes.delete( document.uri.toString() );
+            clearQueuedRefreshForKey( document.uri.toString() );
 
-            if( documentRefreshTimers.has( document.uri.toString() ) )
+            if( document.uri && document.uri.scheme === 'vscode-notebook-cell' )
             {
-                clearTimeout( documentRefreshTimers.get( document.uri.toString() ) );
-                documentRefreshTimers.delete( document.uri.toString() );
+                return;
             }
 
             if( getSetting( 'tree.autoRefresh', true ) === true && config.scanMode() !== SCAN_MODE_WORKSPACE_ONLY )
@@ -2180,6 +2428,59 @@ function activate( context )
                 }
             }
         } ) );
+
+        if( typeof ( vscode.workspace.onDidOpenNotebookDocument ) === 'function' )
+        {
+            context.subscriptions.push( vscode.workspace.onDidOpenNotebookDocument( function( notebook )
+            {
+                rememberNotebookDocument( notebook );
+
+                if( shouldRefreshFile() )
+                {
+                    queueNotebookRefresh( notebook, 'open' );
+                }
+            } ) );
+        }
+
+        if( typeof ( vscode.workspace.onDidChangeNotebookDocument ) === 'function' )
+        {
+            context.subscriptions.push( vscode.workspace.onDidChangeNotebookDocument( function( event )
+            {
+                if( event && event.notebook )
+                {
+                    rememberNotebookDocument( event.notebook );
+
+                    if( shouldRefreshFile() )
+                    {
+                        queueNotebookRefresh( event.notebook, 'change' );
+                    }
+                }
+            } ) );
+        }
+
+        if( typeof ( vscode.workspace.onDidCloseNotebookDocument ) === 'function' )
+        {
+            context.subscriptions.push( vscode.workspace.onDidCloseNotebookDocument( function( notebook )
+            {
+                var notebookKey = notebooks.getNotebookKey( notebook );
+
+                forgetNotebookDocument( notebook );
+
+                if( getSetting( 'tree.autoRefresh', true ) === true && config.scanMode() !== SCAN_MODE_WORKSPACE_ONLY )
+                {
+                    searchResults.remove( notebook.uri );
+
+                    if( scanInFlight === true )
+                    {
+                        pendingDocumentRefreshes.delete( notebookKey );
+                    }
+                    else
+                    {
+                        applyDirtyResultsToTree();
+                    }
+                }
+            } ) );
+        }
 
         context.subscriptions.push( vscode.workspace.onDidChangeConfiguration( function( e )
         {
@@ -2285,6 +2586,7 @@ function activate( context )
         setButtonsAndContext();
         resetGitWatcher();
         resetPeriodicRefresh();
+        syncOpenNotebookDocuments();
 
         if( getSetting( 'tree.scanAtStartup', true ) === true )
         {
@@ -2293,7 +2595,15 @@ function activate( context )
             {
                 if( editor.document && config.isValidScheme( editor.document.uri ) )
                 {
-                    openDocuments[ editor.document.uri.toString() ] = editor.document;
+                    var notebook = getNotebookForDocument( editor.document );
+                    if( notebook )
+                    {
+                        rememberNotebookDocument( notebook );
+                    }
+                    else
+                    {
+                        openDocuments[ editor.document.uri.toString() ] = editor.document;
+                    }
                 }
             } );
 

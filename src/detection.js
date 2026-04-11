@@ -263,6 +263,80 @@ function toGlobalRegex( regex )
     return new RegExp( regex.source, flags );
 }
 
+var tagCaptureGroupIndexCache = new Map();
+
+function countCapturingGroups( source, endIndex )
+{
+    var count = 0;
+    var escaped = false;
+    var inCharacterClass = false;
+    var index;
+
+    for( index = 0; index < endIndex; ++index )
+    {
+        var character = source[ index ];
+
+        if( escaped )
+        {
+            escaped = false;
+            continue;
+        }
+
+        if( character === '\\' )
+        {
+            escaped = true;
+            continue;
+        }
+
+        if( inCharacterClass )
+        {
+            if( character === ']' )
+            {
+                inCharacterClass = false;
+            }
+            continue;
+        }
+
+        if( character === '[' )
+        {
+            inCharacterClass = true;
+            continue;
+        }
+
+        if( character !== '(' )
+        {
+            continue;
+        }
+
+        if( source[ index + 1 ] === '?' )
+        {
+            if( source[ index + 2 ] === '<' && source[ index + 3 ] !== '=' && source[ index + 3 ] !== '!' )
+            {
+                count++;
+            }
+            continue;
+        }
+
+        count++;
+    }
+
+    return count;
+}
+
+function getTagCaptureGroupIndex( regexSource )
+{
+    if( tagCaptureGroupIndexCache.has( regexSource ) )
+    {
+        return tagCaptureGroupIndexCache.get( regexSource );
+    }
+
+    var placeholderIndex = regexSource.indexOf( '($TAGS)' );
+    var captureGroupIndex = placeholderIndex === -1 ? undefined : countCapturingGroups( regexSource, placeholderIndex ) + 1;
+
+    tagCaptureGroupIndexCache.set( regexSource, captureGroupIndex );
+    return captureGroupIndex;
+}
+
 function findTokenStart( text, startPattern, cursor )
 {
     if( typeof ( startPattern ) === 'string' )
@@ -280,6 +354,83 @@ function findTokenStart( text, startPattern, cursor )
             index: match.index,
             length: match[ 0 ].length
         };
+    }
+
+    return undefined;
+}
+
+function getLineBoundsForOffset( text, lineOffsets, offset )
+{
+    var boundedOffset = offset;
+
+    if( text.length === 0 )
+    {
+        return {
+            line: 0,
+            startOffset: 0,
+            endOffset: 0
+        };
+    }
+
+    if( boundedOffset < 0 )
+    {
+        boundedOffset = 0;
+    }
+    else if( boundedOffset >= text.length )
+    {
+        boundedOffset = text.length - 1;
+    }
+
+    var position = offsetToPosition( lineOffsets, boundedOffset );
+    var startOffset = lineOffsets[ position.line ] || 0;
+    var endOffset = position.line + 1 < lineOffsets.length ? lineOffsets[ position.line + 1 ] - 1 : text.length;
+
+    if( endOffset > startOffset && text[ endOffset - 1 ] === '\r' )
+    {
+        endOffset--;
+    }
+
+    return {
+        line: position.line,
+        startOffset: startOffset,
+        endOffset: endOffset
+    };
+}
+
+function findExactRegexExecMatch( uri, text, startOffset )
+{
+    var regex = utils.getRegexForEditorSearch( true, uri, { includeIndices: true } );
+    regex.lastIndex = startOffset;
+
+    var exactMatch = regex.exec( text );
+
+    if( exactMatch && exactMatch.index === startOffset )
+    {
+        return exactMatch;
+    }
+
+    return undefined;
+}
+
+function resolveTagCaptureRange( uri, text, resourceConfig, match, rawStartOffset )
+{
+    var tagCaptureGroupIndex = getTagCaptureGroupIndex( resourceConfig.regex );
+
+    if( tagCaptureGroupIndex === undefined )
+    {
+        return undefined;
+    }
+
+    var indexedMatch = match;
+
+    if( !indexedMatch.indices || indexedMatch.indices[ tagCaptureGroupIndex ] === undefined )
+    {
+        indexedMatch = findExactRegexExecMatch( uri, text, rawStartOffset ) || indexedMatch;
+    }
+
+    if( indexedMatch.indices && indexedMatch.indices[ tagCaptureGroupIndex ] )
+    {
+        return indexedMatch.indices[ tagCaptureGroupIndex ];
     }
 
     return undefined;
@@ -618,10 +769,11 @@ function collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resour
     return results;
 }
 
-function scanCommentPatternText( uri, text, resourceConfig )
+function scanCommentPatternText( uri, text, resourceConfig, patternFileName )
 {
     var fsPath = getUriFsPath( uri );
-    var pattern = utils.getCommentPattern( fsPath );
+    var patternLookupName = patternFileName || fsPath;
+    var pattern = utils.getCommentPattern( patternLookupName );
     var lineOffsets = createLineOffsets( text );
 
     if( pattern === undefined )
@@ -632,7 +784,7 @@ function scanCommentPatternText( uri, text, resourceConfig )
 
     if( pattern.commentsOnly === true )
     {
-        if( path.extname( fsPath ).toLowerCase() === '.md' || pattern.name === 'Markdown' )
+        if( path.extname( patternLookupName ).toLowerCase() === '.md' || pattern.name === 'Markdown' )
         {
             return scanMarkdownText( uri, text, pattern, lineOffsets, resourceConfig );
         }
@@ -654,10 +806,41 @@ function normalizeRegexExecMatch( uri, text, match, resourceConfig )
     var matchText = match[ 0 ];
     var rawStartOffset = match.index;
     var rawEndOffset = rawStartOffset + matchText.length;
-    var extracted = utils.extractTag( matchText, undefined, uri );
+    var logicalStartOffset = rawStartOffset;
+    var logicalEndOffset = rawEndOffset;
+    var preferredTagOffset;
+    var tagCaptureRange = resolveTagCaptureRange( uri, text, resourceConfig, match, rawStartOffset );
+    var tagStartOffset = tagCaptureRange ? tagCaptureRange[ 0 ] : undefined;
+    var tagEndOffset = tagCaptureRange ? tagCaptureRange[ 1 ] : undefined;
+
+    if( tagCaptureRange )
+    {
+        var startLineBounds = getLineBoundsForOffset( text, lineOffsets, rawStartOffset );
+        var tagLineBounds = getLineBoundsForOffset( text, lineOffsets, tagStartOffset );
+
+        if( tagLineBounds.line > startLineBounds.line )
+        {
+            logicalStartOffset = tagLineBounds.startOffset;
+
+            var lastRenderedOffset = Math.max( rawEndOffset - 1, tagEndOffset - 1 );
+            logicalEndOffset = getLineBoundsForOffset( text, lineOffsets, lastRenderedOffset ).endOffset;
+            matchText = text.slice( logicalStartOffset, logicalEndOffset );
+            preferredTagOffset = tagStartOffset - logicalStartOffset;
+        }
+    }
+
+    var extracted = utils.extractTag( matchText, undefined, uri, preferredTagOffset );
     var actualTag = extracted.tag && extracted.tag.length > 0 ? extracted.tag : matchText;
-    var tagStartOffset = extracted.tag && extracted.tagOffset !== undefined ? rawStartOffset + extracted.tagOffset : rawStartOffset;
-    var tagEndOffset = extracted.tag && extracted.tag.length > 0 ? tagStartOffset + extracted.tag.length : rawEndOffset;
+
+    if( tagStartOffset === undefined )
+    {
+        tagStartOffset = extracted.tag && extracted.tagOffset !== undefined ? logicalStartOffset + extracted.tagOffset : rawStartOffset;
+    }
+    if( tagEndOffset === undefined )
+    {
+        tagEndOffset = extracted.tag && extracted.tag.length > 0 ? tagStartOffset + extracted.tag.length : rawEndOffset;
+    }
+
     var originalLines = matchText.split( /\r?\n/ );
     var displayText = ( extracted.after || "" ).split( /\r?\n/ )[ 0 ].trim();
 
@@ -676,8 +859,8 @@ function normalizeRegexExecMatch( uri, text, match, resourceConfig )
 
     var continuationText = originalLines.slice( 1 ).map( function( line ) { return line.trim(); } ).filter( function( line ) { return line.length > 0; } );
     var startPosition = offsetToPosition( lineOffsets, tagStartOffset );
-    var endPosition = offsetToPosition( lineOffsets, rawEndOffset );
-    var subTagStartOffset = extracted.subTagOffset !== undefined ? rawStartOffset + extracted.subTagOffset : undefined;
+    var endPosition = offsetToPosition( lineOffsets, logicalEndOffset );
+    var subTagStartOffset = extracted.subTagOffset !== undefined ? logicalStartOffset + extracted.subTagOffset : undefined;
 
     var result = {
         uri: uri,
@@ -695,9 +878,9 @@ function normalizeRegexExecMatch( uri, text, match, resourceConfig )
         displayText: displayText,
         continuationText: continuationText,
         commentStartOffset: rawStartOffset,
-        commentEndOffset: rawEndOffset,
-        matchStartOffset: rawStartOffset,
-        matchEndOffset: rawEndOffset,
+        commentEndOffset: logicalEndOffset,
+        matchStartOffset: tagStartOffset,
+        matchEndOffset: logicalEndOffset,
         tagStartOffset: tagStartOffset,
         tagEndOffset: tagEndOffset,
         subTagStartOffset: subTagStartOffset,
@@ -729,13 +912,20 @@ function normalizeRipgrepMatch( uri, text, match )
 
     var resourceConfig = resolveResourceConfig( uri );
     var lineOffsets = createLineOffsets( text );
+    var rawStartOffset = offsetFromLineAndColumn( text, lineOffsets, match.line, match.column );
+    var exactMatch = findExactRegexExecMatch( uri, text, rawStartOffset );
+
+    if( exactMatch )
+    {
+        return normalizeRegexExecMatch( uri, text, exactMatch, resourceConfig );
+    }
+
     var logicalText = match.match;
     if( match.extraLines && match.extraLines.length > 0 )
     {
         logicalText += '\n' + match.extraLines.map( function( extraLine ) { return extraLine.match; } ).join( '\n' );
     }
 
-    var rawStartOffset = offsetFromLineAndColumn( text, lineOffsets, match.line, match.column );
     return normalizeRegexExecMatch( uri, text, {
         0: logicalText,
         index: rawStartOffset
@@ -747,13 +937,25 @@ function resolveResourceConfig( uri )
     return utils.getResourceConfig( uri );
 }
 
-function scanText( uri, text )
+function resolveDocumentPatternFileName( document )
 {
+    if( !document )
+    {
+        return undefined;
+    }
+
+    return document.commentPatternFileName || document.fileName || getUriFsPath( document.uri );
+}
+
+function scanText( uri, text, options )
+{
+    options = options || {};
+
     var resourceConfig = resolveResourceConfig( uri );
 
     if( resourceConfig.isDefaultRegex === true )
     {
-        return scanCommentPatternText( uri, text, resourceConfig );
+        return scanCommentPatternText( uri, text, resourceConfig, options.patternFileName );
     }
 
     var regex = utils.getRegexForEditorSearch( true, uri, { includeIndices: true } );
@@ -780,7 +982,9 @@ function scanText( uri, text )
 
 function scanDocument( document )
 {
-    return scanText( document.uri, document.getText() );
+    return scanText( document.uri, document.getText(), {
+        patternFileName: resolveDocumentPatternFileName( document )
+    } );
 }
 
 function normalizeRegexMatch( uri, text, match )

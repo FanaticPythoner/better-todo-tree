@@ -22,7 +22,7 @@ function uriKey( uri )
     return String( uri );
 }
 
-function createUri( fsPath, scheme )
+function createUri( fsPath, scheme, stringValue )
 {
     return {
         fsPath: fsPath,
@@ -30,7 +30,7 @@ function createUri( fsPath, scheme )
         scheme: scheme || 'file',
         toString: function()
         {
-            return fsPath;
+            return stringValue || fsPath;
         }
     };
 }
@@ -128,6 +128,54 @@ function createDocument( fsPath, text, version )
         offsetAt: offsetAt,
         lineAt: lineAt
     };
+}
+
+function createNotebookCellDocument( notebookFsPath, cellId, text, languageId, version )
+{
+    var document = createDocument(
+        notebookFsPath,
+        text,
+        version
+    );
+
+    document.uri = createUri(
+        notebookFsPath,
+        'vscode-notebook-cell',
+        'vscode-notebook-cell://' + notebookFsPath + '#cell-' + cellId
+    );
+    document.languageId = languageId;
+
+    return document;
+}
+
+function createNotebookDocument( notebookFsPath, cellDocuments, version )
+{
+    var uri = createUri( notebookFsPath );
+    var notebook;
+    var cells = cellDocuments.map( function( document, index )
+    {
+        return {
+            index: index,
+            document: document
+        };
+    } );
+
+    notebook = {
+        uri: uri,
+        version: version === undefined ? 1 : version,
+        cellCount: cells.length,
+        getCells: function()
+        {
+            return cells.slice();
+        }
+    };
+
+    cells.forEach( function( cell )
+    {
+        cell.document.notebook = notebook;
+    } );
+
+    return notebook;
 }
 
 function createWorkspaceState( initialValues )
@@ -578,6 +626,8 @@ function flushAsyncWork()
 
 module.exports.createUri = createUri;
 module.exports.createDocument = createDocument;
+module.exports.createNotebookCellDocument = createNotebookCellDocument;
+module.exports.createNotebookDocument = createNotebookDocument;
 module.exports.createWorkspaceState = createWorkspaceState;
 module.exports.createConfig = createConfig;
 module.exports.materializeStartToken = materializeStartToken;

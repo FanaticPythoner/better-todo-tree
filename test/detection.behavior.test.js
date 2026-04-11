@@ -74,6 +74,27 @@ function createUri( fsPath )
     };
 }
 
+function createNotebookCellDocument( notebookFsPath, cellId, languageId, text, commentPatternFileName )
+{
+    return {
+        uri: {
+            fsPath: notebookFsPath,
+            scheme: 'vscode-notebook-cell',
+            toString: function()
+            {
+                return 'vscode-notebook-cell://' + notebookFsPath + '#cell-' + cellId;
+            }
+        },
+        fileName: notebookFsPath,
+        languageId: languageId,
+        commentPatternFileName: commentPatternFileName,
+        getText: function()
+        {
+            return text;
+        }
+    };
+}
+
 QUnit.module( "behavioral detection", function( hooks )
 {
     hooks.beforeEach( function()
@@ -251,6 +272,22 @@ QUnit.module( "behavioral detection", function( hooks )
         } );
 
         assert.deepEqual( fromDocument, fromText );
+    } );
+
+    QUnit.test( "notebook cells resolve comment patterns from comment-patterns language data instead of the .ipynb container extension", function( assert )
+    {
+        var pythonCell = createNotebookCellDocument( '/tmp/notebook.ipynb', 'python', 'python', '# TODO notebook code item', '.py' );
+        var markdownCell = createNotebookCellDocument( '/tmp/notebook.ipynb', 'markdown', 'markdown', '- [ ] notebook markdown task', '.md' );
+
+        var pythonResults = detection.scanDocument( pythonCell );
+        var markdownResults = detection.scanDocument( markdownCell );
+
+        assert.equal( pythonResults.length, 1 );
+        assert.equal( pythonResults[ 0 ].actualTag, 'TODO' );
+        assert.equal( pythonResults[ 0 ].displayText, 'notebook code item' );
+        assert.equal( markdownResults.length, 1 );
+        assert.equal( markdownResults[ 0 ].actualTag, '[ ]' );
+        assert.equal( markdownResults[ 0 ].displayText, 'notebook markdown task' );
     } );
 
     QUnit.test( "customHighlight entries do not register new tags until general.tags includes them", function( assert )
