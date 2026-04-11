@@ -8,7 +8,7 @@
         "tasklist",
         "multi-root ready"
     ],
-    "version": "0.0.232",
+    "version": "0.0.233",
     "license": "GPL-3.0-only",
     "icon": "resources/better-todo-tree.png",
     "publisher": "FanaticPythoner",
