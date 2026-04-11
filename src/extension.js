@@ -593,14 +593,104 @@ function activate( context )
         return roots;
     }
 
-    function syncOpenNotebookDocuments()
-    {
-        notebookRegistry.sync( vscode.workspace.notebookDocuments );
-    }
-
     function rememberNotebookDocument( notebook )
     {
-        notebookRegistry.remember( notebook );
+        if( notebooks.isNotebookDocument( notebook ) === true )
+        {
+            notebookRegistry.remember( notebook );
+        }
+    }
+
+    function getVisibleNotebookDocuments()
+    {
+        var visibleNotebookDocuments = [];
+        var visibleNotebookKeys = new Set();
+        var visibleNotebookEditors = Array.isArray( vscode.window.visibleNotebookEditors ) ? vscode.window.visibleNotebookEditors : [];
+
+        function addVisibleNotebook( notebook )
+        {
+            if( notebooks.isNotebookDocument( notebook ) !== true )
+            {
+                return;
+            }
+
+            var notebookKey = notebooks.getNotebookKey( notebook );
+
+            if( visibleNotebookKeys.has( notebookKey ) )
+            {
+                return;
+            }
+
+            visibleNotebookKeys.add( notebookKey );
+            visibleNotebookDocuments.push( notebook );
+        }
+
+        visibleNotebookEditors.forEach( function( editor )
+        {
+            addVisibleNotebook( editor && editor.notebook );
+        } );
+
+        if( vscode.window.activeNotebookEditor )
+        {
+            addVisibleNotebook( vscode.window.activeNotebookEditor.notebook );
+        }
+
+        return visibleNotebookDocuments;
+    }
+
+    function applyForgottenNotebookState( forgottenNotebooks )
+    {
+        var shouldRefreshTree = false;
+
+        forgottenNotebooks.forEach( function( forgotten )
+        {
+            if( !forgotten )
+            {
+                return;
+            }
+
+            forgotten.cellKeys.forEach( clearQueuedRefreshForKey );
+            clearQueuedRefreshForKey( forgotten.notebookKey );
+
+            if( forgotten.notebook && forgotten.notebook.uri && getSetting( 'tree.autoRefresh', true ) === true )
+            {
+                searchResults.remove( forgotten.notebook.uri );
+                pendingDocumentRefreshes.delete( forgotten.notebookKey );
+                shouldRefreshTree = true;
+            }
+        } );
+
+        if( shouldRefreshTree && scanInFlight !== true )
+        {
+            applyDirtyResultsToTree();
+        }
+    }
+
+    function syncVisibleNotebookEditors()
+    {
+        var synced = notebookRegistry.sync( getVisibleNotebookDocuments() ) || { added: [], forgotten: [] };
+
+        if( synced.forgotten.length > 0 )
+        {
+            applyForgottenNotebookState( synced.forgotten );
+        }
+
+        return synced;
+    }
+
+    function handleVisibleNotebookEditorsChanged( reason )
+    {
+        var synced = syncVisibleNotebookEditors();
+
+        if( shouldRefreshFile() !== true )
+        {
+            return;
+        }
+
+        synced.added.forEach( function( notebook )
+        {
+            queueNotebookRefresh( notebook, reason || 'open' );
+        } );
     }
 
     function clearQueuedRefreshForKey( key )
@@ -615,43 +705,37 @@ function activate( context )
         }
     }
 
-    function forgetNotebookDocument( notebook )
-    {
-        var forgotten = notebookRegistry.forget( notebook );
-
-        forgotten.cellKeys.forEach( clearQueuedRefreshForKey );
-        clearQueuedRefreshForKey( forgotten.notebookKey );
-    }
-
     function getNotebookForDocument( document )
     {
-        var notebook = notebookRegistry.getForDocument( document );
-
-        if( notebook === undefined )
+        if( !document || !document.uri )
         {
-            syncOpenNotebookDocuments();
-            notebook = notebookRegistry.getForDocument( document );
+            return undefined;
         }
 
-        return notebook;
-    }
+        if( notebooks.isNotebookCellDocument( document ) !== true && !( document.notebook && document.notebook.uri ) )
+        {
+            return undefined;
+        }
 
-    function isNotebookCellDocument( document )
-    {
-        return notebookRegistry.isCellDocument( document ) === true || getNotebookForDocument( document ) !== undefined;
+        return notebookRegistry.getForDocument( document );
     }
 
     function getActiveScanTarget()
     {
         if( vscode.window.activeNotebookEditor && notebooks.isNotebookDocument( vscode.window.activeNotebookEditor.notebook ) )
         {
+            rememberNotebookDocument( vscode.window.activeNotebookEditor.notebook );
             return vscode.window.activeNotebookEditor.notebook;
         }
 
         if( vscode.window.activeTextEditor && vscode.window.activeTextEditor.document )
         {
-            var activeNotebook = getNotebookForDocument( vscode.window.activeTextEditor.document );
-            return activeNotebook || vscode.window.activeTextEditor.document;
+            if( notebooks.isNotebookCellDocument( vscode.window.activeTextEditor.document ) === true )
+            {
+                return getNotebookForDocument( vscode.window.activeTextEditor.document );
+            }
+
+            return vscode.window.activeTextEditor.document;
         }
 
         return undefined;
@@ -659,8 +743,18 @@ function activate( context )
 
     function getOwnerUriForDocument( document )
     {
+        if( !document || !document.uri )
+        {
+            return undefined;
+        }
+
+        if( notebooks.isNotebookCellDocument( document ) !== true && !( document.notebook && document.notebook.uri ) )
+        {
+            return document.uri;
+        }
+
         var notebook = getNotebookForDocument( document );
-        return notebook ? notebook.uri : document.uri;
+        return notebook ? notebook.uri : undefined;
     }
 
     function getCurrentFileFilter()
@@ -719,7 +813,7 @@ function activate( context )
         } ).filter( function( document )
         {
             return document &&
-                isNotebookCellDocument( document ) !== true &&
+                notebooks.isNotebookCellDocument( document ) !== true &&
                 config.isValidScheme( document.uri ) &&
                 isIncluded( document.uri );
         } );
@@ -1338,14 +1432,15 @@ function activate( context )
 
     function queueNotebookRefresh( notebook, reason )
     {
-        if( !notebook || !config.isValidScheme( notebook.uri ) || shouldRefreshFile() !== true )
+        var notebookKey = notebooks.getNotebookKey( notebook );
+
+        if( !notebook || !config.isValidScheme( notebook.uri ) || shouldRefreshFile() !== true || notebookRegistry.getByKey( notebookKey ) === undefined )
         {
             return;
         }
 
-        rememberNotebookDocument( notebook );
         scheduleRefreshForTarget(
-            notebooks.getNotebookKey( notebook ),
+            notebookKey,
             notebook,
             reason === 'change' ? 500 : 200,
             function( key )
@@ -1357,15 +1452,8 @@ function activate( context )
 
     function queueDocumentRefresh( document, reason )
     {
-        if( !document || !config.isValidScheme( document.uri ) || path.basename( document.fileName ) === "settings.json" || shouldRefreshFile() !== true )
+        if( !document || !config.isValidScheme( document.uri ) || notebooks.isNotebookCellDocument( document ) === true || path.basename( document.fileName ) === "settings.json" || shouldRefreshFile() !== true )
         {
-            return;
-        }
-
-        var notebook = getNotebookForDocument( document );
-        if( notebook )
-        {
-            queueNotebookRefresh( notebook, reason );
             return;
         }
 
@@ -1780,17 +1868,14 @@ function activate( context )
 
                 if( config.isValidScheme( document.uri ) && path.basename( document.fileName ) !== "settings.json" )
                 {
+                    if( notebooks.isNotebookCellDocument( document ) === true )
+                    {
+                        return;
+                    }
+
                     if( shouldRefreshFile() )
                     {
-                        var notebook = getNotebookForDocument( document );
-                        if( notebook )
-                        {
-                            queueNotebookRefresh( notebook, 'change' );
-                        }
-                        else
-                        {
-                            queueDocumentRefresh( document, 'change' );
-                        }
+                        queueDocumentRefresh( document, 'change' );
                     }
                 }
             }
@@ -2111,7 +2196,12 @@ function activate( context )
         {
             if( vscode.window.activeTextEditor )
             {
-                showInTree( getOwnerUriForDocument( vscode.window.activeTextEditor.document ), { select: true } );
+                var ownerUri = getOwnerUriForDocument( vscode.window.activeTextEditor.document );
+
+                if( ownerUri )
+                {
+                    showInTree( ownerUri, { select: true } );
+                }
             }
         } );
 
@@ -2300,13 +2390,12 @@ function activate( context )
         {
             if( e && e.document )
             {
-                var activeNotebook = getNotebookForDocument( e.document );
+                var activeDocumentIsNotebookCell = notebooks.isNotebookCellDocument( e.document ) === true;
+                var activeNotebook = activeDocumentIsNotebookCell === true ? getNotebookForDocument( e.document ) : undefined;
+                var ownerUri = activeNotebook ? activeNotebook.uri : getOwnerUriForDocument( e.document );
+                var ownerFileFilter = ownerUri && ownerUri.fsPath !== undefined ? ownerUri.fsPath : e.document.fileName;
 
-                if( activeNotebook )
-                {
-                    rememberNotebookDocument( activeNotebook );
-                }
-                else
+                if( activeDocumentIsNotebookCell !== true )
                 {
                     openDocuments[ e.document.uri.toString() ] = e.document;
                 }
@@ -2318,11 +2407,8 @@ function activate( context )
 
                 if( getSetting( 'tree.autoRefresh', true ) === true && getSetting( 'tree.trackFile', true ) === true )
                 {
-                    if( e.document.uri && config.isValidScheme( e.document.uri ) )
+                    if( ownerUri && config.isValidScheme( ownerUri ) )
                     {
-                        var ownerUri = getOwnerUriForDocument( e.document );
-                        var ownerFileFilter = ownerUri && ownerUri.fsPath !== undefined ? ownerUri.fsPath : e.document.fileName;
-
                         if( selectedDocument !== ownerFileFilter )
                         {
                             setTimeout( function()
@@ -2334,13 +2420,18 @@ function activate( context )
                     }
                 }
 
-                if( e.document.fileName === undefined || isIncluded( getOwnerUriForDocument( e.document ) ) )
+                if( ownerUri && ( e.document.fileName === undefined || isIncluded( ownerUri ) ) )
                 {
                     updateInformation();
                 }
 
                 if( config.scanMode() !== SCAN_MODE_CURRENT_FILE )
                 {
+                    if( activeNotebook && shouldRefreshFile() )
+                    {
+                        queueNotebookRefresh( activeNotebook, 'open' );
+                    }
+
                     documentChanged( e.document );
                 }
             }
@@ -2348,19 +2439,11 @@ function activate( context )
 
         context.subscriptions.push( vscode.workspace.onDidSaveTextDocument( document =>
         {
-            if( config.isValidScheme( document.uri ) && path.basename( document.fileName ) !== "settings.json" )
+            if( config.isValidScheme( document.uri ) && notebooks.isNotebookCellDocument( document ) !== true && path.basename( document.fileName ) !== "settings.json" )
             {
                 if( shouldRefreshFile() )
                 {
-                    var notebook = getNotebookForDocument( document );
-                    if( notebook )
-                    {
-                        queueNotebookRefresh( notebook, 'save' );
-                    }
-                    else
-                    {
-                        queueDocumentRefresh( document, 'save' );
-                    }
+                    queueDocumentRefresh( document, 'save' );
                 }
             }
         } ) );
@@ -2369,20 +2452,10 @@ function activate( context )
         {
             if( shouldRefreshFile() )
             {
-                if( config.isValidScheme( document.uri ) )
+                if( config.isValidScheme( document.uri ) && notebooks.isNotebookCellDocument( document ) !== true )
                 {
-                    var notebook = getNotebookForDocument( document );
-
-                    if( notebook )
-                    {
-                        rememberNotebookDocument( notebook );
-                        queueNotebookRefresh( notebook, 'open' );
-                    }
-                    else
-                    {
-                        openDocuments[ document.uri.toString() ] = document;
-                        queueDocumentRefresh( document, 'open' );
-                    }
+                    openDocuments[ document.uri.toString() ] = document;
+                    queueDocumentRefresh( document, 'open' );
                 }
             }
         } ) );
@@ -2433,12 +2506,7 @@ function activate( context )
         {
             context.subscriptions.push( vscode.workspace.onDidOpenNotebookDocument( function( notebook )
             {
-                rememberNotebookDocument( notebook );
-
-                if( shouldRefreshFile() )
-                {
-                    queueNotebookRefresh( notebook, 'open' );
-                }
+                handleVisibleNotebookEditorsChanged( 'open' );
             } ) );
         }
 
@@ -2448,11 +2516,16 @@ function activate( context )
             {
                 if( event && event.notebook )
                 {
-                    rememberNotebookDocument( event.notebook );
+                    var notebookKey = notebooks.getNotebookKey( event.notebook );
 
-                    if( shouldRefreshFile() )
+                    if( notebookRegistry.getByKey( notebookKey ) !== undefined )
                     {
-                        queueNotebookRefresh( event.notebook, 'change' );
+                        rememberNotebookDocument( event.notebook );
+
+                        if( shouldRefreshFile() )
+                        {
+                            queueNotebookRefresh( event.notebook, 'change' );
+                        }
                     }
                 }
             } ) );
@@ -2462,23 +2535,15 @@ function activate( context )
         {
             context.subscriptions.push( vscode.workspace.onDidCloseNotebookDocument( function( notebook )
             {
-                var notebookKey = notebooks.getNotebookKey( notebook );
+                handleVisibleNotebookEditorsChanged( 'open' );
+            } ) );
+        }
 
-                forgetNotebookDocument( notebook );
-
-                if( getSetting( 'tree.autoRefresh', true ) === true && config.scanMode() !== SCAN_MODE_WORKSPACE_ONLY )
-                {
-                    searchResults.remove( notebook.uri );
-
-                    if( scanInFlight === true )
-                    {
-                        pendingDocumentRefreshes.delete( notebookKey );
-                    }
-                    else
-                    {
-                        applyDirtyResultsToTree();
-                    }
-                }
+        if( typeof ( vscode.window.onDidChangeVisibleNotebookEditors ) === 'function' )
+        {
+            context.subscriptions.push( vscode.window.onDidChangeVisibleNotebookEditors( function()
+            {
+                handleVisibleNotebookEditorsChanged( 'open' );
             } ) );
         }
 
@@ -2586,24 +2651,16 @@ function activate( context )
         setButtonsAndContext();
         resetGitWatcher();
         resetPeriodicRefresh();
-        syncOpenNotebookDocuments();
+        syncVisibleNotebookEditors();
 
         if( getSetting( 'tree.scanAtStartup', true ) === true )
         {
             var editors = vscode.window.visibleTextEditors;
             editors.map( function( editor )
             {
-                if( editor.document && config.isValidScheme( editor.document.uri ) )
+                if( editor.document && config.isValidScheme( editor.document.uri ) && notebooks.isNotebookCellDocument( editor.document ) !== true )
                 {
-                    var notebook = getNotebookForDocument( editor.document );
-                    if( notebook )
-                    {
-                        rememberNotebookDocument( notebook );
-                    }
-                    else
-                    {
-                        openDocuments[ editor.document.uri.toString() ] = editor.document;
-                    }
+                    openDocuments[ editor.document.uri.toString() ] = editor.document;
                 }
             } );
 

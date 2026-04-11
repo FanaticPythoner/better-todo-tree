@@ -1,12 +1,68 @@
+var fs = require( 'fs' );
+var path = require( 'path' );
+var Module = require( 'module' );
+var vm = require( 'vm' );
 var helpers = require( './moduleHelpers.js' );
 var issue888Helpers = require( './issue888Helpers.js' );
 var matrixHelpers = require( './matrixHelpers.js' );
 var languageMatrix = require( './languageMatrix.js' );
 var actualUtils = require( '../src/utils.js' );
 var actualDetection = require( '../src/detection.js' );
+var actualNotebooks = require( '../src/notebooks.js' );
 
 var DEFAULT_INCLUDE_GLOBS = languageMatrix.findConfigurationProperty( 'better-todo-tree.filtering.includeGlobs' ).default.slice();
 var DEFAULT_EXCLUDE_GLOBS = languageMatrix.findConfigurationProperty( 'better-todo-tree.filtering.excludeGlobs' ).default.slice();
+
+function loadWithStubsAndTimers( modulePath, stubs, timerStubs )
+{
+    var originalLoad = Module._load;
+    var filename = require.resolve( modulePath );
+    var loadedModule = new Module( filename, module );
+    var previousTimers = global.__betterTodoTreeTestTimers;
+    var prologue = [
+        'var setTimeout = global.__betterTodoTreeTestTimers.setTimeout;',
+        'var clearTimeout = global.__betterTodoTreeTestTimers.clearTimeout;',
+        'var setInterval = global.__betterTodoTreeTestTimers.setInterval;',
+        'var clearInterval = global.__betterTodoTreeTestTimers.clearInterval;'
+    ].join( '\n' ) + '\n';
+
+    delete require.cache[ filename ];
+
+    loadedModule.filename = filename;
+    loadedModule.paths = Module._nodeModulePaths( path.dirname( filename ) );
+
+    Module._load = function( request, parent, isMain )
+    {
+        if( stubs && Object.prototype.hasOwnProperty.call( stubs, request ) )
+        {
+            return stubs[ request ];
+        }
+
+        return originalLoad.call( this, request, parent, isMain );
+    };
+
+    global.__betterTodoTreeTestTimers = timerStubs;
+
+    try
+    {
+        var wrapped = Module.wrap( prologue + fs.readFileSync( filename, 'utf8' ) );
+        var compiled = vm.runInThisContext( wrapped, { filename: filename } );
+        var customRequire = function( request )
+        {
+            return Module._load( request, loadedModule, false );
+        };
+
+        compiled.call( loadedModule.exports, loadedModule.exports, customRequire, loadedModule, filename, path.dirname( filename ) );
+        require.cache[ filename ] = loadedModule;
+
+        return loadedModule.exports;
+    }
+    finally
+    {
+        Module._load = originalLoad;
+        global.__betterTodoTreeTestTimers = previousTimers;
+    }
+}
 
 function createConfigurationSection( values, explicitTarget )
 {
@@ -112,13 +168,23 @@ function createProviderStub()
 {
     return {
         replaceCalls: [],
+        latestResultsByUri: new Map(),
         refreshCalls: 0,
         clearCalls: 0,
         rebuildCalls: 0,
         finalizeCalls: [],
-        clear: function() { this.clearCalls++; },
+        clear: function()
+        {
+            this.clearCalls++;
+            this.latestResultsByUri.clear();
+        },
         rebuild: function() { this.rebuildCalls++; },
-        replaceDocument: function( uri, results ) { this.replaceCalls.push( { uri: uri, results: results } ); },
+        replaceDocument: function( uri, results )
+        {
+            var entry = { uri: uri, results: results };
+            this.replaceCalls.push( entry );
+            this.latestResultsByUri.set( uri.toString(), entry );
+        },
         finalizePendingChanges: function( filter, options ) { this.finalizeCalls.push( { filter: filter, options: options } ); },
         refresh: function() { this.refreshCalls++; },
         getTagCountsForActivityBar: function() { return {}; },
@@ -138,6 +204,17 @@ function createVscodeStub( options )
     var workspaceListeners = {};
     var windowListeners = {};
     var executedCommands = [];
+    var automaticGitRefreshInterval = options.automaticGitRefreshInterval !== undefined ? options.automaticGitRefreshInterval : 0;
+    var periodicRefreshInterval = options.periodicRefreshInterval !== undefined ? options.periodicRefreshInterval : 0;
+    var visibleNotebookEditors = Object.prototype.hasOwnProperty.call( options, 'visibleNotebookEditors' ) ?
+        options.visibleNotebookEditors :
+        ( options.notebookDocuments || [] ).map( function( notebook )
+        {
+            return { notebook: notebook };
+        } );
+    var activeNotebookEditor = options.activeNotebookEditor !== undefined ?
+        options.activeNotebookEditor :
+        ( visibleNotebookEditors.length > 0 ? visibleNotebookEditors[ 0 ] : undefined );
     var filteringDefaults = Object.assign( {
         passGlobsToRipgrep: true,
         includeGlobs: DEFAULT_INCLUDE_GLOBS.slice(),
@@ -173,8 +250,8 @@ function createVscodeStub( options )
         filtering: filteringDefaults,
         general: {
             debug: false,
-            automaticGitRefreshInterval: 0,
-            periodicRefreshInterval: 0,
+            automaticGitRefreshInterval: automaticGitRefreshInterval,
+            periodicRefreshInterval: periodicRefreshInterval,
             rootFolder: "",
             tags: languageMatrix.DEFAULT_TAGS.slice(),
             statusBar: 'total'
@@ -188,8 +265,8 @@ function createVscodeStub( options )
 
     var generalSection = createConfigurationSection( {
             debug: false,
-            automaticGitRefreshInterval: 0,
-            periodicRefreshInterval: 0,
+            automaticGitRefreshInterval: automaticGitRefreshInterval,
+            periodicRefreshInterval: periodicRefreshInterval,
             rootFolder: "",
             exportPath: '/tmp/todo-tree.txt',
             statusBar: 'total',
@@ -271,6 +348,7 @@ function createVscodeStub( options )
     return {
         commandHandlers: commandHandlers,
         workspaceListeners: workspaceListeners,
+        windowListeners: windowListeners,
         executedCommands: executedCommands,
         extensions: {
             all: options.extensions || [ {
@@ -320,7 +398,8 @@ function createVscodeStub( options )
         window: {
             visibleTextEditors: options.visibleTextEditors || [],
             activeTextEditor: options.activeTextEditor,
-            activeNotebookEditor: options.activeNotebookEditor,
+            activeNotebookEditor: activeNotebookEditor,
+            visibleNotebookEditors: visibleNotebookEditors,
             createStatusBarItem: function()
             {
                 return {
@@ -349,7 +428,8 @@ function createVscodeStub( options )
             showInputBox: function() { return Promise.resolve(); },
             showQuickPick: function() { return Promise.resolve(); },
             showTextDocument: function() { return Promise.resolve(); },
-            onDidChangeActiveTextEditor: function( listener ) { return registerListener( workspaceListeners, 'activeEditor', listener ); }
+            onDidChangeActiveTextEditor: function( listener ) { return registerListener( workspaceListeners, 'activeEditor', listener ); },
+            onDidChangeVisibleNotebookEditors: function( listener ) { return registerListener( windowListeners, 'visibleNotebookEditors', listener ); }
         },
         workspace: {
             workspaceFolders: options.workspaceFolders || [],
@@ -386,8 +466,35 @@ function createExtensionHarness( options )
     var normalizeCalls = [];
     var readFileCalls = [];
     var validSchemes = options.validSchemes || [ 'file', 'vscode-notebook-cell' ];
+    var notebookMetrics = {
+        syncCalls: 0,
+        getForDocumentCalls: 0,
+        rememberCalls: 0,
+        forgetCalls: 0,
+        allCalls: 0,
+        getByKeyCalls: 0
+    };
 
     var vscodeStub = createVscodeStub( options );
+    var identityStub = helpers.loadWithStubs( '../src/extensionIdentity.js', {
+        vscode: vscodeStub
+    } );
+    var extensionIdentity = Object.assign( {}, identityStub, {
+        getSetting: function( setting, defaultValue, uri )
+        {
+            if( setting === 'general.periodicRefreshInterval' && options.periodicRefreshInterval !== undefined )
+            {
+                return options.periodicRefreshInterval;
+            }
+
+            if( setting === 'general.automaticGitRefreshInterval' && options.automaticGitRefreshInterval !== undefined )
+            {
+                return options.automaticGitRefreshInterval;
+            }
+
+            return identityStub.getSetting( setting, defaultValue, uri );
+        }
+    } );
     var context = {
         subscriptions: { push: function() {} },
         workspaceState: matrixHelpers.createWorkspaceState(),
@@ -395,9 +502,53 @@ function createExtensionHarness( options )
         storageUri: matrixHelpers.createUri( '/tmp/storage' ),
         globalStorageUri: matrixHelpers.createUri( '/tmp/global-storage' )
     };
+    var notebooksModule = Object.assign( {}, actualNotebooks, {
+        createRegistry: function()
+        {
+            var registry = actualNotebooks.createRegistry();
 
-    var extension = helpers.loadWithStubs( '../src/extension.js', {
+            return {
+                remember: function( notebook )
+                {
+                    notebookMetrics.rememberCalls++;
+                    return registry.remember( notebook );
+                },
+                sync: function( notebookDocuments )
+                {
+                    notebookMetrics.syncCalls++;
+                    return registry.sync( notebookDocuments );
+                },
+                getForDocument: function( document )
+                {
+                    notebookMetrics.getForDocumentCalls++;
+                    return registry.getForDocument( document );
+                },
+                isCellDocument: function( document )
+                {
+                    return registry.isCellDocument( document );
+                },
+                forget: function( notebook )
+                {
+                    notebookMetrics.forgetCalls++;
+                    return registry.forget( notebook );
+                },
+                all: function()
+                {
+                    notebookMetrics.allCalls++;
+                    return registry.all();
+                },
+                getByKey: function( notebookKey )
+                {
+                    notebookMetrics.getByKeyCalls++;
+                    return registry.getByKey( notebookKey );
+                }
+            };
+        }
+    } );
+
+    var extensionStubs = {
         vscode: vscodeStub,
+        './extensionIdentity.js': extensionIdentity,
         './ripgrep': {
             search: function( root, searchOptions )
             {
@@ -500,6 +651,7 @@ function createExtensionHarness( options )
             init: function() {},
             getIcon: function() { return 'check'; }
         },
+        './notebooks.js': notebooksModule,
         './searchResults.js': searchResults,
         './detection.js': {
             resolveResourceConfig: function() { return options.resourceConfig; },
@@ -543,7 +695,10 @@ function createExtensionHarness( options )
                 callback( null, 'head', '' );
             }
         }
-    } );
+    };
+    var extension = options.timerStubs ?
+        loadWithStubsAndTimers( '../src/extension.js', extensionStubs, options.timerStubs ) :
+        helpers.loadWithStubs( '../src/extension.js', extensionStubs );
 
     return {
         extension: extension,
@@ -554,7 +709,9 @@ function createExtensionHarness( options )
         scanTextCalls: scanTextCalls,
         normalizeCalls: normalizeCalls,
         readFileCalls: readFileCalls,
-        vscode: vscodeStub
+        notebookMetrics: notebookMetrics,
+        vscode: vscodeStub,
+        windowListeners: vscodeStub.windowListeners
     };
 }
 
@@ -601,6 +758,63 @@ function waitForDelay( delay )
     } );
 }
 
+function summarizeNotebookResults( results )
+{
+    return results.map( function( result )
+    {
+        return [ result.actualTag, result.displayText, result.revealUri.toString(), result.uri.fsPath ];
+    } );
+}
+
+function expectedNotebookResults( fixture )
+{
+    return [
+        [ 'TODO', 'code cell item', fixture.codeCell.uri.toString(), fixture.notebook.uri.fsPath ],
+        [ '[ ]', 'markdown cell item', fixture.markdownCell.uri.toString(), fixture.notebook.uri.fsPath ]
+    ];
+}
+
+function assertNotebookResults( assert, results, fixture )
+{
+    assert.deepEqual( summarizeNotebookResults( results ), expectedNotebookResults( fixture ) );
+}
+
+function findReplaceCallsForPath( harness, fsPath )
+{
+    return harness.provider.replaceCalls.filter( function( call )
+    {
+        return call.uri.fsPath === fsPath;
+    } );
+}
+
+function getLatestReplaceCallForPath( harness, fsPath )
+{
+    var calls = findReplaceCallsForPath( harness, fsPath );
+    return calls.length > 0 ? calls[ calls.length - 1 ] : undefined;
+}
+
+function setVisibleNotebookEditors( harness, notebooksToShow, activeNotebook )
+{
+    harness.vscode.window.visibleNotebookEditors = notebooksToShow.map( function( notebook )
+    {
+        return { notebook: notebook };
+    } );
+    harness.vscode.window.activeNotebookEditor = activeNotebook ? { notebook: activeNotebook } :
+        ( harness.vscode.window.visibleNotebookEditors[ 0 ] || undefined );
+}
+
+function fireVisibleNotebookEditorsChanged( harness, notebooksToShow, activeNotebook )
+{
+    setVisibleNotebookEditors( harness, notebooksToShow, activeNotebook );
+
+    if( typeof ( harness.windowListeners.visibleNotebookEditors ) === 'function' )
+    {
+        return harness.windowListeners.visibleNotebookEditors( harness.vscode.window.visibleNotebookEditors );
+    }
+
+    return undefined;
+}
+
 QUnit.module( "extension scan parity" );
 
 QUnit.test( "open-files mode stores canonical document results through the refresh pipeline", function( assert )
@@ -630,6 +844,116 @@ QUnit.test( "open-files mode stores canonical document results through the refre
     } );
 } );
 
+QUnit.test( "default workspace startup keeps plain visible editors on the O(1) non-notebook path", function( assert )
+{
+    var firstDocument = matrixHelpers.createDocument( '/workspace/src/first.js', '// TODO first item' );
+    var secondDocument = matrixHelpers.createDocument( '/workspace/src/second.js', '// TODO second item' );
+    var hiddenNotebookFixture = createNotebookFixture();
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        notebookDocuments: [ hiddenNotebookFixture.notebook ],
+        visibleNotebookEditors: [],
+        visibleTextEditors: [ { document: firstDocument }, { document: secondDocument } ],
+        activeTextEditor: { document: firstDocument },
+        documentResults: [ {
+            uri: matrixHelpers.createUri( '/workspace/src/first.js' ),
+            actualTag: 'TODO',
+            displayText: 'first item',
+            continuationText: []
+        } ],
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.notebookMetrics.syncCalls, 1 );
+        assert.equal( harness.notebookMetrics.getForDocumentCalls, 0 );
+
+        harness.vscode.window.activeTextEditor = { document: secondDocument };
+        return harness.vscode.workspaceListeners.activeEditor( { document: secondDocument } );
+    } ).then( function()
+    {
+        return waitForDelay( 550 );
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.notebookMetrics.syncCalls, 1 );
+        assert.equal( harness.notebookMetrics.getForDocumentCalls, 0 );
+        assert.equal( findReplaceCallsForPath( harness, hiddenNotebookFixture.notebook.uri.fsPath ).length, 0 );
+    } );
+} );
+
+QUnit.test( "plain file open save and change events never consult notebook ownership", function( assert )
+{
+    var hiddenNotebookFixture = createNotebookFixture();
+    var document = matrixHelpers.createDocument( '/workspace/src/plain.js', '// TODO plain item' );
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        notebookDocuments: [ hiddenNotebookFixture.notebook ],
+        visibleNotebookEditors: [],
+        visibleTextEditors: [ { document: document } ],
+        activeTextEditor: { document: document },
+        documentResults: [ {
+            uri: matrixHelpers.createUri( '/workspace/src/plain.js' ),
+            actualTag: 'TODO',
+            displayText: 'plain item',
+            continuationText: []
+        } ],
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        var openedDocument = matrixHelpers.createDocument( '/workspace/src/opened.js', '// TODO opened item' );
+
+        harness.vscode.workspaceListeners.open( openedDocument );
+        harness.vscode.workspaceListeners.save( document );
+        harness.vscode.workspaceListeners.changeText( { document: document } );
+
+        return waitForDelay( 550 );
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.notebookMetrics.syncCalls, 1 );
+        assert.equal( harness.notebookMetrics.getForDocumentCalls, 0 );
+        assert.equal( findReplaceCallsForPath( harness, hiddenNotebookFixture.notebook.uri.fsPath ).length, 0 );
+    } );
+} );
+
+QUnit.test( "workspace notebook documents that are not visible are ignored by the open-file refresh path", function( assert )
+{
+    var fixture = createNotebookFixture();
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        notebookDocuments: [ fixture.notebook ],
+        visibleNotebookEditors: [],
+        visibleTextEditors: [],
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 0 );
+        assert.equal( harness.notebookMetrics.syncCalls, 1 );
+        assert.deepEqual( harness.provider.replaceCalls, [] );
+    } );
+} );
+
 QUnit.test( "issue #883 open-files mode scans every cell in an open notebook instead of only the active cell", function( assert )
 {
     var fixture = createNotebookFixture();
@@ -650,16 +974,7 @@ QUnit.test( "issue #883 open-files mode scans every cell in an open notebook ins
         assert.equal( harness.scanDocumentCalls.length, 2 );
         assert.equal( harness.provider.replaceCalls.length, 1 );
         assert.equal( harness.provider.replaceCalls[ 0 ].uri.fsPath, '/workspace/notebook.ipynb' );
-        assert.deepEqual(
-            harness.provider.replaceCalls[ 0 ].results.map( function( result )
-            {
-                return [ result.actualTag, result.displayText, result.revealUri.toString(), result.uri.fsPath ];
-            } ),
-            [
-                [ 'TODO', 'code cell item', fixture.codeCell.uri.toString(), '/workspace/notebook.ipynb' ],
-                [ '[ ]', 'markdown cell item', fixture.markdownCell.uri.toString(), '/workspace/notebook.ipynb' ]
-            ]
-        );
+        assertNotebookResults( assert, harness.provider.replaceCalls[ 0 ].results, fixture );
     } );
 } );
 
@@ -759,6 +1074,7 @@ QUnit.test( "issue #883 current-file mode keeps notebook results at notebook sco
     {
         assert.equal( harness.provider.replaceCalls[ 0 ].uri.fsPath, '/workspace/notebook.ipynb' );
         assert.equal( harness.provider.replaceCalls[ 0 ].results.length, 2 );
+        assertNotebookResults( assert, harness.provider.replaceCalls[ 0 ].results, fixture );
 
         harness.vscode.window.activeTextEditor = { document: fixture.markdownCell };
         return harness.vscode.workspaceListeners.activeEditor( { document: fixture.markdownCell } );
@@ -772,6 +1088,88 @@ QUnit.test( "issue #883 current-file mode keeps notebook results at notebook sco
         assert.equal( lastReplaceCall.uri.fsPath, '/workspace/notebook.ipynb' );
         assert.equal( lastReplaceCall.results.length, 2 );
         assert.equal( harness.scanDocumentCalls.length, 4 );
+        assertNotebookResults( assert, lastReplaceCall.results, fixture );
+    } );
+} );
+
+QUnit.test( "issue #883 open-files mode keeps notebook results when focus moves from a notebook cell to a regular file", function( assert )
+{
+    var fixture = createNotebookFixture();
+    var regularDocument = matrixHelpers.createDocument( '/workspace/clean.js', 'const clean = true;' );
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        notebookDocuments: [ fixture.notebook ],
+        visibleTextEditors: [ { document: fixture.codeCell }, { document: regularDocument } ],
+        activeTextEditor: { document: fixture.codeCell },
+        scanDocumentImpl: function( document )
+        {
+            if( document.uri.toString() === regularDocument.uri.toString() )
+            {
+                return [];
+            }
+
+            return fixture.scanDocumentImpl( document );
+        },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( findReplaceCallsForPath( harness, fixture.notebook.uri.fsPath ).length, 1 );
+        assertNotebookResults( assert, getLatestReplaceCallForPath( harness, fixture.notebook.uri.fsPath ).results, fixture );
+
+        harness.vscode.window.activeTextEditor = { document: regularDocument };
+        return harness.vscode.workspaceListeners.activeEditor( { document: regularDocument } );
+    } ).then( function()
+    {
+        return waitForDelay( 550 );
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( findReplaceCallsForPath( harness, fixture.notebook.uri.fsPath ).length, 1 );
+        assert.equal( harness.scanDocumentCalls[ harness.scanDocumentCalls.length - 1 ].fileName, regularDocument.fileName );
+        assertNotebookResults( assert, getLatestReplaceCallForPath( harness, fixture.notebook.uri.fsPath ).results, fixture );
+    } );
+} );
+
+QUnit.test( "issue #883 open-files mode rescans the full notebook when the active cell changes", function( assert )
+{
+    var fixture = createNotebookFixture();
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        notebookDocuments: [ fixture.notebook ],
+        visibleTextEditors: [ { document: fixture.codeCell }, { document: fixture.markdownCell } ],
+        activeTextEditor: { document: fixture.codeCell },
+        scanDocumentImpl: fixture.scanDocumentImpl,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( findReplaceCallsForPath( harness, fixture.notebook.uri.fsPath ).length, 1 );
+        assertNotebookResults( assert, getLatestReplaceCallForPath( harness, fixture.notebook.uri.fsPath ).results, fixture );
+
+        harness.vscode.window.activeTextEditor = { document: fixture.markdownCell };
+        return harness.vscode.workspaceListeners.activeEditor( { document: fixture.markdownCell } );
+    } ).then( function()
+    {
+        return waitForDelay( 550 );
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( findReplaceCallsForPath( harness, fixture.notebook.uri.fsPath ).length, 2 );
+        assert.equal( harness.scanDocumentCalls.length, 4 );
+        assertNotebookResults( assert, getLatestReplaceCallForPath( harness, fixture.notebook.uri.fsPath ).results, fixture );
     } );
 } );
 
@@ -828,10 +1226,7 @@ QUnit.test( "issue #883 workspace mode keeps open notebook scans even when the n
         assert.equal( harness.scanDocumentCalls.length, 2 );
         assert.equal( harness.provider.replaceCalls.length, 1 );
         assert.equal( harness.provider.replaceCalls[ 0 ].uri.fsPath, '/workspace/notebook.ipynb' );
-        assert.deepEqual(
-            harness.provider.replaceCalls[ 0 ].results.map( function( result ) { return result.actualTag; } ),
-            [ 'TODO', '[ ]' ]
-        );
+        assertNotebookResults( assert, harness.provider.replaceCalls[ 0 ].results, fixture );
     } );
 } );
 
@@ -850,6 +1245,7 @@ QUnit.test( "issue #883 open notebook events scan the full notebook after activa
     return matrixHelpers.flushAsyncWork().then( function()
     {
         assert.equal( harness.scanDocumentCalls.length, 0 );
+        fireVisibleNotebookEditorsChanged( harness, [ fixture.notebook ], fixture.notebook );
         return harness.vscode.workspaceListeners.openNotebook( fixture.notebook );
     } ).then( function()
     {
@@ -861,7 +1257,59 @@ QUnit.test( "issue #883 open notebook events scan the full notebook after activa
     {
         assert.equal( harness.scanDocumentCalls.length, 2 );
         assert.equal( harness.provider.replaceCalls[ 0 ].uri.fsPath, '/workspace/notebook.ipynb' );
-        assert.deepEqual( harness.provider.replaceCalls[ 0 ].results.map( function( result ) { return result.actualTag; } ), [ 'TODO', '[ ]' ] );
+        assertNotebookResults( assert, harness.provider.replaceCalls[ 0 ].results, fixture );
+    } );
+} );
+
+QUnit.test( "notebook change events are ignored until the notebook becomes visible", function( assert )
+{
+    var fixture = createNotebookFixture();
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        notebookDocuments: [ fixture.notebook ],
+        visibleNotebookEditors: [],
+        scanDocumentImpl: fixture.scanDocumentImpl,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        fixture.notebook.version += 1;
+        return harness.vscode.workspaceListeners.changeNotebook( { notebook: fixture.notebook } );
+    } ).then( function()
+    {
+        return waitForDelay( 550 );
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 0 );
+
+        fireVisibleNotebookEditorsChanged( harness, [ fixture.notebook ], fixture.notebook );
+        return waitForDelay( 250 );
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 2 );
+
+        fixture.notebook.version += 1;
+        return harness.vscode.workspaceListeners.changeNotebook( { notebook: fixture.notebook } );
+    } ).then( function()
+    {
+        return waitForDelay( 550 );
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 4 );
+        assertNotebookResults( assert, getLatestReplaceCallForPath( harness, fixture.notebook.uri.fsPath ).results, fixture );
     } );
 } );
 
@@ -900,7 +1348,7 @@ QUnit.test( "issue #883 notebook change events rescan every cell and replace not
 
         assert.equal( harness.scanDocumentCalls.length, 4 );
         assert.equal( lastReplaceCall.uri.fsPath, '/workspace/notebook.ipynb' );
-        assert.deepEqual( lastReplaceCall.results.map( function( result ) { return result.actualTag; } ), [ 'TODO', '[ ]' ] );
+        assertNotebookResults( assert, lastReplaceCall.results, fixture );
     } );
 } );
 
@@ -926,7 +1374,12 @@ QUnit.test( "issue #883 closing a notebook removes notebook-scoped results once 
         harness.vscode.workspaceListeners.close( fixture.codeCell );
         assert.equal( harness.provider.replaceCalls.length, 1 );
 
+        fireVisibleNotebookEditorsChanged( harness, [], undefined );
         harness.vscode.workspaceListeners.closeNotebook( fixture.notebook );
+
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
         assert.equal( harness.provider.replaceCalls.length, 2 );
         assert.equal( harness.provider.replaceCalls[ 1 ].uri.fsPath, '/workspace/notebook.ipynb' );
         assert.deepEqual( harness.provider.replaceCalls[ 1 ].results, [] );
@@ -953,6 +1406,122 @@ QUnit.test( "issue #883 workspace-only mode ignores notebooks outside workspace 
     {
         assert.equal( harness.scanDocumentCalls.length, 0 );
         assert.deepEqual( harness.provider.replaceCalls, [] );
+    } );
+} );
+
+QUnit.test( "issue #883 workspace-only mode scans notebooks within workspace roots", function( assert )
+{
+    var fixture = createNotebookFixture();
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace only',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        notebookDocuments: [ fixture.notebook ],
+        visibleTextEditors: [ { document: fixture.codeCell } ],
+        activeTextEditor: { document: fixture.codeCell },
+        scanDocumentImpl: fixture.scanDocumentImpl,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 2 );
+        assert.equal( findReplaceCallsForPath( harness, fixture.notebook.uri.fsPath ).length, 1 );
+        assertNotebookResults( assert, getLatestReplaceCallForPath( harness, fixture.notebook.uri.fsPath ).results, fixture );
+    } );
+} );
+
+QUnit.test( "issue #883 notebook results survive tree view and grouping commands", function( assert )
+{
+    var fixture = createNotebookFixture();
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        notebookDocuments: [ fixture.notebook ],
+        visibleTextEditors: [ { document: fixture.codeCell } ],
+        activeTextEditor: { document: fixture.codeCell },
+        scanDocumentImpl: fixture.scanDocumentImpl,
+        fileContents: {}
+    } );
+    var commandNames = [
+        'better-todo-tree.showFlatView',
+        'better-todo-tree.showTagsOnlyView',
+        'better-todo-tree.showTreeView',
+        'better-todo-tree.groupByTag',
+        'better-todo-tree.ungroupByTag'
+    ];
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assertNotebookResults( assert, getLatestReplaceCallForPath( harness, fixture.notebook.uri.fsPath ).results, fixture );
+
+        return commandNames.reduce( function( promise, commandName )
+        {
+            return promise.then( function()
+            {
+                harness.vscode.commandHandlers[ commandName ]();
+                return matrixHelpers.flushAsyncWork();
+            } ).then( function()
+            {
+                assertNotebookResults( assert, getLatestReplaceCallForPath( harness, fixture.notebook.uri.fsPath ).results, fixture );
+            } );
+        }, Promise.resolve() );
+    } ).then( function()
+    {
+        assert.equal( findReplaceCallsForPath( harness, fixture.notebook.uri.fsPath ).length, 1 + commandNames.length );
+    } );
+} );
+
+QUnit.test( "issue #883 periodic refresh re-scans open notebooks through the standard rebuild pipeline", function( assert )
+{
+    var fixture = createNotebookFixture();
+    var intervalHandles = [];
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        periodicRefreshInterval: 1,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        notebookDocuments: [ fixture.notebook ],
+        visibleTextEditors: [ { document: fixture.codeCell } ],
+        activeTextEditor: { document: fixture.codeCell },
+        scanDocumentImpl: fixture.scanDocumentImpl,
+        timerStubs: {
+            setTimeout: function( callback )
+            {
+                callback();
+                return { callback: callback };
+            },
+            clearTimeout: function() {},
+            setInterval: function( callback, delay )
+            {
+                var handle = { callback: callback, delay: delay };
+                intervalHandles.push( handle );
+                return handle;
+            },
+            clearInterval: function() {}
+        },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( intervalHandles.length, 1 );
+        assert.equal( intervalHandles[ 0 ].delay, 60000 );
+        assert.equal( harness.scanDocumentCalls.length, 2 );
+        assertNotebookResults( assert, getLatestReplaceCallForPath( harness, fixture.notebook.uri.fsPath ).results, fixture );
+
+        intervalHandles[ 0 ].callback();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 4 );
+        assert.equal( findReplaceCallsForPath( harness, fixture.notebook.uri.fsPath ).length, 2 );
+        assertNotebookResults( assert, getLatestReplaceCallForPath( harness, fixture.notebook.uri.fsPath ).results, fixture );
     } );
 } );
 

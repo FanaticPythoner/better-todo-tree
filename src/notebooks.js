@@ -5,6 +5,11 @@ function isNotebookDocument( target )
         ( typeof ( target.getCells ) === 'function' || Array.isArray( target.cells ) );
 }
 
+function isNotebookCellDocument( document )
+{
+    return document && document.uri && document.uri.scheme === 'vscode-notebook-cell';
+}
+
 function getNotebookKey( notebook )
 {
     return notebook && notebook.uri ? notebook.uri.toString() : "";
@@ -65,14 +70,71 @@ function createRegistry()
         notebooksByKey.set( notebookKey, notebook );
     }
 
+    function forgetByKey( notebookKey )
+    {
+        var notebook = notebooksByKey.get( notebookKey );
+        var cellKeys = cellKeysByNotebookKey.get( notebookKey ) || new Set();
+
+        cellKeys.forEach( function( cellKey )
+        {
+            notebookKeyByCellUri.delete( cellKey );
+        } );
+
+        cellKeysByNotebookKey.delete( notebookKey );
+        notebooksByKey.delete( notebookKey );
+
+        return {
+            notebook: notebook,
+            notebookKey: notebookKey,
+            cellKeys: Array.from( cellKeys )
+        };
+    }
+
     function sync( notebookDocuments )
     {
+        var existingNotebookKeys = new Set( notebooksByKey.keys() );
+        var visibleNotebookKeys = new Set();
+        var added = [];
+        var forgotten = [];
+
         if( !Array.isArray( notebookDocuments ) )
         {
-            return;
+            notebookDocuments = [];
         }
 
-        notebookDocuments.forEach( remember );
+        notebookDocuments.forEach( function( notebook )
+        {
+            if( !isNotebookDocument( notebook ) )
+            {
+                return;
+            }
+
+            var notebookKey = getNotebookKey( notebook );
+            if( visibleNotebookKeys.has( notebookKey ) )
+            {
+                return;
+            }
+
+            visibleNotebookKeys.add( notebookKey );
+            if( existingNotebookKeys.has( notebookKey ) !== true )
+            {
+                added.push( notebook );
+            }
+            remember( notebook );
+        } );
+
+        Array.from( notebooksByKey.keys() ).forEach( function( notebookKey )
+        {
+            if( visibleNotebookKeys.has( notebookKey ) !== true )
+            {
+                forgotten.push( forgetByKey( notebookKey ) );
+            }
+        } );
+
+        return {
+            added: added,
+            forgotten: forgotten
+        };
     }
 
     function getForDocument( document )
@@ -84,8 +146,20 @@ function createRegistry()
 
         if( document.notebook && document.notebook.uri )
         {
-            remember( document.notebook );
-            return document.notebook;
+            var notebookKeyFromDocument = getNotebookKey( document.notebook );
+
+            if( notebooksByKey.has( notebookKeyFromDocument ) )
+            {
+                remember( document.notebook );
+                return document.notebook;
+            }
+
+            return undefined;
+        }
+
+        if( isNotebookCellDocument( document ) !== true )
+        {
+            return undefined;
         }
 
         var notebookKey = notebookKeyByCellUri.get( document.uri.toString() );
@@ -99,21 +173,7 @@ function createRegistry()
 
     function forget( notebook )
     {
-        var notebookKey = getNotebookKey( notebook );
-        var cellKeys = cellKeysByNotebookKey.get( notebookKey ) || new Set();
-
-        cellKeys.forEach( function( cellKey )
-        {
-            notebookKeyByCellUri.delete( cellKey );
-        } );
-
-        cellKeysByNotebookKey.delete( notebookKey );
-        notebooksByKey.delete( notebookKey );
-
-        return {
-            notebookKey: notebookKey,
-            cellKeys: Array.from( cellKeys )
-        };
+        return forgetByKey( getNotebookKey( notebook ) );
     }
 
     function all()
@@ -182,6 +242,7 @@ function scanDocument( notebook, detection, isCellUriScannable, resolveCommentPa
 }
 
 module.exports.isNotebookDocument = isNotebookDocument;
+module.exports.isNotebookCellDocument = isNotebookCellDocument;
 module.exports.getNotebookKey = getNotebookKey;
 module.exports.getNotebookCells = getNotebookCells;
 module.exports.createRegistry = createRegistry;
