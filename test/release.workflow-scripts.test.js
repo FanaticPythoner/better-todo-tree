@@ -744,7 +744,18 @@ QUnit.test( 'verify-vscode-marketplace waits for public version metadata and cha
         path.join( workspace.root, 'scripts', 'release', 'targets.json' ),
         JSON.stringify( [ 'linux-x64', 'web' ], null, 4 ) + '\n'
     );
-    fs.writeFileSync( expectedChangelogPath, '# Better Todo Tree Change Log\n\n## v0.0.228 - 2026-04-10\n' );
+    fs.writeFileSync(
+        expectedChangelogPath,
+        '# Better Todo Tree Change Log\n\n' +
+        '## v0.0.228 - 2026-04-10\n\n' +
+        '- release tag: `v0.0.228`\n' +
+        '- target commit: [`abcdef`](https://github.com/FanaticPythoner/better-todo-tree/commit/abcdef)\n' +
+        '- previous release: `v0.0.227`\n\n' +
+        '## Included commits\n\n' +
+        '- [`deadbee`](https://github.com/FanaticPythoner/better-todo-tree/commit/deadbee) fixture release note\n\n' +
+        '## v0.0.227 - 2026-04-10\n\n' +
+        '- historical section from the locally generated changelog\n'
+    );
 
     server = http.createServer( function( req, res )
     {
@@ -791,7 +802,17 @@ QUnit.test( 'verify-vscode-marketplace waits for public version metadata and cha
         if( req.method === 'GET' && req.url === '/changelog' )
         {
             res.setHeader( 'Content-Type', 'text/plain; charset=utf-8' );
-            res.end( '# Better Todo Tree Change Log\n\n## v0.0.228 - 2026-04-10\n' );
+            res.end(
+                '# Better Todo Tree Change Log\n\n' +
+                '## v0.0.228 - 2026-04-10\n\n' +
+                '- release tag: `v0.0.228`\n' +
+                '- target commit: [`abcdef`](https://github.com/FanaticPythoner/better-todo-tree/commit/abcdef)\n' +
+                '- previous release: `v0.0.227`\n\n' +
+                '## Included commits\n\n' +
+                '- [`deadbee`](https://github.com/FanaticPythoner/better-todo-tree/commit/deadbee) fixture release note\n\n' +
+                '## v0.0.227 - 2026-04-10\n\n' +
+                '- historical section from the published changelog asset\n'
+            );
             return;
         }
 

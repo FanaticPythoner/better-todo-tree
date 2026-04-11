@@ -19,6 +19,33 @@ def normalize_newlines(value: str) -> str:
     return value.replace("\r\n", "\n").strip()
 
 
+def changelog_version_heading(expected_version: str) -> str:
+    return f"## v{expected_version} - "
+
+
+def changelog_section(changelog_text: str, expected_version: str) -> str:
+    normalized = normalize_newlines(changelog_text)
+    lines = normalized.split("\n")
+    heading_prefix = changelog_version_heading(expected_version)
+    section_start = -1
+
+    for index, line in enumerate(lines):
+        if line.startswith(heading_prefix):
+            section_start = index
+            break
+
+    if section_start < 0:
+        raise RuntimeError(f"Marketplace changelog does not contain a section for version {expected_version}.")
+
+    section_end = len(lines)
+    for index in range(section_start + 1, len(lines)):
+        if lines[index].startswith("## "):
+            section_end = index
+            break
+
+    return "\n".join(lines[section_start:section_end]).strip()
+
+
 def gallery_query(query_url: str, extension_identifier: str):
     body = {
         "filters": [
@@ -107,7 +134,8 @@ def main():
     expected_version = args.tag.removeprefix("v")
     expected_description = package_json["description"]
     expected_target_set = expected_targets(pathlib.Path(args.targets))
-    expected_changelog = normalize_newlines(pathlib.Path(args.expected_changelog).read_text(encoding="utf-8"))
+    expected_changelog = pathlib.Path(args.expected_changelog).read_text(encoding="utf-8")
+    expected_changelog_section = changelog_section(expected_changelog, expected_version)
 
     deadline = time.monotonic() + args.timeout_seconds
     last_error = "Marketplace verification did not start."
@@ -130,9 +158,13 @@ def main():
                 )
 
             changelog_url = changelog_asset_url(extension, expected_version)
-            published_changelog = normalize_newlines(fetch_text(changelog_url))
-            if published_changelog != expected_changelog:
-                raise RuntimeError("Marketplace changelog asset does not match the expected generated changelog.")
+            published_changelog = fetch_text(changelog_url)
+            published_changelog_section = changelog_section(published_changelog, expected_version)
+            if published_changelog_section != expected_changelog_section:
+                raise RuntimeError(
+                    "Marketplace changelog section does not match the expected generated section "
+                    f"for version {expected_version}."
+                )
 
             print(f"Marketplace version {expected_version} is publicly available for {extension_identifier}.")
             print(f"Verified target platforms: {', '.join(sorted(visible_targets))}")
