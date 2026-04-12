@@ -397,12 +397,17 @@ function getLineBoundsForOffset( text, lineOffsets, offset )
     };
 }
 
-function findExactRegexExecMatch( uri, text, startOffset )
+function findExactRegexExecMatch( context, startOffset )
 {
-    var regex = utils.getRegexForEditorSearch( true, uri, { includeIndices: true } );
+    if( !context.exactRegex )
+    {
+        return undefined;
+    }
+
+    var regex = context.exactRegex;
     regex.lastIndex = startOffset;
 
-    var exactMatch = regex.exec( text );
+    var exactMatch = regex.exec( context.text );
 
     if( exactMatch && exactMatch.index === startOffset )
     {
@@ -412,9 +417,9 @@ function findExactRegexExecMatch( uri, text, startOffset )
     return undefined;
 }
 
-function resolveTagCaptureRange( uri, text, resourceConfig, match, rawStartOffset )
+function resolveTagCaptureRange( context, match, rawStartOffset )
 {
-    var tagCaptureGroupIndex = getTagCaptureGroupIndex( resourceConfig.regex );
+    var tagCaptureGroupIndex = getTagCaptureGroupIndex( context.resourceConfig.regex );
 
     if( tagCaptureGroupIndex === undefined )
     {
@@ -425,7 +430,7 @@ function resolveTagCaptureRange( uri, text, resourceConfig, match, rawStartOffse
 
     if( !indexedMatch.indices || indexedMatch.indices[ tagCaptureGroupIndex ] === undefined )
     {
-        indexedMatch = findExactRegexExecMatch( uri, text, rawStartOffset ) || indexedMatch;
+        indexedMatch = findExactRegexExecMatch( context, rawStartOffset ) || indexedMatch;
     }
 
     if( indexedMatch.indices && indexedMatch.indices[ tagCaptureGroupIndex ] )
@@ -457,6 +462,122 @@ function createPassThroughLines( text )
 
 var markdownTaskListPrefixSource = '[ \\t]*(?:[-*+]|\\d+\\.)\\s*';
 var markdownTaskListLineRegex = new RegExp( '^(' + markdownTaskListPrefixSource + ')\\[[ xX]\\]' );
+
+function createAnchoredTagMatcher( tags, caseSensitive )
+{
+    var root = {};
+
+    tags.forEach( function( tag )
+    {
+        var normalizedTag = caseSensitive === true ? tag : tag.toLowerCase();
+        var node = root;
+
+        Array.from( normalizedTag ).forEach( function( character )
+        {
+            if( node[ character ] === undefined )
+            {
+                node[ character ] = {};
+            }
+
+            node = node[ character ];
+        } );
+
+        node.tag = tag;
+    } );
+
+    return {
+        match: function( text, allowMarkdownPrefix )
+        {
+            var prefixLength = 0;
+            var node = root;
+            var bestMatch;
+            var normalizedText;
+            var index;
+
+            if( allowMarkdownPrefix === true )
+            {
+                markdownTaskListLineRegex.lastIndex = 0;
+                var markdownPrefixMatch = markdownTaskListLineRegex.exec( text );
+                if( !markdownPrefixMatch )
+                {
+                    return undefined;
+                }
+                prefixLength = markdownPrefixMatch[ 1 ] ? markdownPrefixMatch[ 1 ].length : 0;
+            }
+            else
+            {
+                var whitespaceMatch = text.match( /^\s*/ );
+                prefixLength = whitespaceMatch ? whitespaceMatch[ 0 ].length : 0;
+            }
+
+            normalizedText = caseSensitive === true ? text : text.toLowerCase();
+
+            for( index = prefixLength; index < normalizedText.length; ++index )
+            {
+                node = node[ normalizedText[ index ] ];
+                if( node === undefined )
+                {
+                    break;
+                }
+
+                if( node.tag !== undefined )
+                {
+                    bestMatch = {
+                        tag: node.tag,
+                        prefixLength: prefixLength,
+                        length: index - prefixLength + 1
+                    };
+                }
+            }
+
+            if( !bestMatch )
+            {
+                return undefined;
+            }
+
+            var boundaryCharacter = text[ prefixLength + bestMatch.length ];
+            if( boundaryCharacter && /[A-Za-z0-9_]/.test( boundaryCharacter ) )
+            {
+                return undefined;
+            }
+
+            return bestMatch;
+        }
+    };
+}
+
+function createScanContext( uri, text, snapshot, options )
+{
+    options = options || {};
+
+    var resourceConfig = snapshot && typeof ( snapshot.getResourceConfig ) === 'function' ?
+        snapshot.getResourceConfig( uri ) :
+        resolveResourceConfig( uri );
+    var flags = resourceConfig.regexCaseSensitive === true ? '' : 'i';
+    var regexSource = options.regexSource || utils.getRegexSource( uri );
+    var tagRegex = resourceConfig.regex.indexOf( "$TAGS" ) > -1 ?
+        new RegExp( '(' + utils.getTagRegexSource( uri, resourceConfig.tags ) + ')', flags ) :
+        undefined;
+
+    return {
+        uri: uri,
+        text: text,
+        options: options,
+        snapshot: snapshot,
+        resourceConfig: resourceConfig,
+        lineOffsets: createLineOffsets( text ),
+        regexSource: regexSource,
+        exactRegex: resourceConfig.isDefaultRegex === true ? undefined : utils.getRegexForEditorSearch( true, uri, {
+            includeIndices: true,
+            resourceConfig: resourceConfig,
+            regexSource: regexSource
+        } ),
+        tagRegex: tagRegex,
+        subTagRegex: new RegExp( resourceConfig.subTagRegex, flags ),
+        tagMatcher: createAnchoredTagMatcher( resourceConfig.tags, resourceConfig.regexCaseSensitive === true ),
+        patternFileName: options.patternFileName
+    };
+}
 
 function sortResultsByLocation( results )
 {
@@ -522,13 +643,33 @@ function scanMultiLineCommentBlocks( text, pattern )
 
 function isInsideMultiLineBlock( offset, multiLineBlocks )
 {
-    return multiLineBlocks.some( function( block )
+    var low = 0;
+    var high = multiLineBlocks.length - 1;
+
+    while( low <= high )
     {
-        return offset >= block.startOffset && offset < block.startOffset + block.wholeCommentText.length;
-    } );
+        var mid = Math.floor( ( low + high ) / 2 );
+        var block = multiLineBlocks[ mid ];
+        var blockEnd = block.startOffset + block.wholeCommentText.length;
+
+        if( offset < block.startOffset )
+        {
+            high = mid - 1;
+        }
+        else if( offset >= blockEnd )
+        {
+            low = mid + 1;
+        }
+        else
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
-function collectCommentPatternMatches( uri, text, pattern, lineOffsets, resourceConfig )
+function collectCommentPatternMatches( uri, text, pattern, lineOffsets, resourceConfig, options )
 {
     var results = [];
     var multiLineBlocks = scanMultiLineCommentBlocks( text, pattern );
@@ -536,12 +677,12 @@ function collectCommentPatternMatches( uri, text, pattern, lineOffsets, resource
     multiLineBlocks.forEach( function( block )
     {
         var normalizedLines = createNormalizedCommentLines( block.wholeCommentText, block.startOffset, pattern, block.variant );
-        results = results.concat( collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resourceConfig ) );
+        results = results.concat( collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resourceConfig, options ) );
     } );
 
     scanSingleLineCommentBlocks( text, pattern, multiLineBlocks ).forEach( function( normalizedLines )
     {
-        results = results.concat( collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resourceConfig ) );
+        results = results.concat( collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resourceConfig, options ) );
     } );
 
     return results;
@@ -562,7 +703,10 @@ function resolveMarkdownCommentPattern()
 function scanMarkdownText( uri, text, pattern, lineOffsets, resourceConfig )
 {
     var markdownCommentPattern = resolveMarkdownCommentPattern();
-    var results = collectCommentPatternMatches( uri, text, markdownCommentPattern, lineOffsets, resourceConfig );
+    var context = createScanContext( uri, text, undefined, { regexSource: resourceConfig.regex } );
+    context.resourceConfig = resourceConfig;
+    context.lineOffsets = lineOffsets;
+    var results = collectCommentPatternMatches( uri, text, markdownCommentPattern, lineOffsets, resourceConfig, { context: context } );
     var markdownTaskLines = createPassThroughLines( text ).filter( function( line )
     {
         markdownTaskListLineRegex.lastIndex = 0;
@@ -571,7 +715,10 @@ function scanMarkdownText( uri, text, pattern, lineOffsets, resourceConfig )
 
     if( markdownTaskLines.length > 0 )
     {
-        results = results.concat( collectLogicalCommentMatches( uri, markdownTaskLines, lineOffsets, resourceConfig, { allowMarkdownPrefix: true } ) );
+        results = results.concat( collectLogicalCommentMatches( uri, markdownTaskLines, lineOffsets, resourceConfig, {
+            allowMarkdownPrefix: true,
+            context: context
+        } ) );
     }
 
     return sortResultsByLocation( results );
@@ -662,17 +809,15 @@ function findActualTag( tags, tag, caseSensitive )
     } ) || tag;
 }
 
-function buildBuiltInTagRegex( resourceConfig, allowMarkdownPrefix )
-{
-    var flags = resourceConfig.regexCaseSensitive === true ? '' : 'i';
-    var prefix = allowMarkdownPrefix === true ? '(' + markdownTaskListPrefixSource + ')' : '(\\s*)';
-    return new RegExp( '^' + prefix + '(' + utils.getTagRegexSource( undefined, resourceConfig.tags ) + ')(?![A-Za-z0-9_])', flags );
-}
-
 function collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resourceConfig, options )
 {
     var results = [];
-    var tagRegex = buildBuiltInTagRegex( resourceConfig, options && options.allowMarkdownPrefix === true );
+    var context = options && options.context ? options.context : createScanContext( uri, "", undefined, {
+        regexSource: resourceConfig.regex,
+        patternFileName: options && options.patternFileName
+    } );
+    context.resourceConfig = resourceConfig;
+    context.lineOffsets = lineOffsets;
     var current = undefined;
 
     function finalizeCurrent()
@@ -684,7 +829,11 @@ function collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resour
 
         var firstLine = current.lines[ 0 ];
         var logicalTextLines = current.lines.map( function( line ) { return line.text; } );
-        var extracted = utils.extractTag( firstLine.text, undefined, uri );
+        var extracted = utils.extractTag( firstLine.text, undefined, uri, undefined, {
+            resourceConfig: resourceConfig,
+            tagRegex: context.tagRegex,
+            subTagRegex: context.subTagRegex
+        } );
         var actualTag = extracted.tag && extracted.tag.length > 0 ? extracted.tag : current.tag;
         var displayText = ( extracted.after || "" ).trim();
 
@@ -740,21 +889,19 @@ function collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resour
 
     normalizedLines.forEach( function( line )
     {
-        tagRegex.lastIndex = 0;
-        var tagMatch = tagRegex.exec( line.text );
+        var tagMatch = context.tagMatcher.match( line.text, options && options.allowMarkdownPrefix === true );
 
         if( tagMatch )
         {
             finalizeCurrent();
 
-            var tagPrefixLength = tagMatch[ 1 ] ? tagMatch[ 1 ].length : 0;
-            var actualTag = findActualTag( resourceConfig.tags, tagMatch[ 2 ], resourceConfig.regexCaseSensitive === true );
-            var tagStartOffset = line.contentStartOffset + tagPrefixLength;
+            var actualTag = findActualTag( resourceConfig.tags, tagMatch.tag, resourceConfig.regexCaseSensitive === true );
+            var tagStartOffset = line.contentStartOffset + tagMatch.prefixLength;
 
             current = {
                 tag: actualTag,
                 tagStartOffset: tagStartOffset,
-                tagEndOffset: tagStartOffset + tagMatch[ 2 ].length,
+                tagEndOffset: tagStartOffset + tagMatch.length,
                 lines: [ line ]
             };
         }
@@ -775,11 +922,20 @@ function scanCommentPatternText( uri, text, resourceConfig, patternFileName )
     var patternLookupName = patternFileName || fsPath;
     var pattern = utils.getCommentPattern( patternLookupName );
     var lineOffsets = createLineOffsets( text );
+    var context = createScanContext( uri, text, undefined, {
+        patternFileName: patternFileName,
+        regexSource: resourceConfig.regex
+    } );
+    context.resourceConfig = resourceConfig;
+    context.lineOffsets = lineOffsets;
 
     if( pattern === undefined )
     {
         var genericLines = createPassThroughLines( text );
-        return collectLogicalCommentMatches( uri, genericLines, lineOffsets, resourceConfig );
+        return collectLogicalCommentMatches( uri, genericLines, lineOffsets, resourceConfig, {
+            context: context,
+            patternFileName: patternFileName
+        } );
     }
 
     if( pattern.commentsOnly === true )
@@ -792,44 +948,50 @@ function scanCommentPatternText( uri, text, resourceConfig, patternFileName )
         return [];
     }
 
-    return collectCommentPatternMatches( uri, text, pattern, lineOffsets, resourceConfig );
+    return collectCommentPatternMatches( uri, text, pattern, lineOffsets, resourceConfig, {
+        context: context,
+        patternFileName: patternFileName
+    } );
 }
 
-function normalizeRegexExecMatch( uri, text, match, resourceConfig )
+function normalizeRegexExecMatchWithContext( context, match )
 {
     if( !match || match[ 0 ] === undefined || match[ 0 ].length === 0 )
     {
         return undefined;
     }
 
-    var lineOffsets = createLineOffsets( text );
     var matchText = match[ 0 ];
     var rawStartOffset = match.index;
     var rawEndOffset = rawStartOffset + matchText.length;
     var logicalStartOffset = rawStartOffset;
     var logicalEndOffset = rawEndOffset;
     var preferredTagOffset;
-    var tagCaptureRange = resolveTagCaptureRange( uri, text, resourceConfig, match, rawStartOffset );
+    var tagCaptureRange = resolveTagCaptureRange( context, match, rawStartOffset );
     var tagStartOffset = tagCaptureRange ? tagCaptureRange[ 0 ] : undefined;
     var tagEndOffset = tagCaptureRange ? tagCaptureRange[ 1 ] : undefined;
 
     if( tagCaptureRange )
     {
-        var startLineBounds = getLineBoundsForOffset( text, lineOffsets, rawStartOffset );
-        var tagLineBounds = getLineBoundsForOffset( text, lineOffsets, tagStartOffset );
+        var startLineBounds = getLineBoundsForOffset( context.text, context.lineOffsets, rawStartOffset );
+        var tagLineBounds = getLineBoundsForOffset( context.text, context.lineOffsets, tagStartOffset );
 
         if( tagLineBounds.line > startLineBounds.line )
         {
             logicalStartOffset = tagLineBounds.startOffset;
 
             var lastRenderedOffset = Math.max( rawEndOffset - 1, tagEndOffset - 1 );
-            logicalEndOffset = getLineBoundsForOffset( text, lineOffsets, lastRenderedOffset ).endOffset;
-            matchText = text.slice( logicalStartOffset, logicalEndOffset );
+            logicalEndOffset = getLineBoundsForOffset( context.text, context.lineOffsets, lastRenderedOffset ).endOffset;
+            matchText = context.text.slice( logicalStartOffset, logicalEndOffset );
             preferredTagOffset = tagStartOffset - logicalStartOffset;
         }
     }
 
-    var extracted = utils.extractTag( matchText, undefined, uri, preferredTagOffset );
+    var extracted = utils.extractTag( matchText, undefined, context.uri, preferredTagOffset, {
+        resourceConfig: context.resourceConfig,
+        tagRegex: context.tagRegex,
+        subTagRegex: context.subTagRegex
+    } );
     var actualTag = extracted.tag && extracted.tag.length > 0 ? extracted.tag : matchText;
 
     if( tagStartOffset === undefined )
@@ -858,13 +1020,13 @@ function normalizeRegexExecMatch( uri, text, match, resourceConfig )
     }
 
     var continuationText = originalLines.slice( 1 ).map( function( line ) { return line.trim(); } ).filter( function( line ) { return line.length > 0; } );
-    var startPosition = offsetToPosition( lineOffsets, tagStartOffset );
-    var endPosition = offsetToPosition( lineOffsets, logicalEndOffset );
+    var startPosition = offsetToPosition( context.lineOffsets, tagStartOffset );
+    var endPosition = offsetToPosition( context.lineOffsets, logicalEndOffset );
     var subTagStartOffset = extracted.subTagOffset !== undefined ? logicalStartOffset + extracted.subTagOffset : undefined;
 
     var result = {
-        uri: uri,
-        fsPath: getUriFsPath( uri ),
+        uri: context.uri,
+        fsPath: getUriFsPath( context.uri ),
         line: startPosition.line + 1,
         column: startPosition.character + 1,
         endLine: endPosition.line + 1,
@@ -910,14 +1072,23 @@ function normalizeRipgrepMatch( uri, text, match )
         return undefined;
     }
 
-    var resourceConfig = resolveResourceConfig( uri );
-    var lineOffsets = createLineOffsets( text );
-    var rawStartOffset = offsetFromLineAndColumn( text, lineOffsets, match.line, match.column );
-    var exactMatch = findExactRegexExecMatch( uri, text, rawStartOffset );
+    var context = createScanContext( uri, text );
+    var rawStartOffset;
+
+    if( match.absoluteOffset !== undefined && match.submatches && match.submatches.length > 0 )
+    {
+        rawStartOffset = match.absoluteOffset + match.submatches[ 0 ].start;
+    }
+    else
+    {
+        rawStartOffset = offsetFromLineAndColumn( text, context.lineOffsets, match.line, match.column );
+    }
+
+    var exactMatch = findExactRegexExecMatch( context, rawStartOffset );
 
     if( exactMatch )
     {
-        return normalizeRegexExecMatch( uri, text, exactMatch, resourceConfig );
+        return normalizeRegexExecMatchWithContext( context, exactMatch );
     }
 
     var logicalText = match.match;
@@ -926,10 +1097,10 @@ function normalizeRipgrepMatch( uri, text, match )
         logicalText += '\n' + match.extraLines.map( function( extraLine ) { return extraLine.match; } ).join( '\n' );
     }
 
-    return normalizeRegexExecMatch( uri, text, {
+    return normalizeRegexExecMatchWithContext( context, {
         0: logicalText,
         index: rawStartOffset
-    }, resourceConfig );
+    } );
 }
 
 function resolveResourceConfig( uri )
@@ -949,28 +1120,47 @@ function resolveDocumentPatternFileName( document )
 
 function scanText( uri, text, options )
 {
-    options = options || {};
+    return scanTextWithContext( createScanContext( uri, text, undefined, options ) );
+}
 
-    var resourceConfig = resolveResourceConfig( uri );
+function scanDocument( document )
+{
+    return scanDocumentWithContext( createScanContext( document.uri, document.getText(), undefined, {
+        patternFileName: resolveDocumentPatternFileName( document )
+    } ) );
+}
 
-    if( resourceConfig.isDefaultRegex === true )
+function normalizeRegexMatch( uri, text, match )
+{
+    var context = createScanContext( uri, text );
+
+    if( match && Object.prototype.hasOwnProperty.call( match, 'fsPath' ) )
     {
-        return scanCommentPatternText( uri, text, resourceConfig, options.patternFileName );
+        return normalizeRipgrepMatch( uri, text, match );
     }
 
-    var regex = utils.getRegexForEditorSearch( true, uri, { includeIndices: true } );
+    return normalizeRegexExecMatchWithContext( context, match );
+}
+
+function scanTextWithContext( context )
+{
+    if( context.resourceConfig.isDefaultRegex === true )
+    {
+        return scanCommentPatternText( context.uri, context.text, context.resourceConfig, context.patternFileName );
+    }
+
     var results = [];
     var match;
 
-    while( ( match = regex.exec( text ) ) !== null )
+    while( ( match = context.exactRegex.exec( context.text ) ) !== null )
     {
         if( match[ 0 ].length === 0 )
         {
-            regex.lastIndex++;
+            context.exactRegex.lastIndex++;
             continue;
         }
 
-        var normalized = normalizeRegexExecMatch( uri, text, match, resourceConfig );
+        var normalized = normalizeRegexExecMatchWithContext( context, match );
         if( normalized )
         {
             results.push( normalized );
@@ -980,24 +1170,26 @@ function scanText( uri, text, options )
     return results;
 }
 
-function scanDocument( document )
+function scanDocumentWithContext( context )
 {
-    return scanText( document.uri, document.getText(), {
-        patternFileName: resolveDocumentPatternFileName( document )
-    } );
+    return scanTextWithContext( context );
 }
 
-function normalizeRegexMatch( uri, text, match )
+function normalizeRegexMatchWithContext( context, match )
 {
     if( match && Object.prototype.hasOwnProperty.call( match, 'fsPath' ) )
     {
-        return normalizeRipgrepMatch( uri, text, match );
+        return normalizeRipgrepMatch( context.uri, context.text, match );
     }
 
-    return normalizeRegexExecMatch( uri, text, match, resolveResourceConfig( uri ) );
+    return normalizeRegexExecMatchWithContext( context, match );
 }
 
 module.exports.resolveResourceConfig = resolveResourceConfig;
+module.exports.createScanContext = createScanContext;
 module.exports.scanDocument = scanDocument;
+module.exports.scanDocumentWithContext = scanDocumentWithContext;
 module.exports.scanText = scanText;
+module.exports.scanTextWithContext = scanTextWithContext;
 module.exports.normalizeRegexMatch = normalizeRegexMatch;
+module.exports.normalizeRegexMatchWithContext = normalizeRegexMatchWithContext;

@@ -12,4 +12,5 @@ TODOS_LISTS/
 .tools/
 .act-artifacts/
 *REPORT*.md
-artifacts/
+artifacts/vsix/
+artifacts/release-notes/

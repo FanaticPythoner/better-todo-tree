@@ -44,6 +44,15 @@ function createVscodeStub( highlightConfiguration, decorationLog )
                         }
 
                         return defaultValue;
+                    },
+                    inspect: function( key )
+                    {
+                        return {
+                            defaultValue: Object.prototype.hasOwnProperty.call( highlightConfiguration, key ) ? highlightConfiguration[ key ] : undefined,
+                            globalValue: undefined,
+                            workspaceValue: undefined,
+                            workspaceFolderValue: undefined
+                        };
                     }
                 };
             }
@@ -91,6 +100,7 @@ function createHarness( options )
         './attributes.js': {
             getForeground: function() { return undefined; },
             getBackground: function() { return undefined; },
+            hasCustomHighlight: function( tag ) { return Object.prototype.hasOwnProperty.call( options.customHighlights || {}, tag ); },
             getAttribute: function( tag, attribute, defaultValue )
             {
                 if( attribute === 'type' )

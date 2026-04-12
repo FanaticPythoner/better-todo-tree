@@ -20,6 +20,8 @@ var attributes = require( './attributes.js' );
 var searchResults = require( './searchResults.js' );
 var detection = require( './detection.js' );
 var identity = require( './extensionIdentity.js' );
+var settingsSnapshotModule = require( './runtime/settingsSnapshot.js' );
+var documentScanCacheModule = require( './runtime/documentScanCache.js' );
 var packageJson = require( '../package.json' );
 
 var searchList = [];
@@ -68,6 +70,10 @@ function activate( context )
     var legacySettingImportMarker = 'importedLegacyNamespaceVersion';
     var currentManifestSettingSuffixes = identity.getManifestSettingSuffixes( packageJson );
     var notebookRegistry = notebooks.createRegistry();
+    var currentSettingsSnapshot;
+    var activeSearchResults = searchResults.createStore();
+    var nextSearchResults = undefined;
+    var documentScanCache = documentScanCacheModule.createDocumentScanCache();
 
     function settingLocation( setting, uri )
     {
@@ -89,6 +95,41 @@ function activate( context )
     function getSetting( setting, defaultValue, uri )
     {
         return identity.getSetting( setting, defaultValue, uri );
+    }
+
+    function rebuildSettingsSnapshot()
+    {
+        currentSettingsSnapshot = settingsSnapshotModule.buildSettingsSnapshot( context, identity, config, vscode );
+        attributes.init( {
+            isRegexCaseSensitive: function()
+            {
+                return currentSettingsSnapshot.getResourceConfig().regexCaseSensitive;
+            },
+            customHighlight: function()
+            {
+                return currentSettingsSnapshot.customHighlight;
+            },
+            defaultHighlight: function()
+            {
+                return currentSettingsSnapshot.defaultHighlight;
+            },
+            shouldUseColourScheme: function()
+            {
+                return currentSettingsSnapshot.useColourScheme;
+            },
+            backgroundColourScheme: function()
+            {
+                return currentSettingsSnapshot.backgroundColourScheme;
+            },
+            foregroundColourScheme: function()
+            {
+                return currentSettingsSnapshot.foregroundColourScheme;
+            },
+            tags: function()
+            {
+                return currentSettingsSnapshot.getResourceConfig().tags;
+            }
+        } );
     }
 
     function updateSetting( setting, value, target, uri )
@@ -144,7 +185,12 @@ function activate( context )
     config.init( context );
     highlights.init( context, debug );
     utils.init( config );
-    attributes.init( config );
+    rebuildSettingsSnapshot();
+
+    highlights.setScanResultsProvider( function( document )
+    {
+        return getDocumentScanResults( document );
+    } );
 
     var resolveCommentPatternFileNameForLanguage = commentPatternLanguageResolver.createCommentPatternLanguageResolver( vscode, utils );
 
@@ -422,15 +468,134 @@ function activate( context )
         ripgrep.kill();
     }
 
-    function search( options )
+    function createTaskScheduler( limit )
+    {
+        var activeCount = 0;
+        var queue = [];
+        var pendingPromises = [];
+
+        function pump()
+        {
+            if( activeCount >= limit || queue.length === 0 )
+            {
+                return;
+            }
+
+            var entry = queue.shift();
+            activeCount++;
+
+            Promise.resolve().then( entry.task ).then( function( value )
+            {
+                activeCount--;
+                entry.resolve( value );
+                pump();
+            } ).catch( function( error )
+            {
+                activeCount--;
+                entry.reject( error );
+                pump();
+            } );
+        }
+
+        return {
+            schedule: function( task )
+            {
+                var promise = new Promise( function( resolve, reject )
+                {
+                    queue.push( {
+                        task: task,
+                        resolve: resolve,
+                        reject: reject
+                    } );
+                    pump();
+                } );
+
+                pendingPromises.push( promise );
+                return promise;
+            },
+            wait: function()
+            {
+                return Promise.all( pendingPromises );
+            }
+        };
+    }
+
+    function readWorkspaceFile( filePath )
+    {
+        return new Promise( function( resolve, reject )
+        {
+            fs.readFile( filePath, 'utf8', function( error, text )
+            {
+                if( error )
+                {
+                    reject( error );
+                    return;
+                }
+
+                resolve( text );
+            } );
+        } );
+    }
+
+    function ensureStorageDirectory()
+    {
+        if( !context.storageUri || !context.storageUri.fsPath )
+        {
+            return Promise.resolve( false );
+        }
+
+        return fs.promises.mkdir( context.storageUri.fsPath, { recursive: true } ).then( function()
+        {
+            return true;
+        } ).catch( function( error )
+        {
+            if( error && error.code === 'EEXIST' )
+            {
+                return true;
+            }
+
+            throw error;
+        } );
+    }
+
+    function decodeRipgrepValue( value )
+    {
+        return ripgrep.decodeJsonValue( value );
+    }
+
+    function toWorkspaceMatch( data )
+    {
+        var submatches = Array.isArray( data.submatches ) ? data.submatches.map( function( submatch )
+        {
+            return {
+                match: decodeRipgrepValue( submatch.match ),
+                start: submatch.start,
+                end: submatch.end
+            };
+        } ) : [];
+        var firstSubmatch = submatches[ 0 ] || { start: 0, match: decodeRipgrepValue( data.lines ) || "" };
+
+        return {
+            fsPath: decodeRipgrepValue( data.path ),
+            line: data.line_number,
+            column: firstSubmatch.start + 1,
+            match: firstSubmatch.match,
+            absoluteOffset: data.absolute_offset,
+            submatches: submatches,
+            lines: decodeRipgrepValue( data.lines )
+        };
+    }
+
+    function search( cwd, options, onEvent )
     {
         var target = options.filename ? options.filename : ".";
         debug( "Searching " + target + "..." );
 
-        return ripgrep.search( "/", options ).then( function( matches )
+        return ripgrep.search( cwd, options, onEvent ).then( function( summary )
         {
-            debug( "Search returned " + matches.length + " matches for " + target );
-            return matches;
+            var matchCount = summary && summary.stats && summary.stats.matches !== undefined ? summary.stats.matches : 0;
+            debug( "Search returned " + matchCount + " matches for " + target );
+            return summary;
         } ).catch( function( error )
         {
             if( isCancelledError( error ) )
@@ -487,14 +652,15 @@ function activate( context )
         return globs;
     }
 
-    function getOptions( filename, uri, overrideRegexSource )
+    function getOptions( filename, uri, overrideRegexSource, overrideSubmoduleExcludeGlobs )
     {
-        var resourceConfig = detection.resolveResourceConfig( uri );
+        var snapshot = currentSettingsSnapshot;
+        var resourceConfig = snapshot.getResourceConfig( uri );
         var regexSource = overrideRegexSource || utils.getRegexSource( uri );
 
-        var tempIncludeGlobs = context.workspaceState.get( 'includeGlobs' ) || [];
-        var tempExcludeGlobs = context.workspaceState.get( 'excludeGlobs' ) || [];
-        var submoduleExcludeGlobs = context.workspaceState.get( 'submoduleExcludeGlobs' ) || [];
+        var tempIncludeGlobs = snapshot.getTemporaryIncludeGlobs();
+        var tempExcludeGlobs = snapshot.getTemporaryExcludeGlobs();
+        var submoduleExcludeGlobs = overrideSubmoduleExcludeGlobs || [];
 
         var options = {
             regex: regexSource,
@@ -502,9 +668,9 @@ function activate( context )
             rgPath: config.ripgrepPath()
         };
 
-        var globs = getSetting( 'filtering.passGlobsToRipgrep', true ) === true ? buildGlobsForRipgrep(
-            getSetting( 'filtering.includeGlobs', [] ),
-            getSetting( 'filtering.excludeGlobs', [] ),
+        var globs = snapshot.passGlobsToRipgrep === true ? buildGlobsForRipgrep(
+            snapshot.includeGlobs,
+            snapshot.excludeGlobs,
             tempIncludeGlobs,
             tempExcludeGlobs,
             submoduleExcludeGlobs ) : undefined;
@@ -518,24 +684,18 @@ function activate( context )
             options.filename = filename;
         }
 
-        if( context.storageUri.fsPath && !fs.existsSync( context.storageUri.fsPath ) )
-        {
-            debug( "Attempting to create local storage folder " + context.storageUri.fsPath );
-            fs.mkdirSync( context.storageUri.fsPath, { recursive: true } );
-        }
-
         options.outputChannel = outputChannel;
         options.additional = getSetting( 'ripgrep.ripgrepArgs', '' );
         options.maxBuffer = getSetting( 'ripgrep.ripgrepMaxBuffer', 200 );
         options.multiline = regexSource.indexOf( "\\n" ) > -1 || resourceConfig.enableMultiLine === true;
 
-        if( fs.existsSync( context.storageUri.fsPath ) === true && getSetting( 'ripgrep.usePatternFile', true ) === true )
+        if( context.storageUri && context.storageUri.fsPath && getSetting( 'ripgrep.usePatternFile', true ) === true )
         {
             var patternFileName = crypto.randomBytes( 6 ).readUIntLE( 0, 6 ).toString( 36 ) + '.txt';
             options.patternFilePath = path.join( context.storageUri.fsPath, patternFileName );
         }
 
-        if( getSetting( 'filtering.includeHiddenFiles', false ) )
+        if( snapshot.includeHiddenFiles )
         {
             options.additional += ' --hidden ';
         }
@@ -654,7 +814,8 @@ function activate( context )
 
             if( forgotten.notebook && forgotten.notebook.uri && getSetting( 'tree.autoRefresh', true ) === true )
             {
-                searchResults.remove( forgotten.notebook.uri );
+                removeSearchResults( forgotten.notebook.uri, activeSearchResults );
+                documentScanCache.deleteByUri( forgotten.notebook.uri );
                 pendingDocumentRefreshes.delete( forgotten.notebookKey );
                 shouldRefreshTree = true;
             }
@@ -662,7 +823,7 @@ function activate( context )
 
         if( shouldRefreshTree && scanInFlight !== true )
         {
-            applyDirtyResultsToTree();
+            applyDirtyResultsToTree( undefined, activeSearchResults );
         }
     }
 
@@ -846,7 +1007,14 @@ function activate( context )
 
     function scanNotebookDocument( notebook )
     {
-        return notebooks.scanDocument( notebook, detection, function( uri )
+        var notebookDetection = {
+            scanDocument: function( document )
+            {
+                return getDocumentScanResults( document );
+            }
+        };
+
+        return notebooks.scanDocument( notebook, notebookDetection, function( uri )
         {
             return config.isValidScheme( uri ) === true;
         }, function( document )
@@ -855,11 +1023,76 @@ function activate( context )
         } );
     }
 
-    function refreshTextDocumentResults( document )
+    function getSearchResultsStore( store )
+    {
+        return store || activeSearchResults;
+    }
+
+    function getSearchResultsCount( store )
+    {
+        return getSearchResultsStore( store ).count();
+    }
+
+    function removeSearchResults( uri, store )
+    {
+        return getSearchResultsStore( store ).remove( uri );
+    }
+
+    function replaceSearchResults( uri, results, store )
+    {
+        return getSearchResultsStore( store ).replaceUriResults( uri, results );
+    }
+
+    function getDocumentPatternFileName( document )
+    {
+        if( !document )
+        {
+            return undefined;
+        }
+
+        if( document.commentPatternFileName )
+        {
+            return document.commentPatternFileName;
+        }
+
+        if( document.languageId )
+        {
+            return resolveCommentPatternFileNameForLanguage( document.languageId );
+        }
+
+        if( document.fileName )
+        {
+            return document.fileName;
+        }
+
+        return document.uri && document.uri.fsPath ? document.uri.fsPath : undefined;
+    }
+
+    function getDocumentScanResults( document )
+    {
+        var patternFileName = getDocumentPatternFileName( document );
+        var signature = settingsSnapshotModule.settingsSignatureForUri( currentSettingsSnapshot, document.uri );
+        var cachedResults = documentScanCache.get( document.uri, document.version, signature, patternFileName );
+
+        if( cachedResults !== undefined )
+        {
+            return cachedResults;
+        }
+
+        var scanContext = detection.createScanContext( document.uri, document.getText(), currentSettingsSnapshot, {
+            patternFileName: patternFileName
+        } );
+        var results = detection.scanDocumentWithContext( scanContext );
+
+        documentScanCache.set( document.uri, document.version, signature, patternFileName, results );
+        return results;
+    }
+
+    function refreshTextDocumentResults( document, store )
     {
         if( !document || !config.isValidScheme( document.uri ) || isIncluded( document.uri ) !== true )
         {
-            searchResults.replaceUriResults( document.uri, [] );
+            replaceSearchResults( document.uri, [], store );
             return;
         }
 
@@ -868,15 +1101,15 @@ function activate( context )
             var activeTarget = getActiveScanTarget();
             if( activeTarget !== document )
             {
-                searchResults.replaceUriResults( document.uri, [] );
+                replaceSearchResults( document.uri, [], store );
                 return;
             }
         }
 
-        searchResults.replaceUriResults( document.uri, detection.scanDocument( document ) );
+        replaceSearchResults( document.uri, getDocumentScanResults( document ), store );
     }
 
-    function refreshNotebookResults( notebook )
+    function refreshNotebookResults( notebook, store )
     {
         if( !notebook )
         {
@@ -885,7 +1118,7 @@ function activate( context )
 
         if( !config.isValidScheme( notebook.uri ) || isIncluded( notebook.uri ) !== true )
         {
-            searchResults.replaceUriResults( notebook.uri, [] );
+            replaceSearchResults( notebook.uri, [], store );
             return;
         }
 
@@ -894,36 +1127,37 @@ function activate( context )
             var activeTarget = getActiveScanTarget();
             if( !activeTarget || !activeTarget.uri || activeTarget.uri.toString() !== notebook.uri.toString() )
             {
-                searchResults.replaceUriResults( notebook.uri, [] );
+                replaceSearchResults( notebook.uri, [], store );
                 return;
             }
         }
 
-        searchResults.replaceUriResults( notebook.uri, scanNotebookDocument( notebook ) );
+        replaceSearchResults( notebook.uri, scanNotebookDocument( notebook ), store );
     }
 
-    function refreshScanTarget( target )
+    function refreshScanTarget( target, store )
     {
         if( notebooks.isNotebookDocument( target ) )
         {
-            refreshNotebookResults( target );
+            refreshNotebookResults( target, store );
         }
         else
         {
-            refreshTextDocumentResults( target );
+            refreshTextDocumentResults( target, store );
         }
     }
 
-    function applyDirtyResultsToTree( options )
+    function applyDirtyResultsToTree( options, store )
     {
         options = options || {};
+        var resultsStore = getSearchResultsStore( store );
 
-        if( searchResults.containsMarkdown() )
+        if( resultsStore.containsMarkdown() )
         {
             checkForMarkdownUpgrade();
         }
 
-        searchResults.drainDirtyResults().forEach( function( entry )
+        resultsStore.drainDirtyResults().forEach( function( entry )
         {
             provider.replaceDocument( entry.uri, entry.results );
         } );
@@ -948,23 +1182,23 @@ function activate( context )
 
         pendingDocumentRefreshes.forEach( function( document )
         {
-            refreshScanTarget( document );
+            refreshScanTarget( document, activeSearchResults );
         } );
 
         pendingDocumentRefreshes.clear();
-        applyDirtyResultsToTree();
+        applyDirtyResultsToTree( undefined, activeSearchResults );
     }
 
-    function refreshOpenFiles( workspaceRoots )
+    function refreshOpenFiles( workspaceRoots, store )
     {
         getOpenDocumentsForScan( workspaceRoots ).forEach( function( document )
         {
-            refreshScanTarget( document );
+            refreshScanTarget( document, store );
         } );
 
         getNotebookDocumentsForScan( workspaceRoots ).forEach( function( notebook )
         {
-            refreshScanTarget( notebook );
+            refreshScanTarget( notebook, store );
         } );
     }
 
@@ -973,97 +1207,153 @@ function activate( context )
         return '(' + utils.getTagRegexSource() + ')';
     }
 
-    function readWorkspaceFile( filePath )
-    {
-        return fs.readFileSync( filePath, 'utf8' );
-    }
-
-    function scanWorkspaceCandidates( rootPath )
+    function scanWorkspaceCandidates( rootPath, generation, store )
     {
         var seenFiles = new Set();
+        var scheduler = createTaskScheduler( currentSettingsSnapshot.readFileConcurrency );
+        var submoduleExcludeGlobs = config.shouldIgnoreGitSubmodules() ? utils.getSubmoduleExcludeGlobs( rootPath ) : [];
 
-        return search( getOptions( rootPath, undefined, getCandidateSearchRegex() ) ).then( function( matches )
+        return ensureStorageDirectory().then( function()
         {
-            matches.forEach( function( match )
+            return search( rootPath, getOptions( undefined, undefined, getCandidateSearchRegex(), submoduleExcludeGlobs ), function( message )
             {
-                seenFiles.add( match.fsPath );
+                if( message.type === 'match' )
+                {
+                    seenFiles.add( decodeRipgrepValue( message.data.path ) );
+                }
             } );
-
+        } ).then( function()
+        {
             Array.from( seenFiles ).forEach( function( filePath )
             {
+                scheduler.schedule( function()
+                {
+                    assertGenerationActive( generation );
+
+                    var uri = vscode.Uri.file( filePath );
+                    if( isIncluded( uri ) !== true )
+                    {
+                        return;
+                    }
+
+                    return readWorkspaceFile( filePath ).then( function( text )
+                    {
+                        assertGenerationActive( generation );
+                        replaceSearchResults( uri, detection.scanTextWithContext( detection.createScanContext( uri, text, currentSettingsSnapshot ) ), store );
+                    } );
+                } );
+            } );
+
+            return scheduler.wait();
+        } );
+    }
+
+    function scanWorkspaceRegexMatches( rootPath, generation, store )
+    {
+        var scheduler = createTaskScheduler( currentSettingsSnapshot.readFileConcurrency );
+        var matchesByFile = new Map();
+        var submoduleExcludeGlobs = config.shouldIgnoreGitSubmodules() ? utils.getSubmoduleExcludeGlobs( rootPath ) : [];
+
+        function getFileMatches( filePath )
+        {
+            if( matchesByFile.has( filePath ) !== true )
+            {
+                matchesByFile.set( filePath, [] );
+            }
+
+            return matchesByFile.get( filePath );
+        }
+
+        function scheduleFileNormalization( filePath, fileMatches )
+        {
+            if( !filePath || !fileMatches || fileMatches.length === 0 )
+            {
+                return;
+            }
+
+            scheduler.schedule( function()
+            {
+                assertGenerationActive( generation );
+
                 var uri = vscode.Uri.file( filePath );
                 if( isIncluded( uri ) !== true )
                 {
                     return;
                 }
 
-                var text = readWorkspaceFile( filePath );
-                searchResults.replaceUriResults( uri, detection.scanText( uri, text ) );
-            } );
-        } );
-    }
-
-    function scanWorkspaceRegexMatches( rootPath )
-    {
-        return search( getOptions( rootPath ) ).then( function( matches )
-        {
-            var matchesByFile = new Map();
-
-            matches.forEach( function( match )
-            {
-                if( matchesByFile.has( match.fsPath ) !== true )
+                return readWorkspaceFile( filePath ).then( function( text )
                 {
-                    matchesByFile.set( match.fsPath, [] );
-                }
-                matchesByFile.get( match.fsPath ).push( match );
-            } );
+                    assertGenerationActive( generation );
 
+                    var scanContext = detection.createScanContext( uri, text, currentSettingsSnapshot );
+                    var normalized = fileMatches.map( function( match )
+                    {
+                        return detection.normalizeRegexMatchWithContext( scanContext, match );
+                    } ).filter( function( result )
+                    {
+                        return result !== undefined;
+                    } );
+
+                    replaceSearchResults( uri, normalized, store );
+                } );
+            } );
+        }
+
+        return ensureStorageDirectory().then( function()
+        {
+            return search( rootPath, getOptions( undefined, undefined, undefined, submoduleExcludeGlobs ), function( message )
+            {
+                assertGenerationActive( generation );
+
+                if( message.type === 'match' )
+                {
+                    var workspaceMatch = toWorkspaceMatch( message.data );
+                    getFileMatches( workspaceMatch.fsPath ).push( workspaceMatch );
+                }
+                else if( message.type === 'end' )
+                {
+                    var filePath = decodeRipgrepValue( message.data.path );
+                    var fileMatches = matchesByFile.get( filePath );
+                    matchesByFile.delete( filePath );
+                    scheduleFileNormalization( filePath, fileMatches );
+                }
+            } );
+        } ).then( function()
+        {
             matchesByFile.forEach( function( fileMatches, filePath )
             {
-                var uri = vscode.Uri.file( filePath );
-                if( isIncluded( uri ) !== true )
-                {
-                    return;
-                }
-
-                var text = readWorkspaceFile( filePath );
-                var normalized = fileMatches.map( function( match )
-                {
-                    return detection.normalizeRegexMatch( uri, text, match );
-                } ).filter( function( result )
-                {
-                    return result !== undefined;
-                } );
-
-                searchResults.replaceUriResults( uri, normalized );
+                scheduleFileNormalization( filePath, fileMatches );
             } );
+
+            return scheduler.wait();
         } );
     }
 
-    function applyGlobs()
+    function applyGlobs( store )
     {
-        var includeGlobs = getSetting( 'filtering.includeGlobs', [] );
-        var excludeGlobs = getSetting( 'filtering.excludeGlobs', [] );
+        var includeGlobs = currentSettingsSnapshot.includeGlobs;
+        var excludeGlobs = currentSettingsSnapshot.excludeGlobs;
 
-        var tempIncludeGlobs = context.workspaceState.get( 'includeGlobs' ) || [];
-        var tempExcludeGlobs = context.workspaceState.get( 'excludeGlobs' ) || [];
+        var tempIncludeGlobs = currentSettingsSnapshot.getTemporaryIncludeGlobs();
+        var tempExcludeGlobs = currentSettingsSnapshot.getTemporaryExcludeGlobs();
+        var resultsStore = getSearchResultsStore( store );
 
         if( includeGlobs.length + excludeGlobs.length + tempIncludeGlobs.length + tempExcludeGlobs.length > 0 )
         {
-            debug( "Applying globs to " + searchResults.count() + " items..." );
+            debug( "Applying globs to " + resultsStore.count() + " items..." );
 
-            searchResults.filter( function( match )
+            resultsStore.filter( function( match )
             {
                 return utils.isIncluded( match.uri.fsPath, includeGlobs.concat( tempIncludeGlobs ), excludeGlobs.concat( tempExcludeGlobs ) );
             } );
 
-            debug( "Remaining items: " + searchResults.count() );
+            debug( "Remaining items: " + resultsStore.count() );
         }
     }
 
-    function iterateSearchList( generation )
+    function iterateSearchList( generation, store )
     {
-        var workspaceConfig = detection.resolveResourceConfig();
+        var workspaceConfig = currentSettingsSnapshot.getResourceConfig();
 
         return searchList.reduce( function( promise, entry )
         {
@@ -1072,8 +1362,8 @@ function activate( context )
                 assertGenerationActive( generation );
 
                 var scanPromise = workspaceConfig.isDefaultRegex === true ?
-                    scanWorkspaceCandidates( entry ) :
-                    scanWorkspaceRegexMatches( entry );
+                    scanWorkspaceCandidates( entry, generation, store ) :
+                    scanWorkspaceRegexMatches( entry, generation, store );
 
                 return scanPromise.then( function()
                 {
@@ -1082,11 +1372,11 @@ function activate( context )
             } );
         }, Promise.resolve() ).then( function()
         {
-            debug( "Found " + searchResults.count() + " items" );
+            debug( "Found " + getSearchResultsCount( store ) + " items" );
 
             if( getSetting( 'filtering.passGlobsToRipgrep', true ) !== true )
             {
-                applyGlobs();
+                applyGlobs( store );
             }
         } );
     }
@@ -1144,34 +1434,28 @@ function activate( context )
 
         todoTreeView.message = "";
 
-        searchResults.clear();
         searchList = [];
-        provider.clear( vscode.workspace.workspaceFolders );
-        provider.rebuild();
+        nextSearchResults = searchResults.createStore();
 
         searchList = getWorkspaceSearchRoots();
 
-        if( config.shouldIgnoreGitSubmodules() )
-        {
-            var submoduleExcludeGlobs = [];
-            searchList.forEach( function( rootPath )
-            {
-                submoduleExcludeGlobs = submoduleExcludeGlobs.concat( utils.getSubmoduleExcludeGlobs( rootPath ) );
-            } );
-            context.workspaceState.update( 'submoduleExcludeGlobs', submoduleExcludeGlobs );
-        }
-
-        return iterateSearchList( generation ).then( function()
+        return iterateSearchList( generation, nextSearchResults ).then( function()
         {
             assertGenerationActive( generation );
-            refreshOpenFiles( searchList );
+            refreshOpenFiles( searchList, nextSearchResults );
             assertGenerationActive( generation );
-            applyDirtyResultsToTree( { fullSort: true, refilterAll: needsFullFilter } );
+            provider.clear( vscode.workspace.workspaceFolders );
+            provider.rebuild();
+            activeSearchResults = nextSearchResults;
+            nextSearchResults = undefined;
+            applyDirtyResultsToTree( { fullSort: true, refilterAll: needsFullFilter }, activeSearchResults );
         } ).catch( function( error )
         {
+            nextSearchResults = undefined;
+
             if( isCancelledError( error ) !== true )
             {
-                applyDirtyResultsToTree( { fullSort: true, refilterAll: needsFullFilter } );
+                applyDirtyResultsToTree( { fullSort: false, refilterAll: false }, activeSearchResults );
             }
         } ).finally( function()
         {
@@ -1387,8 +1671,8 @@ function activate( context )
             return;
         }
 
-        refreshScanTarget( document );
-        applyDirtyResultsToTree();
+        refreshScanTarget( document, activeSearchResults );
+        applyDirtyResultsToTree( undefined, activeSearchResults );
     }
 
     function shouldRefreshFile()
@@ -1473,11 +1757,11 @@ function activate( context )
 
     function refresh()
     {
-        searchResults.markAsNotAdded();
+        activeSearchResults.markAsNotAdded();
 
         provider.clear( vscode.workspace.workspaceFolders );
         provider.rebuild();
-        applyDirtyResultsToTree( { fullSort: true, refilterAll: currentFilter !== undefined && currentFilter !== "" } );
+        applyDirtyResultsToTree( { fullSort: true, refilterAll: currentFilter !== undefined && currentFilter !== "" }, activeSearchResults );
     }
 
     function clearExpansionStateAndRefresh()
@@ -2154,19 +2438,32 @@ function activate( context )
         {
             function purgeFolder( folder )
             {
-                fs.readdir( folder, function( err, files )
+                if( !folder )
                 {
-                    files.map( function( file )
+                    return Promise.resolve();
+                }
+
+                return fs.promises.readdir( folder ).then( function( files )
+                {
+                    return Promise.all( files.map( function( file )
                     {
-                        fs.unlinkSync( path.join( folder, file ) );
-                    } );
+                        return fs.promises.unlink( path.join( folder, file ) );
+                    } ) );
+                } ).catch( function( error )
+                {
+                    if( error && error.code === 'ENOENT' )
+                    {
+                        return;
+                    }
+
+                    throw error;
                 } );
             }
 
             context.workspaceState.update( 'includeGlobs', [] );
             context.workspaceState.update( 'excludeGlobs', [] );
             context.workspaceState.update( 'expandedNodes', {} );
-            context.workspaceState.update( 'submoduleExcludeGlobs', [] );
+            utils.clearSubmoduleExcludeGlobCache();
             context.workspaceState.update( 'currentFilter', undefined );
             context.workspaceState.update( 'filtered', undefined );
             context.workspaceState.update( 'tagsOnly', undefined );
@@ -2179,8 +2476,13 @@ function activate( context )
             context.globalState.update( 'ignoreMarkdownUpdate', undefined );
             context.globalState.update( legacySettingImportMarker, undefined );
 
-            purgeFolder( context.storageUri.fsPath );
-            purgeFolder( context.globalStorageUri.fsPath );
+            Promise.all( [
+                purgeFolder( context.storageUri && context.storageUri.fsPath ),
+                purgeFolder( context.globalStorageUri && context.globalStorageUri.fsPath )
+            ] ).catch( function( error )
+            {
+                vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": Failed to reset cache contents (" + error.message + ")" );
+            } );
         } );
 
         registerCommandPair( 'resetAllFilters', function()
@@ -2487,7 +2789,8 @@ function activate( context )
 
                     if( !keep )
                     {
-                        searchResults.remove( document.uri );
+                        removeSearchResults( document.uri, activeSearchResults );
+                        documentScanCache.deleteByUri( document.uri );
 
                         if( scanInFlight === true )
                         {
@@ -2495,7 +2798,7 @@ function activate( context )
                         }
                         else
                         {
-                            applyDirtyResultsToTree();
+                            applyDirtyResultsToTree( undefined, activeSearchResults );
                         }
                     }
                 }
@@ -2554,6 +2857,11 @@ function activate( context )
                 e.affectsConfiguration( 'files.exclude' ) ||
                 e.affectsConfiguration( 'explorer.compactFolders' ) )
             {
+                rebuildSettingsSnapshot();
+                documentScanCache.clear();
+                utils.clearSubmoduleExcludeGlobCache();
+                highlights.resetCaches();
+
                 if( identity.affectsSetting( e, 'regex.regex' ) )
                 {
                     return;

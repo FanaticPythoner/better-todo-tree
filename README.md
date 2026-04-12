@@ -1,18 +1,28 @@
 # Better Todo Tree
 
-**The actively maintained, high-performance fork of Todo Tree.**
+**The actively maintained, extremely fast, drop-in replacement fork of Todo Tree.**
 
-The original Todo Tree extension is abandoned. Better Todo Tree is a complete, drop-in replacement engineered for modern VS Code. It preserves the exact workflow developers rely on while resolving long-standing bugs and optimizing performance for massive codebases.
+Todo Tree is THE visual map I rely on to track every scattered issue across projects. When upstream stopped being maintained, new and existing bugs 🐛 took root and started choking the extension. Before it became firewood 🪵, I took over to modernize the core, clear the rot, and make it lightning fast ⚡.
 
-This project is built for professionals who need their tooling to be fast, reliable, and continuously supported.
+**Optimized the regex scan by 12,000ms (so you don't have time to feel guilty for not fixing them... 🥀)**
 
-**Why switch?**
+| Target | Before | After | Latency | What changed |
+| --- | ---: | ---: | --- | --- |
+| **Custom Regex Scans** | 12,304.66 ms | 8.99 ms | **-99.9%** 🚀 | Reused file contexts |
+| **Highlight Lookups** *(per 1,000 attributes)* | 58.89 ms | 0.05 ms | **-99.9%** 🚀 | Crushed lookup overhead |
+| **Editor Latency** | 25 renders | 1 render | **-96%** 🚀 | Collapsed redundant decorations |
+| **Tree Rendering** | 6.98 ms | 3.41 ms | **-51.1%** 🔥 | Cached subtree counts |
+| **Workspace Scans** | 173.18 ms | 105.75 ms | **-38.9%** 🔥 | `ripgrep` JSON streaming |
+| **Peak Memory (RSS)** | 197.30 MiB | 120.48 MiB | **-38.9%** 🔥 | Cut peak memory pressure |
 
-  * **Seamless Migration:** Fully compatible with your existing configuration. Install the extension and keep working.
-  * **Optimized Internals:** Upgraded ripgrep integration and rendering logic for faster workspace scanning and lower CPU usage.
-  * **Active Development:** Regular updates ensure absolute compatibility with the latest VS Code releases. Issues are reviewed and bugs are patched quickly.
-  * **Independent & Active:** I took over this project to ensure a tool highly relied on doesn't rot. Keeping it fast, bug-free, secure, and updated takes real time. If this extension helps you out, grab me a coffee so that I can keep it up! 😁
-  ☕ [**buymeacoffee.com/FanaticPythoner**](https://buymeacoffee.com/FanaticPythoner)
+... And it's just getting warmed up!
+
+**Why this fork exists**
+
+  * **Drop-in Ready 🤝:** Zero friction. Same workflow. Same exact settings.
+  * **Bulletproof Fixes 🛡️:** Notebook behavior, scan parity, strict regex handling, and modern VS Code compatibility actually move forward.
+  * **Alive & Active 💖:** Keeping this project alive takes a lot of time and, predictably, more coffee than I'd like to admit (caffeine or rent? Who knows what it will be next week 💀 #tariffs). If you're in the same boat:  
+  `// TODO: ☕ buy the Better Todo Tree guy a coffee` → [buymeacoffee.com/FanaticPythoner](https://buymeacoffee.com/FanaticPythoner)
 
 **Links:**
 

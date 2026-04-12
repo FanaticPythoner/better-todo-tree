@@ -1,7 +1,7 @@
 var micromatch = require( 'micromatch' );
 var os = require( 'os' );
 var path = require( 'path' );
-var find = require( 'find' );
+var fs = require( 'fs' );
 var strftime = require( 'fast-strftime' );
 var commentPatterns = require( 'comment-patterns' );
 
@@ -9,6 +9,8 @@ var colourNames = require( './colourNames.js' );
 var themeColourNames = require( './themeColourNames.js' );
 
 var config;
+var tagRegexSourceCache = new Map();
+var submoduleExcludeGlobCache = new Map();
 
 var DEFAULT_REGEX_SOURCE = '(^|//|#|<!--|;|/\\*|^[ \\t]*(-|\\d+.))\\s*(?=\\[x\\]|\\[ \\]|[A-Za-z0-9_])($TAGS)(?![A-Za-z0-9_])';
 var COMMENT_PATTERN_FILE_ALIASES = Object.freeze( {
@@ -24,6 +26,8 @@ var placeholderRegex = new RegExp( "(\\$\\{.*\\})" );
 function init( configuration )
 {
     config = configuration;
+    tagRegexSourceCache = new Map();
+    submoduleExcludeGlobCache = new Map();
 }
 
 function isHexColour( colour )
@@ -225,11 +229,19 @@ function escapeRegexLiteral( value )
 function getTagRegexSource( uri, tagList )
 {
     var tags = ( tagList || config.tags() ).slice().sort().reverse();
+    var cacheKey = tags.join( '\u0000' );
+
+    if( tagRegexSourceCache.has( cacheKey ) )
+    {
+        return tagRegexSourceCache.get( cacheKey );
+    }
+
     tags = tags.map( function( tag )
     {
         return escapeRegexLiteral( tag );
     } );
     tags = tags.join( '|' );
+    tagRegexSourceCache.set( cacheKey, tags );
     return tags;
 }
 
@@ -246,9 +258,34 @@ function getResourceConfig( uri )
     };
 }
 
-function extractTag( text, matchOffset, uri, preferredTagOffset )
+function resolveResourceConfig( uri, options )
 {
-    var resourceConfig = getResourceConfig( uri );
+    return options && options.resourceConfig ? options.resourceConfig : getResourceConfig( uri );
+}
+
+function resolveTagRegex( uri, resourceConfig, flags, options )
+{
+    if( options && options.tagRegex )
+    {
+        return options.tagRegex;
+    }
+
+    return new RegExp( '(' + getTagRegexSource( uri, resourceConfig.tags ) + ')', flags );
+}
+
+function resolveSubTagRegex( resourceConfig, flags, options )
+{
+    if( options && options.subTagRegex )
+    {
+        return options.subTagRegex;
+    }
+
+    return new RegExp( resourceConfig.subTagRegex, flags );
+}
+
+function extractTag( text, matchOffset, uri, preferredTagOffset, options )
+{
+    var resourceConfig = resolveResourceConfig( uri, options );
     var flags = resourceConfig.regexCaseSensitive ? '' : 'i';
     var tagMatch = null;
     var tagOffset;
@@ -260,8 +297,8 @@ function extractTag( text, matchOffset, uri, preferredTagOffset )
 
     if( resourceConfig.regex.indexOf( "$TAGS" ) > -1 )
     {
-        var tagRegex = new RegExp( '(' + getTagRegexSource( uri, resourceConfig.tags ) + ')', flags );
-        var subTagRegex = new RegExp( resourceConfig.subTagRegex, flags );
+        var tagRegex = resolveTagRegex( uri, resourceConfig, flags, options );
+        var subTagRegex = resolveSubTagRegex( resourceConfig, flags, options );
         if( preferredTagOffset !== undefined )
         {
             var globalTagRegex = new RegExp( tagRegex.source, flags + 'g' );
@@ -328,7 +365,7 @@ function extractTag( text, matchOffset, uri, preferredTagOffset )
     }
     if( tagMatch === null && resourceConfig.regex.trim() !== "" )
     {
-        var regex = new RegExp( resourceConfig.regex, flags );
+        var regex = options && options.regex ? options.regex : new RegExp( resourceConfig.regex, flags );
         var match = regex.exec( text );
         if( match !== null )
         {
@@ -351,14 +388,14 @@ function extractTag( text, matchOffset, uri, preferredTagOffset )
     };
 }
 
-function updateBeforeAndAfter( result, text, matchOffset, uri )
+function updateBeforeAndAfter( result, text, matchOffset, uri, options )
 {
-    var resourceConfig = getResourceConfig( uri );
+    var resourceConfig = resolveResourceConfig( uri, options );
     var flags = resourceConfig.regexCaseSensitive ? '' : 'i';
     var tagMatch = null;
 
-    var tagRegex = new RegExp( '(' + getTagRegexSource( uri, resourceConfig.tags ) + ')', flags );
-    var subTagRegex = new RegExp( resourceConfig.subTagRegex, flags );
+    var tagRegex = resolveTagRegex( uri, resourceConfig, flags, options );
+    var subTagRegex = resolveSubTagRegex( resourceConfig, flags, options );
     tagMatch = tagRegex.exec( text );
     if( tagMatch )
     {
@@ -389,10 +426,10 @@ function updateBeforeAndAfter( result, text, matchOffset, uri )
 
 function getRegexSource( uri )
 {
-    var regex = getResourceConfig( uri ).regex;
+    var regex = resolveResourceConfig( uri ).regex;
     if( regex.indexOf( "($TAGS)" ) > -1 )
     {
-        regex = regex.split( "($TAGS)" ).join( '(' + getTagRegexSource( uri ) + ')' );
+        regex = regex.split( "($TAGS)" ).join( '(' + getTagRegexSource( uri, resolveResourceConfig( uri ).tags ) + ')' );
     }
 
     return regex;
@@ -402,15 +439,16 @@ function getRegexForEditorSearch( global, uri, options )
 {
     var flags = 'm';
     options = options || {};
+    var resourceConfig = resolveResourceConfig( uri, options );
     if( global )
     {
         flags += 'g';
     }
-    if( getResourceConfig( uri ).regexCaseSensitive === false )
+    if( resourceConfig.regexCaseSensitive === false )
     {
         flags += 'i';
     }
-    if( getResourceConfig( uri ).enableMultiLine === true )
+    if( resourceConfig.enableMultiLine === true )
     {
         flags += 's';
     }
@@ -419,7 +457,15 @@ function getRegexForEditorSearch( global, uri, options )
         flags += 'd';
     }
 
-    var source = getRegexSource( uri );
+    var source = options.regexSource || ( function()
+    {
+        var regex = resourceConfig.regex;
+        if( regex.indexOf( "($TAGS)" ) > -1 )
+        {
+            regex = regex.split( "($TAGS)" ).join( '(' + getTagRegexSource( uri, resourceConfig.tags ) + ')' );
+        }
+        return regex;
+    }() );
     return RegExp( source, flags );
 }
 
@@ -517,18 +563,52 @@ function createFolderGlob( folderPath, rootPath, filter )
     return ( folderPath + filter ).replace( /\/\//g, '/' );
 }
 
+function normalizeGlobPath( value )
+{
+    return value.replace( /\\/g, '/' );
+}
+
+function readGitmodulesPaths( rootPath )
+{
+    var gitmodulesPath = path.join( rootPath, '.gitmodules' );
+
+    if( fs.existsSync( gitmodulesPath ) !== true )
+    {
+        return [];
+    }
+
+    return fs.readFileSync( gitmodulesPath, 'utf8' )
+        .split( /\r?\n/ )
+        .map( function( line )
+        {
+            var match = /^\s*path\s*=\s*(.+?)\s*$/.exec( line );
+            return match ? match[ 1 ] : undefined;
+        } )
+        .filter( function( submodulePath )
+        {
+            return typeof ( submodulePath ) === 'string' && submodulePath.length > 0;
+        } );
+}
+
 function getSubmoduleExcludeGlobs( rootPath )
 {
-    var submodules = find.fileSync( '.git', rootPath );
-    submodules = submodules.map( function( submodule )
+    if( submoduleExcludeGlobCache.has( rootPath ) )
     {
-        return path.dirname( submodule );
-    } );
-    submodules = submodules.filter( function( submodule )
+        return submoduleExcludeGlobCache.get( rootPath ).slice();
+    }
+
+    var submodules = readGitmodulesPaths( rootPath ).map( function( submodulePath )
     {
-        return submodule != rootPath;
+        return normalizeGlobPath( submodulePath ) + '/**';
     } );
-    return submodules;
+
+    submoduleExcludeGlobCache.set( rootPath, submodules );
+    return submodules.slice();
+}
+
+function clearSubmoduleExcludeGlobCache()
+{
+    submoduleExcludeGlobCache.clear();
 }
 
 function isHidden( filename )
@@ -652,6 +732,7 @@ module.exports.isIncluded = isIncluded;
 module.exports.formatLabel = formatLabel;
 module.exports.createFolderGlob = createFolderGlob;
 module.exports.getSubmoduleExcludeGlobs = getSubmoduleExcludeGlobs;
+module.exports.clearSubmoduleExcludeGlobCache = clearSubmoduleExcludeGlobCache;
 module.exports.isHidden = isHidden;
 module.exports.expandTilde = expandTilde;
 module.exports.replaceEnvironmentVariables = replaceEnvironmentVariables;

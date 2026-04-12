@@ -5,8 +5,6 @@ var events = require( 'events' );
 var childProcess = require( 'child_process' );
 
 var ripgrep = require( '../src/ripgrep.js' );
-var utils = require( '../src/utils.js' );
-var stubs = require( './stubs.js' );
 
 function createFakeProcess()
 {
@@ -20,6 +18,11 @@ function createFakeProcess()
     return process;
 }
 
+function createJsonLine( payload )
+{
+    return JSON.stringify( payload ) + '\n';
+}
+
 QUnit.module( "ripgrep streaming search", function( hooks )
 {
     var originalSpawn;
@@ -27,12 +30,9 @@ QUnit.module( "ripgrep streaming search", function( hooks )
 
     hooks.beforeEach( function()
     {
-        var testConfig = stubs.getTestConfig();
-        utils.init( testConfig );
-
         originalSpawn = childProcess.spawn;
         fakeRgPath = path.join( os.tmpdir(), 'todo-tree-rg-test' );
-        fs.writeFileSync( fakeRgPath, '' );
+        fs.writeFileSync( fakeRgPath, '', { mode: 0o755 } );
     } );
 
     hooks.afterEach( function()
@@ -54,16 +54,58 @@ QUnit.module( "ripgrep streaming search", function( hooks )
         );
     } );
 
-    QUnit.test( "search parses streamed output across chunk boundaries", function( assert )
+    QUnit.test( "search parses streamed json messages across chunk boundaries", function( assert )
     {
+        var seenMessages = [];
+
         childProcess.spawn = function()
         {
             var fakeProcess = createFakeProcess();
+            var firstLine = createJsonLine( {
+                type: 'match',
+                data: {
+                    path: { text: '/tmp/file.js' },
+                    lines: { text: 'TODO first' },
+                    line_number: 1,
+                    absolute_offset: 0,
+                    submatches: [ {
+                        match: { text: 'TODO first' },
+                        start: 0,
+                        end: 10
+                    } ]
+                }
+            } );
 
             process.nextTick( function()
             {
-                fakeProcess.stdout.emit( 'data', Buffer.from( '/tmp/file.js:1:1:TODO first\n/tmp/file.js:2:3:FIX' ) );
-                fakeProcess.stdout.emit( 'data', Buffer.from( 'ME second\n' ) );
+                fakeProcess.stdout.emit( 'data', Buffer.from( firstLine.slice( 0, 40 ) ) );
+                fakeProcess.stdout.emit( 'data', Buffer.from( firstLine.slice( 40 ) ) );
+                fakeProcess.stdout.emit( 'data', Buffer.from(
+                    createJsonLine( {
+                        type: 'match',
+                        data: {
+                            path: { text: '/tmp/file.js' },
+                            lines: { text: 'FIXME second' },
+                            line_number: 2,
+                            absolute_offset: 12,
+                            submatches: [ {
+                                match: { text: 'FIXME second' },
+                                start: 0,
+                                end: 13
+                            } ]
+                        }
+                    } )
+                ) );
+                fakeProcess.stdout.emit( 'data', Buffer.from(
+                    createJsonLine( {
+                        type: 'summary',
+                        data: {
+                            stats: {
+                                matches: 2
+                            }
+                        }
+                    } )
+                ) );
                 fakeProcess.emit( 'close', 0, null );
             } );
 
@@ -77,55 +119,16 @@ QUnit.module( "ripgrep streaming search", function( hooks )
             additional: '',
             globs: [],
             multiline: false
-        } ).then( function( matches )
+        }, function( message )
         {
-            assert.equal( matches.length, 2 );
-            assert.equal( matches[ 0 ].fsPath, '/tmp/file.js' );
-            assert.equal( matches[ 0 ].line, 1 );
-            assert.equal( matches[ 1 ].match, 'FIXME second' );
-        } );
-    } );
-
-    QUnit.test( "search groups multiline streamed output into one logical match for remote-style paths", function( assert )
-    {
-        var testConfig = stubs.getTestConfig();
-        testConfig.tagList = [ 'TODO' ];
-        testConfig.regexSource = '($TAGS):[\\s\\S]*?END';
-        testConfig.enableMultiLineFlag = true;
-        utils.init( testConfig );
-
-        childProcess.spawn = function()
+            seenMessages.push( message );
+        } ).then( function( summary )
         {
-            var fakeProcess = createFakeProcess();
-
-            process.nextTick( function()
-            {
-                fakeProcess.stdout.emit( 'data', Buffer.from(
-                    '/home/azureuser/localfiles/my-project/pipeline-deploy-api-policies.yaml:1:1:TODO: first\n' +
-                    '/home/azureuser/localfiles/my-project/pipeline-deploy-api-policies.yaml:2:1:second\n'
-                ) );
-                fakeProcess.stdout.emit( 'data', Buffer.from(
-                    '/home/azureuser/localfiles/my-project/pipeline-deploy-api-policies.yaml:3:1:END\n'
-                ) );
-                fakeProcess.emit( 'close', 0, null );
-            } );
-
-            return fakeProcess;
-        };
-
-        return ripgrep.search( '/', {
-            rgPath: fakeRgPath,
-            regex: '($TAGS):[\\s\\S]*?END',
-            unquotedRegex: '($TAGS):[\\s\\S]*?END',
-            additional: '',
-            globs: [],
-            multiline: true
-        } ).then( function( matches )
-        {
-            assert.equal( matches.length, 1 );
-            assert.equal( matches[ 0 ].fsPath, '/home/azureuser/localfiles/my-project/pipeline-deploy-api-policies.yaml' );
-            assert.equal( matches[ 0 ].match, 'TODO: first' );
-            assert.deepEqual( matches[ 0 ].extraLines.map( function( line ) { return line.match; } ), [ 'second', 'END' ] );
+            assert.equal( seenMessages.length, 3 );
+            assert.equal( seenMessages[ 0 ].type, 'match' );
+            assert.equal( seenMessages[ 0 ].data.path.text, '/tmp/file.js' );
+            assert.equal( seenMessages[ 1 ].data.lines.text, 'FIXME second' );
+            assert.equal( summary.stats.matches, 2 );
         } );
     } );
 
@@ -133,7 +136,12 @@ QUnit.module( "ripgrep streaming search", function( hooks )
     {
         childProcess.spawn = function()
         {
-            return createFakeProcess();
+            var fakeProcess = createFakeProcess();
+            process.nextTick( function()
+            {
+                ripgrep.kill();
+            } );
+            return fakeProcess;
         };
 
         var promise = ripgrep.search( '/', {
@@ -150,8 +158,6 @@ QUnit.module( "ripgrep streaming search", function( hooks )
         {
             assert.equal( error.cancelled, true );
         } );
-
-        ripgrep.kill();
 
         return promise;
     } );
@@ -190,7 +196,7 @@ QUnit.module( "ripgrep streaming search", function( hooks )
         var seenExecutable;
         var spacedRgPath = path.join( os.tmpdir(), 'todo tree (rg binary)' );
 
-        fs.writeFileSync( spacedRgPath, '' );
+        fs.writeFileSync( spacedRgPath, '', { mode: 0o755 } );
 
         childProcess.spawn = function( executable )
         {
@@ -219,6 +225,50 @@ QUnit.module( "ripgrep streaming search", function( hooks )
             if( fs.existsSync( spacedRgPath ) )
             {
                 fs.unlinkSync( spacedRgPath );
+            }
+        } );
+    } );
+
+    QUnit.test( "cleanup failures surface as ripgrep errors", function( assert )
+    {
+        var originalUnlink = fs.promises.unlink;
+        var patternFilePath = path.join( os.tmpdir(), 'todo-tree-pattern-test.txt' );
+
+        fs.promises.unlink = function()
+        {
+            return Promise.reject( Object.assign( new Error( 'unlink failed' ), { code: 'EPERM' } ) );
+        };
+
+        childProcess.spawn = function()
+        {
+            var fakeProcess = createFakeProcess();
+            process.nextTick( function()
+            {
+                fakeProcess.emit( 'close', 1, null );
+            } );
+            return fakeProcess;
+        };
+
+        return ripgrep.search( '/', {
+            rgPath: fakeRgPath,
+            regex: '(TODO)',
+            unquotedRegex: '(TODO)',
+            additional: '',
+            globs: [],
+            multiline: false,
+            patternFilePath: patternFilePath
+        } ).then( function()
+        {
+            assert.ok( false, 'expected cleanup failure' );
+        }, function( error )
+        {
+            assert.ok( /unlink failed/.test( error.message ) );
+        } ).finally( function()
+        {
+            fs.promises.unlink = originalUnlink;
+            if( fs.existsSync( patternFilePath ) )
+            {
+                fs.unlinkSync( patternFilePath );
             }
         } );
     } );

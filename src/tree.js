@@ -142,7 +142,9 @@ function createWorkspaceRootNode( folder )
         id: "workspace:" + ( folder.uri.scheme === 'file' ? folder.uri.fsPath : ( folder.uri.authority + folder.uri.fsPath ) ),
         visible: true,
         isFolder: true,
-        parent: undefined
+        parent: undefined,
+        todoCount: 0,
+        visibleTodoCount: 0
     };
     return node;
 }
@@ -173,7 +175,9 @@ function createPathNode( folder, pathElements, isFolder, subTag, tag )
         isFolder: isFolder,
         subTag: subTag,
         tag: tag,
-        parent: undefined
+        parent: undefined,
+        todoCount: 0,
+        visibleTodoCount: 0
     };
 }
 
@@ -190,7 +194,9 @@ function createFlatNode( fsPath, rootNode, tag, subTag )
         nodes: [],
         id: "path:" + ( rootNode ? rootNode.fsPath : '' ) + ":" + relativePath.replace( /\\/g, '/' ) + ":" + ( tag || '' ) + ":" + ( subTag || '' ),
         visible: true,
-        parent: undefined
+        parent: undefined,
+        todoCount: 0,
+        visibleTodoCount: 0
     };
 }
 
@@ -205,7 +211,9 @@ function createTagNode( tag )
         id: "path:::" + tag + ":",
         tag: tag,
         visible: true,
-        parent: undefined
+        parent: undefined,
+        todoCount: 0,
+        visibleTodoCount: 0
     };
 }
 
@@ -221,7 +229,9 @@ function createSubTagNode( subTag )
         subTag: subTag,
         visible: true,
         isFolder: true,
-        parent: undefined
+        parent: undefined,
+        todoCount: 0,
+        visibleTodoCount: 0
     };
 }
 
@@ -259,7 +269,9 @@ function createTodoNode( result )
         fullText: fullText,
         id: "todo:" + result.uri.fsPath + sourceIdSegment + ":" + result.line + ":" + result.column + ":" + result.actualTag,
         visible: true,
-        parent: undefined
+        parent: undefined,
+        todoCount: 1,
+        visibleTodoCount: 1
     };
 
     return todo;
@@ -387,50 +399,6 @@ function locateTreeChildNode( rootNode, pathElements, tag, subTag )
     return childNode;
 }
 
-function countTags( child, tagCounts, forStatusBar, fileFilter )
-{
-    function countTag( node )
-    {
-        if( isTodoNode( node ) )
-        {
-            var tag = node.tag ? node.tag : "TODO";
-            if( isVisible( node ) && ( !fileFilter || fileFilter === node.fsPath ) )
-            {
-                var hide = false;
-
-                if( forStatusBar && config.shouldHideFromStatusBar( tag ) )
-                {
-                    hide = true;
-                }
-
-                if( !forStatusBar && config.shouldHideFromActivityBar( tag ) )
-                {
-                    hide = true;
-                }
-
-                if( !hide )
-                {
-                    tagCounts[ tag ] = tagCounts[ tag ] === undefined ? 1 : tagCounts[ tag ] + 1;
-                }
-            }
-        }
-    }
-
-    countTag( child );
-
-    if( child.nodes !== undefined )
-    {
-        countChildTags( child.nodes.filter( isPathNode ), tagCounts, forStatusBar, fileFilter );
-        child.nodes.filter( isTodoNode ).map( function( node ) { countTag( node ); } );
-    }
-}
-
-function countChildTags( children, tagCounts, forStatusBar, fileFilter )
-{
-    children.map( function( child ) { return countTags( child, tagCounts, forStatusBar, fileFilter ); } );
-    return tagCounts;
-}
-
 function cloneTagCounts( counts )
 {
     return Object.assign( {}, counts );
@@ -489,12 +457,15 @@ class TreeNodeProvider
 
         expandedNodes = _context.workspaceState.get( 'expandedNodes', {} );
         this._documentEntries = new Map();
+        this._nodesByFsPath = new Map();
         this._statusBarCounts = {};
         this._activityBarCounts = {};
         this._statusBarCountsByFile = new Map();
         this._pendingCountUris = new Set();
         this._dirtyRoots = new Set();
         this._rootListDirty = false;
+        this._pendingRefreshRoots = undefined;
+        this._expandedStateWriteHandle = undefined;
     }
 
     getChildren( node )
@@ -619,15 +590,7 @@ class TreeNodeProvider
 
     getTreeItem( node )
     {
-        var treeItem;
-        try
-        {
-            treeItem = new vscode.TreeItem( node.label + ( node.pathLabel ? ( " " + node.pathLabel ) : "" ) );
-        }
-        catch( e )
-        {
-            console.log( "Failed to create tree item: " + e );
-        }
+        var treeItem = new vscode.TreeItem( node.label + ( node.pathLabel ? ( " " + node.pathLabel ) : "" ) );
 
         treeItem.id = node.id;
         treeItem.fsPath = node.fsPath;
@@ -764,10 +727,7 @@ class TreeNodeProvider
 
         if( config.shouldShowCounts() && isPathNode( node ) )
         {
-            var tagCounts = {};
-            countTags( node, tagCounts, false );
-            var total = Object.values( tagCounts ).reduce( function( a, b ) { return a + b; }, 0 );
-            treeItem.description = total.toString();
+            treeItem.description = String( node.visibleTodoCount || 0 );
         }
 
         if( node.isFolder === true )
@@ -849,6 +809,96 @@ class TreeNodeProvider
         }
     }
 
+    _registerNode( node )
+    {
+        if( !node || !node.fsPath )
+        {
+            return;
+        }
+
+        if( !this._nodesByFsPath.has( node.fsPath ) )
+        {
+            this._nodesByFsPath.set( node.fsPath, new Set() );
+        }
+
+        this._nodesByFsPath.get( node.fsPath ).add( node );
+    }
+
+    _registerBranch( node )
+    {
+        var current = node;
+
+        while( current )
+        {
+            this._registerNode( current );
+            current = current.parent;
+        }
+    }
+
+    _unregisterNode( node )
+    {
+        if( !node || !node.fsPath || !this._nodesByFsPath.has( node.fsPath ) )
+        {
+            return;
+        }
+
+        var bucket = this._nodesByFsPath.get( node.fsPath );
+        bucket.delete( node );
+
+        if( bucket.size === 0 )
+        {
+            this._nodesByFsPath.delete( node.fsPath );
+        }
+    }
+
+    _updateAncestorCounts( node, todoDelta, visibleTodoDelta )
+    {
+        var current = node;
+
+        while( current )
+        {
+            current.todoCount = ( current.todoCount || 0 ) + todoDelta;
+            current.visibleTodoCount = ( current.visibleTodoCount || 0 ) + visibleTodoDelta;
+            current = current.parent;
+        }
+    }
+
+    _scheduleExpandedNodesWrite()
+    {
+        clearTimeout( this._expandedStateWriteHandle );
+        this._expandedStateWriteHandle = setTimeout( function()
+        {
+            this._expandedStateWriteHandle = undefined;
+            this._context.workspaceState.update( 'expandedNodes', expandedNodes );
+        }.bind( this ), 0 );
+    }
+
+    _applyFilterToNode( node, matcher )
+    {
+        if( isTodoNode( node ) )
+        {
+            var matches = matcher ? matcher.test( node.label ) : true;
+            node.visible = node.hidden !== true && matches;
+            node.visibleTodoCount = node.visible === true ? 1 : 0;
+            return node.visibleTodoCount;
+        }
+
+        var visibleTodoCount = 0;
+
+        if( node.nodes !== undefined )
+        {
+            node.nodes.forEach( function( child )
+            {
+                visibleTodoCount += this._applyFilterToNode( child, matcher );
+            }, this );
+        }
+
+        node.visibleTodoCount = visibleTodoCount;
+        node.visible = node.hidden !== true && ( node.nodes === undefined || visibleTodoCount > 0 );
+
+        return visibleTodoCount;
+    }
+
     _removeNodeFromParent( node )
     {
         if( node.parent && node.parent.nodes )
@@ -857,6 +907,7 @@ class TreeNodeProvider
             {
                 return child !== node;
             } );
+            this._unregisterNode( node );
             this._markRootDirty( node.parent );
         }
         else
@@ -865,6 +916,7 @@ class TreeNodeProvider
             {
                 return child !== node;
             } );
+            this._unregisterNode( node );
             this._rootListDirty = true;
         }
     }
@@ -876,7 +928,7 @@ class TreeNodeProvider
         {
             var parent = current.parent;
             delete expandedNodes[ current.fsPath ];
-            this._context.workspaceState.update( 'expandedNodes', expandedNodes );
+            this._scheduleExpandedNodesWrite();
             this._removeNodeFromParent( current );
             current = parent;
         }
@@ -1031,6 +1083,8 @@ class TreeNodeProvider
         var affectedParents = new Set();
         entry.todos.forEach( function( todoNode )
         {
+            this._updateAncestorCounts( todoNode.parent, -1, todoNode.visible === true ? -1 : 0 );
+            this._unregisterNode( todoNode );
             if( todoNode.parent )
             {
                 todoNode.parent.nodes = todoNode.parent.nodes.filter( function( child )
@@ -1067,12 +1121,19 @@ class TreeNodeProvider
 
         addWorkspaceFolders();
         this._documentEntries.clear();
+        this._nodesByFsPath.clear();
         this._statusBarCounts = {};
         this._activityBarCounts = {};
         this._statusBarCountsByFile.clear();
         this._pendingCountUris.clear();
         this._dirtyRoots.clear();
         this._rootListDirty = false;
+        this._pendingRefreshRoots = undefined;
+
+        nodes.forEach( function( node )
+        {
+            this._registerNode( node );
+        }, this );
     }
 
     rebuild()
@@ -1082,36 +1143,35 @@ class TreeNodeProvider
     refresh()
     {
         treeHasSubTags = false;
-        this._onDidChangeTreeData.fire();
+        if( this._pendingRefreshRoots === undefined )
+        {
+            this._onDidChangeTreeData.fire();
+        }
+        else
+        {
+            this._onDidChangeTreeData.fire(
+                this._pendingRefreshRoots.length === 0 ?
+                    undefined :
+                    ( this._pendingRefreshRoots.length === 1 ? this._pendingRefreshRoots[ 0 ] : this._pendingRefreshRoots )
+            );
+        }
+
+        this._pendingRefreshRoots = undefined;
     }
 
     filter( text, children )
     {
-        var matcher = new RegExp( text, config.showFilterCaseSensitive() ? "" : "i" );
-
         if( children === undefined )
         {
             currentFilter = text;
             children = nodes;
         }
-        children.forEach( child =>
-        {
-            if( child.type === TODO )
-            {
-                var match = matcher.test( child.label );
-                child.visible = !text || match;
-            }
 
-            if( child.nodes !== undefined )
-            {
-                this.filter( text, child.nodes );
-            }
-            if( child.nodes && child.nodes.length > 0 )
-            {
-                var visibleNodes = child.nodes ? child.nodes.filter( isVisible ).length : 0;
-                child.visible = visibleNodes > 0;
-            }
-        } );
+        var matcher = text ? new RegExp( text, config.showFilterCaseSensitive() ? "" : "i" ) : undefined;
+        children.forEach( function( child )
+        {
+            this._applyFilterToNode( child, matcher );
+        }, this );
     }
 
     clearTreeFilter( children )
@@ -1124,11 +1184,7 @@ class TreeNodeProvider
         }
         children.forEach( function( child )
         {
-            child.visible = true;
-            if( child.nodes !== undefined )
-            {
-                this.clearTreeFilter( child.nodes );
-            }
+            this._applyFilterToNode( child, undefined );
         }, this );
     }
 
@@ -1182,6 +1238,7 @@ class TreeNodeProvider
         }
 
         this._recalculatePendingCounts();
+        this._pendingRefreshRoots = this._rootListDirty === true ? undefined : Array.from( this._dirtyRoots );
         this._dirtyRoots.clear();
         this._rootListDirty = false;
     }
@@ -1201,6 +1258,8 @@ class TreeNodeProvider
         if( config.shouldHideFromTree( todoNode.tag ? todoNode.tag : todoNode.label ) )
         {
             todoNode.hidden = true;
+            todoNode.visible = false;
+            todoNode.visibleTodoCount = 0;
         }
         var childNode;
 
@@ -1218,6 +1277,7 @@ class TreeNodeProvider
                         childNode = createTagNode( tagPath );
                         childNode.parent = undefined;
                         nodes.push( childNode );
+                        this._registerNode( childNode );
                         this._rootListDirty = true;
                     }
                 }
@@ -1225,6 +1285,7 @@ class TreeNodeProvider
                 {
                     todoNode.parent = undefined;
                     nodes.push( todoNode );
+                    this._registerNode( todoNode );
                     this._rootListDirty = true;
                     this._getDocumentEntry( result.uri ).todos.push( todoNode );
                     this._markDocumentCountsDirty( result.uri );
@@ -1241,6 +1302,7 @@ class TreeNodeProvider
                         childNode = createSubTagNode( todoNode.subTag );
                         childNode.parent = undefined;
                         nodes.unshift( childNode );
+                        this._registerNode( childNode );
                         this._rootListDirty = true;
                     }
                 }
@@ -1248,6 +1310,7 @@ class TreeNodeProvider
                 {
                     todoNode.parent = undefined;
                     nodes.push( todoNode );
+                    this._registerNode( todoNode );
                     this._rootListDirty = true;
                     this._getDocumentEntry( result.uri ).todos.push( todoNode );
                     this._markDocumentCountsDirty( result.uri );
@@ -1260,6 +1323,7 @@ class TreeNodeProvider
                 {
                     todoNode.parent = undefined;
                     nodes.push( todoNode );
+                    this._registerNode( todoNode );
                     this._rootListDirty = true;
                     this._getDocumentEntry( result.uri ).todos.push( todoNode );
                     this._markDocumentCountsDirty( result.uri );
@@ -1303,7 +1367,10 @@ class TreeNodeProvider
             {
                 todoNode.parent = childNode;
                 childNode.nodes.push( todoNode );
+                this._registerBranch( childNode );
+                this._registerNode( todoNode );
                 childNode.showCount = true;
+                this._updateAncestorCounts( childNode, 1, todoNode.visible === true ? 1 : 0 );
                 this._getDocumentEntry( result.uri ).todos.push( todoNode );
                 this._markDocumentCountsDirty( result.uri );
                 this._markRootDirty( childNode );
@@ -1341,33 +1408,26 @@ class TreeNodeProvider
 
     getElement( filename, found, children )
     {
-        if( children === undefined )
+        var indexedNodes = Array.from( this._nodesByFsPath.get( filename ) || [] ).filter( isVisible );
+
+        if( indexedNodes.length > 0 )
         {
-            children = nodes;
+            var pathNode = indexedNodes.find( isPathNode ) || indexedNodes[ 0 ];
+            found( pathNode );
+            return;
         }
-        children.forEach( function( child )
-        {
-            if( child.fsPath === filename )
-            {
-                found( child );
-            }
-            else if( child.nodes !== undefined )
-            {
-                return this.getElement( filename, found, child.nodes );
-            }
-        }, this );
     }
 
     setExpanded( path, expanded )
     {
         expandedNodes[ path ] = expanded;
-        this._context.workspaceState.update( 'expandedNodes', expandedNodes );
+        this._scheduleExpandedNodesWrite();
     }
 
     clearExpansionState()
     {
         expandedNodes = {};
-        this._context.workspaceState.update( 'expandedNodes', expandedNodes );
+        this._scheduleExpandedNodesWrite();
     }
 
     getTagCountsForStatusBar( fileFilter )
@@ -1470,6 +1530,11 @@ class TreeNodeProvider
                 children.sort( sortByFilenameAndLine );
             }
         }
+    }
+
+    dispose()
+    {
+        clearTimeout( this._expandedStateWriteHandle );
     }
 }
 

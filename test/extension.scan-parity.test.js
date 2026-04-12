@@ -101,65 +101,119 @@ function createConfigurationSection( values, explicitTarget )
 
 function createSearchResultsStub()
 {
-    var entries = new Map();
-    var dirty = new Set();
+    function createStore()
+    {
+        var entries = new Map();
+        var dirty = new Set();
+
+        return {
+            clear: function()
+            {
+                entries.clear();
+                dirty.clear();
+            },
+            replaceUriResults: function( uri, results )
+            {
+                entries.set( uri.toString(), { uri: uri, results: results } );
+                dirty.add( uri.toString() );
+                return true;
+            },
+            remove: function( uri )
+            {
+                entries.delete( uri.toString() );
+                dirty.add( uri.toString() );
+                return true;
+            },
+            drainDirtyResults: function()
+            {
+                var drained = Array.from( dirty ).map( function( key )
+                {
+                    var entry = entries.get( key );
+                    return {
+                        uri: entry ? entry.uri : matrixHelpers.createUri( key ),
+                        results: entry ? entry.results : []
+                    };
+                } );
+                dirty.clear();
+                return drained;
+            },
+            containsMarkdown: function()
+            {
+                return false;
+            },
+            count: function()
+            {
+                var total = 0;
+                entries.forEach( function( entry )
+                {
+                    total += entry.results.length;
+                } );
+                return total;
+            },
+            filter: function() {},
+            markAsNotAdded: function()
+            {
+                entries.forEach( function( entry )
+                {
+                    dirty.add( entry.uri.toString() );
+                } );
+            },
+            forEachResult: function( iterator )
+            {
+                entries.forEach( function( entry )
+                {
+                    entry.results.forEach( iterator );
+                } );
+            },
+            forEachUriResults: function( iterator )
+            {
+                entries.forEach( function( entry )
+                {
+                    iterator( entry.uri, entry.results );
+                } );
+            }
+        };
+    }
+
+    var defaultStore = createStore();
 
     return {
+        createStore: createStore,
         clear: function()
         {
-            entries.clear();
-            dirty.clear();
+            return defaultStore.clear();
         },
         replaceUriResults: function( uri, results )
         {
-            entries.set( uri.toString(), { uri: uri, results: results } );
-            dirty.add( uri.toString() );
+            return defaultStore.replaceUriResults( uri, results );
         },
         remove: function( uri )
         {
-            entries.delete( uri.toString() );
-            dirty.add( uri.toString() );
+            return defaultStore.remove( uri );
         },
         drainDirtyResults: function()
         {
-            var drained = Array.from( dirty ).map( function( key )
-            {
-                var entry = entries.get( key );
-                return {
-                    uri: entry ? entry.uri : matrixHelpers.createUri( key ),
-                    results: entry ? entry.results : []
-                };
-            } );
-            dirty.clear();
-            return drained;
+            return defaultStore.drainDirtyResults();
         },
         containsMarkdown: function()
         {
-            return false;
+            return defaultStore.containsMarkdown();
         },
         count: function()
         {
-            var total = 0;
-            entries.forEach( function( entry )
-            {
-                total += entry.results.length;
-            } );
-            return total;
+            return defaultStore.count();
         },
-        filter: function() {},
+        filter: function()
+        {
+            return defaultStore.filter.apply( defaultStore, arguments );
+        },
         markAsNotAdded: function()
         {
-            entries.forEach( function( entry )
-            {
-                dirty.add( entry.uri.toString() );
-            } );
+            return defaultStore.markAsNotAdded();
         },
         forEachResult: function( iterator )
         {
-            entries.forEach( function( entry )
-            {
-                entry.results.forEach( iterator );
-            } );
+            return defaultStore.forEachResult( iterator );
         }
     };
 }
@@ -298,10 +352,12 @@ function createVscodeStub( options )
             scopes: []
         } );
     var regexSection = createConfigurationSection( {
-            regex: options.regexSource || '($TAGS)',
+            regex: options.resourceConfig && options.resourceConfig.isDefaultRegex === true ?
+                actualUtils.DEFAULT_REGEX_SOURCE :
+                ( options.regexSource || '($TAGS)' ),
             regexCaseSensitive: true,
             enableMultiLine: false,
-            subTagRegex: ''
+            subTagRegex: options.resourceConfig && options.resourceConfig.subTagRegex ? options.resourceConfig.subTagRegex : ''
         } );
     var ripgrepSection = createConfigurationSection( {
             ripgrepArgs: '',
@@ -465,6 +521,7 @@ function createExtensionHarness( options )
     var scanTextCalls = [];
     var normalizeCalls = [];
     var readFileCalls = [];
+    var ripgrepMatchLookup = new Map();
     var validSchemes = options.validSchemes || [ 'file', 'vscode-notebook-cell' ];
     var notebookMetrics = {
         syncCalls: 0,
@@ -550,12 +607,74 @@ function createExtensionHarness( options )
         vscode: vscodeStub,
         './extensionIdentity.js': extensionIdentity,
         './ripgrep': {
-            search: function( root, searchOptions )
+            search: function( root, searchOptions, onEvent )
             {
                 ripgrepSearchCalls.push( searchOptions );
-                return Promise.resolve( options.ripgrepMatches || [] );
+
+                var matchesByFile = new Map();
+
+                ( options.ripgrepMatches || [] ).forEach( function( match )
+                {
+                    var line = match.line || 1;
+                    var column = match.column || 1;
+                    var matchText = match.match || '';
+                    var lookupKey = [ match.fsPath, line, column, matchText ].join( '\u0000' );
+
+                    ripgrepMatchLookup.set( lookupKey, match );
+
+                    if( matchesByFile.has( match.fsPath ) !== true )
+                    {
+                        matchesByFile.set( match.fsPath, [] );
+                    }
+
+                    matchesByFile.get( match.fsPath ).push( match );
+                } );
+
+                matchesByFile.forEach( function( fileMatches, filePath )
+                {
+                    fileMatches.forEach( function( match )
+                    {
+                        var line = match.line || 1;
+                        var column = match.column || 1;
+                        var matchText = match.match || '';
+
+                        if( typeof ( onEvent ) === 'function' )
+                        {
+                            onEvent( {
+                                type: 'match',
+                                data: {
+                                    path: { text: filePath },
+                                    lines: { text: matchText },
+                                    line_number: line,
+                                    absolute_offset: match.absoluteOffset || 0,
+                                    submatches: [ {
+                                        match: { text: matchText },
+                                        start: Math.max( column - 1, 0 ),
+                                        end: Math.max( column - 1, 0 ) + matchText.length
+                                    } ]
+                                }
+                            } );
+                        }
+                    } );
+
+                    if( typeof ( onEvent ) === 'function' )
+                    {
+                        onEvent( {
+                            type: 'end',
+                            data: {
+                                path: { text: filePath }
+                            }
+                        } );
+                    }
+                } );
+
+                return Promise.resolve( { stats: { matches: ( options.ripgrepMatches || [] ).length } } );
             },
-            kill: function() {}
+            kill: function() {},
+            decodeJsonValue: function( value )
+            {
+                return value && value.text !== undefined ? value.text : value;
+            }
         },
         './tree.js': {
             TreeNodeProvider: function()
@@ -576,12 +695,29 @@ function createExtensionHarness( options )
         },
         './highlights.js': {
             init: function() {},
-            triggerHighlight: function() {}
+            triggerHighlight: function() {},
+            setScanResultsProvider: function() {},
+            resetCaches: function() {}
         },
         './config.js': {
             init: function() {},
             refreshTagGroupLookup: function() {},
             ripgrepPath: function() { return '/tmp/rg'; },
+            regex: function()
+            {
+                return {
+                    tags: languageMatrix.DEFAULT_TAGS.slice(),
+                    regex: options.resourceConfig && options.resourceConfig.isDefaultRegex === true ?
+                        actualUtils.DEFAULT_REGEX_SOURCE :
+                        ( options.regexSource || '($TAGS)' ),
+                    caseSensitive: options.resourceConfig && options.resourceConfig.regexCaseSensitive !== false,
+                    multiLine: options.resourceConfig && options.resourceConfig.enableMultiLine === true
+                };
+            },
+            subTagRegex: function()
+            {
+                return options.resourceConfig && options.resourceConfig.subTagRegex ? options.resourceConfig.subTagRegex : '(^:\\s*)';
+            },
             scanMode: function() { return options.scanMode; },
             shouldIgnoreGitSubmodules: function() { return false; },
             shouldUseBuiltInFileExcludes: function() { return false; },
@@ -643,6 +779,7 @@ function createExtensionHarness( options )
             },
             replaceEnvironmentVariables: function( value ) { return value; },
             getSubmoduleExcludeGlobs: function() { return []; },
+            clearSubmoduleExcludeGlobCache: function() {},
             formatLabel: function( template ) { return template; },
             toGlobArray: function( value ) { return actualUtils.toGlobArray( value ); },
             createFolderGlob: function() { return '**/*'; }
@@ -677,15 +814,57 @@ function createExtensionHarness( options )
             {
                 normalizeCalls.push( { uri: uri, text: text, match: match } );
                 return options.normalizeResult ? options.normalizeResult( match ) : match;
+            },
+            createScanContext: function( uri, text, snapshot, detectionOptions )
+            {
+                return {
+                    uri: uri,
+                    text: text,
+                    snapshot: snapshot,
+                    options: detectionOptions || {}
+                };
+            },
+            scanDocumentWithContext: function( context )
+            {
+                var document = {
+                    uri: context.uri,
+                    fileName: context.uri && context.uri.fsPath,
+                    version: context.options && context.options.version,
+                    commentPatternFileName: context.options ? context.options.patternFileName : undefined,
+                    getText: function() { return context.text; }
+                };
+                return this.scanDocument( document );
+            },
+            scanTextWithContext: function( context )
+            {
+                return this.scanText( context.uri, context.text );
+            },
+            normalizeRegexMatchWithContext: function( context, match )
+            {
+                var lookupKey = [ match.fsPath, match.line || 1, match.column || 1, match.match || '' ].join( '\u0000' );
+                var originalMatch = ripgrepMatchLookup.get( lookupKey ) || match;
+
+                normalizeCalls.push( { uri: context.uri, text: context.text, match: originalMatch } );
+                return options.normalizeResult ? options.normalizeResult( originalMatch ) : originalMatch;
             }
         },
         fs: {
             existsSync: function() { return true; },
             mkdirSync: function() {},
-            readFileSync: function( filePath )
+            readFile: function( filePath, encoding, callback )
             {
                 readFileCalls.push( filePath );
-                return options.fileContents[ filePath ];
+                callback( null, options.fileContents[ filePath ] );
+            },
+            promises: {
+                mkdir: function() { return Promise.resolve(); },
+                readFile: function( filePath )
+                {
+                    readFileCalls.push( filePath );
+                    return Promise.resolve( options.fileContents[ filePath ] );
+                },
+                readdir: function() { return Promise.resolve( [] ); },
+                unlink: function() { return Promise.resolve(); }
             }
         },
         treeify: { asTree: function() { return ''; } },
@@ -1087,7 +1266,7 @@ QUnit.test( "issue #883 current-file mode keeps notebook results at notebook sco
 
         assert.equal( lastReplaceCall.uri.fsPath, '/workspace/notebook.ipynb' );
         assert.equal( lastReplaceCall.results.length, 2 );
-        assert.equal( harness.scanDocumentCalls.length, 4 );
+        assert.equal( harness.scanDocumentCalls.length, 2 );
         assertNotebookResults( assert, lastReplaceCall.results, fixture );
     } );
 } );
@@ -1132,7 +1311,8 @@ QUnit.test( "issue #883 open-files mode keeps notebook results when focus moves 
     } ).then( function()
     {
         assert.equal( findReplaceCallsForPath( harness, fixture.notebook.uri.fsPath ).length, 1 );
-        assert.equal( harness.scanDocumentCalls[ harness.scanDocumentCalls.length - 1 ].fileName, regularDocument.fileName );
+        assert.equal( harness.scanDocumentCalls.length, 3 );
+        assert.equal( harness.scanDocumentCalls[ 0 ].fileName, regularDocument.fileName );
         assertNotebookResults( assert, getLatestReplaceCallForPath( harness, fixture.notebook.uri.fsPath ).results, fixture );
     } );
 } );
@@ -1168,7 +1348,7 @@ QUnit.test( "issue #883 open-files mode rescans the full notebook when the activ
     } ).then( function()
     {
         assert.equal( findReplaceCallsForPath( harness, fixture.notebook.uri.fsPath ).length, 2 );
-        assert.equal( harness.scanDocumentCalls.length, 4 );
+        assert.equal( harness.scanDocumentCalls.length, 2 );
         assertNotebookResults( assert, getLatestReplaceCallForPath( harness, fixture.notebook.uri.fsPath ).results, fixture );
     } );
 } );
@@ -1308,7 +1488,7 @@ QUnit.test( "notebook change events are ignored until the notebook becomes visib
         return matrixHelpers.flushAsyncWork();
     } ).then( function()
     {
-        assert.equal( harness.scanDocumentCalls.length, 4 );
+        assert.equal( harness.scanDocumentCalls.length, 2 );
         assertNotebookResults( assert, getLatestReplaceCallForPath( harness, fixture.notebook.uri.fsPath ).results, fixture );
     } );
 } );
@@ -1519,7 +1699,7 @@ QUnit.test( "issue #883 periodic refresh re-scans open notebooks through the sta
         return matrixHelpers.flushAsyncWork();
     } ).then( function()
     {
-        assert.equal( harness.scanDocumentCalls.length, 4 );
+        assert.equal( harness.scanDocumentCalls.length, 2 );
         assert.equal( findReplaceCallsForPath( harness, fixture.notebook.uri.fsPath ).length, 2 );
         assertNotebookResults( assert, getLatestReplaceCallForPath( harness, fixture.notebook.uri.fsPath ).results, fixture );
     } );

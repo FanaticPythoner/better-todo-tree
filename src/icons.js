@@ -9,17 +9,29 @@ var themeColourNames = require( './themeColourNames.js' );
 var codiconNames = require( './codiconNames.js' );
 var productIconNames = require( './productIconNames.js' );
 var identity = require( './extensionIdentity.js' );
+var ensuredStorageDirectories = new Set();
+var generatedIconFiles = new Set();
+var fileBackedIconCache = new Map();
 
 function ensureStorageDirectory( context, debug )
 {
-    if( context.globalStorageUri.fsPath && !fs.existsSync( context.globalStorageUri.fsPath ) )
+    var storagePath = context.globalStorageUri.fsPath;
+
+    if( !storagePath || ensuredStorageDirectories.has( storagePath ) )
+    {
+        return;
+    }
+
+    if( fs.existsSync( storagePath ) !== true )
     {
         if( debug )
         {
-            debug( "Attempting to create global storage folder " + context.globalStorageUri.fsPath );
+            debug( "Attempting to create global storage folder " + storagePath );
         }
-        fs.mkdirSync( context.globalStorageUri.fsPath, { recursive: true } );
+        fs.mkdirSync( storagePath, { recursive: true } );
     }
+
+    ensuredStorageDirectories.add( storagePath );
 }
 
 function compactColourName( colour )
@@ -39,10 +51,17 @@ function normaliseColour( colour )
 
 function writeIconFile( filePath, svg )
 {
+    if( generatedIconFiles.has( filePath ) )
+    {
+        return;
+    }
+
     if( fs.existsSync( filePath ) !== true )
     {
         fs.writeFileSync( filePath, svg );
     }
+
+    generatedIconFiles.add( filePath );
 }
 
 function createTodoTreeIcon( context, iconName, colour )
@@ -104,6 +123,18 @@ function getFileBackedIcon( context, tag, debug )
 
     var colour = normaliseColour( attributes.getIconColour( tag ) );
     var iconName = attributes.getIcon( tag );
+    var cacheKey = [
+        context.globalStorageUri.fsPath,
+        tag,
+        iconName || '',
+        colour || ''
+    ].join( '\u0000' );
+
+    if( fileBackedIconCache.has( cacheKey ) )
+    {
+        return fileBackedIconCache.get( cacheKey );
+    }
+
     var darkIconPath = context.asAbsolutePath( path.join( "resources/icons", "dark", "todo-green.svg" ) );
     var lightIconPath = context.asAbsolutePath( path.join( "resources/icons", "light", "todo-green.svg" ) );
 
@@ -132,10 +163,13 @@ function getFileBackedIcon( context, tag, debug )
         lightIconPath = darkIconPath;
     }
 
-    return {
+    var iconPaths = {
         dark: darkIconPath,
         light: lightIconPath
     };
+
+    fileBackedIconCache.set( cacheKey, iconPaths );
+    return iconPaths;
 }
 
 function getTreeIcon( context, tag, debug )

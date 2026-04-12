@@ -65,6 +65,12 @@ test:
   {{node_bootstrap}}
   npm test
 
+perf:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  {{node_bootstrap}}
+  node --expose-gc scripts/perf/run-all.js
+
 bootstrap-release-env:
   #!/usr/bin/env bash
   set -euo pipefail

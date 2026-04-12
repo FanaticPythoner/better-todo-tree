@@ -176,6 +176,7 @@ QUnit.module( "behavioral highlights", function( hooks )
             './attributes.js': {
                 getForeground: function() { return undefined; },
                 getBackground: function() { return undefined; },
+                hasCustomHighlight: function() { return false; },
                 getAttribute: function( tag, attribute, defaultValue )
                 {
                     if( attribute === 'gutterIcon' )
@@ -386,6 +387,7 @@ QUnit.module( "behavioral highlights", function( hooks )
             './attributes.js': {
                 getForeground: function() { return undefined; },
                 getBackground: function() { return undefined; },
+                hasCustomHighlight: function() { return false; },
                 getAttribute: function( tag, attribute, defaultValue )
                 {
                     if( attribute === 'type' )
@@ -460,6 +462,7 @@ QUnit.module( "behavioral highlights", function( hooks )
             './attributes.js': {
                 getForeground: function() { return undefined; },
                 getBackground: function() { return undefined; },
+                hasCustomHighlight: function() { return false; },
                 getAttribute: function( tag, attribute, defaultValue )
                 {
                     if( attribute === 'type' )
@@ -532,6 +535,7 @@ QUnit.module( "behavioral highlights", function( hooks )
             './attributes.js': {
                 getForeground: function() { return undefined; },
                 getBackground: function() { return undefined; },
+                hasCustomHighlight: function() { return false; },
                 getAttribute: function( tag, attribute, defaultValue )
                 {
                     if( attribute === 'type' )
@@ -571,5 +575,105 @@ QUnit.module( "behavioral highlights", function( hooks )
         assert.equal( recorded[ 0 ][ 0 ].range.start.character, 1 );
         assert.equal( recorded[ 0 ][ 0 ].range.end.line, 1 );
         assert.equal( recorded[ 0 ][ 0 ].range.end.character, 2 );
+    } );
+
+    QUnit.test( "repeated highlights reuse cached decoration types for unchanged content", function( assert )
+    {
+        var creationCount = 0;
+        var recorded = [];
+        var highlights = helpers.loadWithStubs( '../src/highlights.js', {
+            vscode: {
+                ThemeColor: function( name ) { this.name = name; },
+                Position: function( line, character )
+                {
+                    this.line = line;
+                    this.character = character;
+                },
+                Range: function( start, end )
+                {
+                    this.start = start;
+                    this.end = end;
+                },
+                window: {
+                    createTextEditorDecorationType: function( options )
+                    {
+                        creationCount++;
+                        return options;
+                    }
+                }
+            },
+            './config.js': {
+                customHighlight: function() { return {}; },
+                subTagRegex: function() { return '(^:\\s*)'; },
+                tagGroup: function() { return undefined; }
+            },
+            './utils.js': {
+                isHexColour: function() { return false; },
+                isRgbColour: function() { return false; },
+                isValidColour: function() { return true; },
+                isThemeColour: function() { return false; },
+                hexToRgba: function( value ) { return value; },
+                complementaryColour: function() { return '#ffffff'; },
+                setRgbAlpha: function( value ) { return value; }
+            },
+            './attributes.js': {
+                getForeground: function() { return undefined; },
+                getBackground: function() { return undefined; },
+                hasCustomHighlight: function() { return false; },
+                getAttribute: function( tag, attribute, defaultValue )
+                {
+                    if( attribute === 'type' )
+                    {
+                        return 'tag';
+                    }
+                    return defaultValue;
+                }
+            },
+            './icons.js': {
+                getGutterIcon: function()
+                {
+                    return { dark: '/tmp/gutter.svg', light: '/tmp/gutter.svg' };
+                }
+            },
+            './detection.js': {
+                scanDocument: function()
+                {
+                    return [];
+                }
+            },
+            './extensionIdentity.js': {
+                getSetting: function( setting, defaultValue )
+                {
+                    return defaultValue;
+                }
+            }
+        } );
+        var editor = {
+            viewColumn: 1,
+            document: createDocument( '// TODO body' ),
+            setDecorations: function( decoration, ranges )
+            {
+                recorded.push( { decoration: decoration, ranges: ranges } );
+            }
+        };
+
+        highlights.init( { subscriptions: { push: function() {} } }, function() {} );
+        highlights.setScanResultsProvider( function()
+        {
+            return [ {
+                actualTag: 'TODO',
+                tagStartOffset: 3,
+                tagEndOffset: 7,
+                commentStartOffset: 0,
+                commentEndOffset: 12
+            } ];
+        } );
+
+        highlights.highlight( editor );
+        highlights.highlight( editor );
+
+        assert.equal( creationCount, 1 );
+        assert.equal( recorded.length, 2 );
+        assert.strictEqual( recorded[ 0 ].decoration, recorded[ 1 ].decoration );
     } );
 } );

@@ -1,17 +1,10 @@
 /* jshint esversion:6, node: true */
 /* eslint-env node */
 
-/**
- * This is a modified version of the ripgrep-js module from npm
- * written by alexlafroscia (github.com/alexlafroscia/ripgrep-js)
- * Instead of assuming that ripgrep is in the users path, it uses the
- * ripgrep binary downloaded via vscode-ripgrep.
- */
-
 'use strict';
-const child_process = require( 'child_process' );
-const fs = require( 'fs' );
-const utils = require( './utils' );
+
+var child_process = require( 'child_process' );
+var fs = require( 'fs' );
 
 var currentProcess;
 var currentCancellationRequested = false;
@@ -33,35 +26,6 @@ function debugWithChannel( options, text )
         var now = new Date();
         options.outputChannel.appendLine( now.toLocaleTimeString( 'en', { hour12: false } ) + "." + String( now.getMilliseconds() ).padStart( 3, '0' ) + " " + text );
     }
-}
-
-function cleanupPatternFile( patternFilePath, options )
-{
-    if( !patternFilePath )
-    {
-        return;
-    }
-
-    if( fs.existsSync( patternFilePath ) )
-    {
-        try
-        {
-            fs.unlinkSync( patternFilePath );
-        }
-        catch( error )
-        {
-            debugWithChannel( options, "Failed to remove pattern file " + patternFilePath + ": " + error.message );
-        }
-    }
-}
-
-function stripTrailingCarriageReturn( line )
-{
-    if( line.endsWith( '\r' ) )
-    {
-        return line.slice( 0, -1 );
-    }
-    return line;
 }
 
 function appendBoundedText( text, addition, maxLength )
@@ -164,10 +128,7 @@ function buildArgs( options )
 {
     var args = [
         '--no-messages',
-        '--vimgrep',
-        '-H',
-        '--column',
-        '--line-number',
+        '--json',
         '--color',
         'never'
     ].concat( parseArgumentString( options.additional ) );
@@ -179,10 +140,7 @@ function buildArgs( options )
 
     if( options.patternFilePath )
     {
-        debugWithChannel( options, "Writing pattern file: " + options.patternFilePath );
-        fs.writeFileSync( options.patternFilePath, options.unquotedRegex + '\n' );
         args.push( '-f', options.patternFilePath );
-        debugWithChannel( options, "Pattern: " + options.unquotedRegex );
     }
     else
     {
@@ -206,81 +164,58 @@ function buildArgs( options )
     return args;
 }
 
-function Match( matchText )
+function decodeJsonValue( value )
 {
-    var regex = RegExp( /^(?<file>.*):(?<line>\d+):(?<column>\d+):(?<todo>.*)/ );
-    var match = regex.exec( matchText );
-
-    if( match && match.groups )
+    if( value === undefined || value === null )
     {
-        this.fsPath = match.groups.file;
-        this.line = parseInt( match.groups.line );
-        this.column = parseInt( match.groups.column );
-        this.match = match.groups.todo;
+        return undefined;
     }
-    else
+
+    if( value.text !== undefined )
     {
-        this.fsPath = "";
-
-        if( matchText.length > 1 && matchText[ 1 ] === ':' )
-        {
-            this.fsPath = matchText.substr( 0, 2 );
-            matchText = matchText.substr( 2 );
-        }
-
-        var parts = matchText.split( ':' );
-        var hasColumn = ( parts.length === 4 );
-        this.fsPath += parts.shift();
-        this.line = parseInt( parts.shift() );
-        this.column = hasColumn === true ? parseInt( parts.shift() ) : 1;
-        this.match = parts.join( ':' );
+        return value.text;
     }
+
+    if( value.bytes !== undefined )
+    {
+        return Buffer.from( value.bytes, 'base64' ).toString( 'utf8' );
+    }
+
+    return undefined;
 }
 
-function createLineProcessor( multiline, results )
+function preparePatternFile( options )
 {
-    if( multiline === true )
+    if( !options.patternFilePath )
     {
-        var regex = utils.getRegexForEditorSearch( true );
-        var matches = [];
-        var text = "";
-
-        return function( line )
-        {
-            if( !line )
-            {
-                return;
-            }
-
-            var resultMatch = new Match( line );
-            matches.push( resultMatch );
-            text = text === "" ? resultMatch.match : text + '\n' + resultMatch.match;
-            regex.lastIndex = 0;
-
-            if( regex.test( text ) )
-            {
-                resultMatch = matches[ 0 ];
-                resultMatch.extraLines = matches.slice( 1 );
-                results.push( resultMatch );
-                matches = [];
-                text = "";
-                regex.lastIndex = 0;
-            }
-        };
+        return Promise.resolve();
     }
 
-    return function( line )
+    debugWithChannel( options, "Writing pattern file: " + options.patternFilePath );
+    debugWithChannel( options, "Pattern: " + options.unquotedRegex );
+
+    return fs.promises.writeFile( options.patternFilePath, options.unquotedRegex + '\n', 'utf8' );
+}
+
+function cleanupPatternFile( patternFilePath )
+{
+    if( !patternFilePath )
     {
-        if( !line )
+        return Promise.resolve();
+    }
+
+    return fs.promises.unlink( patternFilePath ).catch( function( error )
+    {
+        if( error && error.code === 'ENOENT' )
         {
             return;
         }
 
-        results.push( new Match( line ) );
-    };
+        throw error;
+    } );
 }
 
-function processStdoutChunk( chunk, state )
+function processStdoutChunk( chunk, state, onEvent )
 {
     var combined = state.stdoutTail + chunk.toString();
     var lines = combined.split( '\n' );
@@ -289,21 +224,36 @@ function processStdoutChunk( chunk, state )
 
     lines.forEach( function( line )
     {
-        var cleanLine = stripTrailingCarriageReturn( line );
-        addPreviewLine( state, cleanLine );
+        if( line.length === 0 )
+        {
+            return;
+        }
+
+        addPreviewLine( state, line );
         state.outputLineCount++;
-        state.processLine( cleanLine );
+
+        var message = JSON.parse( line );
+        if( message.type === 'match' )
+        {
+            state.matchCount++;
+        }
+        if( message.type === 'summary' )
+        {
+            state.summary = message.data;
+        }
+
+        onEvent( message );
     } );
 }
 
-module.exports.search = function ripGrep( cwd, options )
+module.exports.search = function ripGrep( cwd, options, onEvent )
 {
     if( !cwd )
     {
         return Promise.reject( { error: 'No `cwd` provided' } );
     }
 
-    if( arguments.length === 1 )
+    if( arguments.length < 2 )
     {
         return Promise.reject( { error: 'No search term provided' } );
     }
@@ -311,93 +261,133 @@ module.exports.search = function ripGrep( cwd, options )
     options.regex = options.regex || '';
     options.globs = options.globs || [];
 
-    if( !fs.existsSync( options.rgPath ) )
+    return Promise.all( [
+        fs.promises.access( options.rgPath, fs.constants.X_OK ),
+        fs.promises.access( cwd, fs.constants.F_OK ),
+        preparePatternFile( options )
+    ] ).then( function()
     {
-        return Promise.reject( { error: "ripgrep executable not found (" + options.rgPath + ")" } );
-    }
+        var args = buildArgs( options );
+        debugWithChannel( options, "Command: " + [ options.rgPath ].concat( args ).join( ' ' ) );
 
-    if( !fs.existsSync( cwd ) )
+        return new Promise( function( resolve, reject )
+        {
+            var state = {
+                outputLineCount: 0,
+                previewLines: [],
+                stderr: "",
+                stdoutTail: "",
+                matchCount: 0,
+                summary: undefined
+            };
+            var eventHandler = typeof ( onEvent ) === 'function' ? onEvent : function() {};
+
+            currentCancellationRequested = false;
+            currentProcess = child_process.spawn( options.rgPath, args, { cwd: cwd, windowsHide: true } );
+
+            currentProcess.stdout.on( 'data', function( data )
+            {
+                processStdoutChunk( data, state, eventHandler );
+            } );
+
+            currentProcess.stderr.on( 'data', function( data )
+            {
+                state.stderr = appendBoundedText( state.stderr, data.toString(), MAX_DEBUG_TEXT_LENGTH );
+            } );
+
+            currentProcess.on( 'error', function( error )
+            {
+                cleanupPatternFile( options.patternFilePath ).finally( function()
+                {
+                    if( currentProcess )
+                    {
+                        currentProcess = undefined;
+                    }
+
+                    reject( new RipgrepError( error.message, state.stderr, false ) );
+                } );
+            } );
+
+            currentProcess.on( 'close', function( code, signal )
+            {
+                var completion = Promise.resolve();
+
+                if( state.stdoutTail.length > 0 )
+                {
+                    addPreviewLine( state, state.stdoutTail );
+                    state.outputLineCount++;
+                    completion = completion.then( function()
+                    {
+                        var trailingMessage = JSON.parse( state.stdoutTail );
+                        if( trailingMessage.type === 'match' )
+                        {
+                            state.matchCount++;
+                        }
+                        if( trailingMessage.type === 'summary' )
+                        {
+                            state.summary = trailingMessage.data;
+                        }
+                        eventHandler( trailingMessage );
+                    } );
+                }
+
+                completion.then( function()
+                {
+                    return cleanupPatternFile( options.patternFilePath );
+                } ).then( function()
+                {
+                    if( currentProcess )
+                    {
+                        currentProcess = undefined;
+                    }
+
+                    if( state.previewLines.length > 0 )
+                    {
+                        debugWithChannel( options, "Search preview:\n" + state.previewLines.join( '\n' ) );
+                    }
+
+                    debugWithChannel( options, "Search produced " + state.matchCount + " matches from " + state.outputLineCount + " output lines" );
+
+                    if( currentCancellationRequested === true || signal === 'SIGINT' )
+                    {
+                        reject( new RipgrepError( "Search cancelled", state.stderr, true ) );
+                        return;
+                    }
+
+                    if( code === 0 || code === 1 )
+                    {
+                        resolve( state.summary || { stats: { matches: state.matchCount } } );
+                        return;
+                    }
+
+                    reject( new RipgrepError( "ripgrep failed with exit code " + code, state.stderr, false ) );
+                } ).catch( function( error )
+                {
+                    if( currentProcess )
+                    {
+                        currentProcess = undefined;
+                    }
+
+                    reject( new RipgrepError( error.message, state.stderr, false ) );
+                } );
+            } );
+        } );
+    } ).catch( function( error )
     {
-        return Promise.reject( { error: "root folder not found (" + cwd + ")" } );
-    }
-
-    var args = buildArgs( options );
-    debugWithChannel( options, "Command: " + [ options.rgPath ].concat( args ).join( ' ' ) );
-
-    return new Promise( function( resolve, reject )
-    {
-        var results = [];
-        var state = {
-            outputLineCount: 0,
-            previewLines: [],
-            stderr: "",
-            stdoutTail: "",
-            processLine: createLineProcessor( options.multiline, results )
-        };
-
-        currentCancellationRequested = false;
-        currentProcess = child_process.spawn( options.rgPath, args, { cwd: cwd, windowsHide: true } );
-
-        currentProcess.stdout.on( 'data', function( data )
+        if( error && error.code === 'ENOENT' )
         {
-            processStdoutChunk( data, state );
-        } );
-
-        currentProcess.stderr.on( 'data', function( data )
-        {
-            state.stderr = appendBoundedText( state.stderr, data.toString(), MAX_DEBUG_TEXT_LENGTH );
-        } );
-
-        currentProcess.on( 'error', function( error )
-        {
-            cleanupPatternFile( options.patternFilePath, options );
-
-            if( currentProcess )
+            if( error.path === options.rgPath )
             {
-                currentProcess = undefined;
+                throw { error: "ripgrep executable not found (" + options.rgPath + ")" };
             }
 
-            reject( new RipgrepError( error.message, state.stderr, false ) );
-        } );
-
-        currentProcess.on( 'close', function( code, signal )
-        {
-            if( state.stdoutTail.length > 0 )
+            if( error.path === cwd )
             {
-                var trailingLine = stripTrailingCarriageReturn( state.stdoutTail );
-                addPreviewLine( state, trailingLine );
-                state.outputLineCount++;
-                state.processLine( trailingLine );
+                throw { error: "root folder not found (" + cwd + ")" };
             }
+        }
 
-            cleanupPatternFile( options.patternFilePath, options );
-
-            if( currentProcess )
-            {
-                currentProcess = undefined;
-            }
-
-            if( state.previewLines.length > 0 )
-            {
-                debugWithChannel( options, "Search preview:\n" + state.previewLines.join( '\n' ) );
-            }
-
-            debugWithChannel( options, "Search produced " + results.length + " matches from " + state.outputLineCount + " output lines" );
-
-            if( currentCancellationRequested === true || signal === 'SIGINT' )
-            {
-                reject( new RipgrepError( "Search cancelled", state.stderr, true ) );
-                return;
-            }
-
-            if( code === 0 || code === 1 )
-            {
-                resolve( results );
-                return;
-            }
-
-            reject( new RipgrepError( "ripgrep failed with exit code " + code, state.stderr, false ) );
-        } );
+        throw error;
     } );
 };
 
@@ -410,6 +400,7 @@ module.exports.kill = function()
     }
 };
 
-module.exports.Match = Match;
+module.exports.decodeJsonValue = decodeJsonValue;
 module.exports.buildArgs = buildArgs;
 module.exports.parseArgumentString = parseArgumentString;
+module.exports.RipgrepError = RipgrepError;

@@ -78,6 +78,15 @@ function createVscodeStub()
                             return 'start of todo';
                         }
                         return defaultValue;
+                    },
+                    inspect: function( key )
+                    {
+                        return {
+                            defaultValue: key === 'revealBehaviour' ? 'start of todo' : undefined,
+                            globalValue: undefined,
+                            workspaceValue: undefined,
+                            workspaceFolderValue: undefined
+                        };
                     }
                 };
             }

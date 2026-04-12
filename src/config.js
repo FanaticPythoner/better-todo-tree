@@ -7,6 +7,10 @@ var identity = require( './extensionIdentity.js' );
 var context;
 
 var tagGroupLookup = {};
+var ripgrepPathCache = {
+    signature: undefined,
+    value: undefined
+};
 
 function init( c )
 {
@@ -93,21 +97,51 @@ function ripgrepPath()
         return fs.existsSync( rgExePath ) ? rgExePath : undefined;
     }
 
+    var configuredPath = identity.getSetting( 'ripgrep.ripgrep', "" );
+    var signature = configuredPath + "|" + vscode.env.appRoot;
+
+    if( ripgrepPathCache.signature === signature )
+    {
+        return ripgrepPathCache.value;
+    }
+
     var rgPath = "";
 
-    rgPath = exePathIsDefined( identity.getSetting( 'ripgrep.ripgrep', "" ) );
-    if( rgPath ) return rgPath;
+    rgPath = exePathIsDefined( configuredPath );
+    if( rgPath )
+    {
+        ripgrepPathCache.signature = signature;
+        ripgrepPathCache.value = rgPath;
+        return rgPath;
+    }
 
     rgPath = exePathIsDefined( path.join( vscode.env.appRoot, "node_modules/vscode-ripgrep/bin/", exeName() ) );
-    if( rgPath ) return rgPath;
+    if( rgPath )
+    {
+        ripgrepPathCache.signature = signature;
+        ripgrepPathCache.value = rgPath;
+        return rgPath;
+    }
 
     rgPath = exePathIsDefined( path.join( vscode.env.appRoot, "node_modules.asar.unpacked/vscode-ripgrep/bin/", exeName() ) );
-    if( rgPath ) return rgPath;
+    if( rgPath )
+    {
+        ripgrepPathCache.signature = signature;
+        ripgrepPathCache.value = rgPath;
+        return rgPath;
+    }
 
     rgPath = exePathIsDefined( path.join( vscode.env.appRoot, "node_modules/@vscode/ripgrep/bin/", exeName() ) );
-    if( rgPath ) return rgPath;
+    if( rgPath )
+    {
+        ripgrepPathCache.signature = signature;
+        ripgrepPathCache.value = rgPath;
+        return rgPath;
+    }
 
     rgPath = exePathIsDefined( path.join( vscode.env.appRoot, "node_modules.asar.unpacked/@vscode/ripgrep/bin/", exeName() ) );
+    ripgrepPathCache.signature = signature;
+    ripgrepPathCache.value = rgPath;
     if( rgPath ) return rgPath;
 
     return rgPath;

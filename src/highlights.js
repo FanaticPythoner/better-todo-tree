@@ -19,16 +19,20 @@ var lanes =
 };
 
 var decorations = {};
+var decorationCache = new Map();
 var highlightTimer = {};
 var highlightVersions = {};
 var context;
 var debug;
+var scanResultsProvider = function( document ) { return detection.scanDocument( document ); };
 
 function init( context_, debug_ )
 {
     context = context_;
     debug = debug_;
-    context.subscriptions.push( decorations );
+    context.subscriptions.push( {
+        dispose: resetCaches
+    } );
 }
 
 function applyOpacity( colour, opacity )
@@ -48,7 +52,30 @@ function applyOpacity( colour, opacity )
     return colour;
 }
 
-function getDecoration( tag )
+function decorationSignature( tag )
+{
+    var lane = getRulerLane( tag );
+    var normalizedLane = isNaN( parseInt( lane ) ) ? String( lane ).toLowerCase() : String( lane );
+    var iconPath = showInGutter( tag ) ? icons.getGutterIcon( context, tag, debug ).dark : '';
+
+    return JSON.stringify( {
+        tag: tag,
+        foreground: attributes.getForeground( tag ),
+        background: attributes.getBackground( tag ),
+        opacity: getOpacity( tag ),
+        rulerLane: normalizedLane,
+        rulerColour: getRulerColour( tag, 'editor.foreground' ),
+        rulerOpacity: getRulerOpacity( tag ),
+        borderRadius: getBorderRadius( tag ),
+        fontStyle: getFontStyle( tag ),
+        fontWeight: getFontWeight( tag ),
+        textDecoration: getTextDecoration( tag ),
+        type: getType( tag ),
+        gutterIconPath: iconPath
+    } );
+}
+
+function createDecoration( tag )
 {
     var foregroundColour = attributes.getForeground( tag );
     var backgroundColour = attributes.getBackground( tag );
@@ -150,6 +177,20 @@ function getDecoration( tag )
     return vscode.window.createTextEditorDecorationType( decorationOptions );
 }
 
+function getDecoration( tag )
+{
+    var signature = decorationSignature( tag );
+
+    if( decorationCache.has( signature ) )
+    {
+        return decorationCache.get( signature );
+    }
+
+    var decoration = createDecoration( tag );
+    decorationCache.set( signature, decoration );
+    return decoration;
+}
+
 function getRulerColour( tag, defaultColour )
 {
     return attributes.getAttribute( tag, 'rulerColour', defaultColour );
@@ -242,25 +283,15 @@ function highlight( editor )
 
     var documentHighlights = {};
     var subTagHighlights = {};
-    var customHighlight = config.customHighlight();
-
     if( editor )
     {
         var id = editorId( editor );
-
-        if( decorations[ id ] )
-        {
-            decorations[ id ].forEach( function( decoration )
-            {
-                decoration.dispose();
-            } );
-        }
-
-        decorations[ id ] = [];
+        var previousDecorations = decorations[ id ] || [];
+        var nextDecorations = [];
 
         if( identity.getSetting( 'highlights.enabled', true ) )
         {
-            detection.scanDocument( editor.document ).forEach( function( match )
+            scanResultsProvider( editor.document ).forEach( function( match )
             {
                 var tag = config.tagGroup( match.actualTag ) || match.actualTag;
                 var type = getType( tag );
@@ -289,7 +320,7 @@ function highlight( editor )
                     {
                         addDecoration( tag, match.tagStartOffset, match.tagEndOffset );
 
-                        if( match.subTag && customHighlight[ match.subTag ] !== undefined && match.subTagStartOffset !== undefined && match.subTagEndOffset !== undefined )
+                        if( match.subTag && attributes.hasCustomHighlight( match.subTag ) && match.subTagStartOffset !== undefined && match.subTagEndOffset !== undefined )
                         {
                             var subTagDecoration = {
                                 range: new vscode.Range(
@@ -328,17 +359,27 @@ function highlight( editor )
             Object.keys( documentHighlights ).forEach( function( tag )
             {
                 var decoration = getDecoration( tag );
-                decorations[ id ].push( decoration );
+                nextDecorations.push( decoration );
                 editor.setDecorations( decoration, documentHighlights[ tag ] );
             } );
 
             Object.keys( subTagHighlights ).forEach( function( subTag )
             {
                 var decoration = getDecoration( subTag );
-                decorations[ id ].push( decoration );
+                nextDecorations.push( decoration );
                 editor.setDecorations( decoration, subTagHighlights[ subTag ] );
             } );
         }
+
+        previousDecorations.forEach( function( decoration )
+        {
+            if( nextDecorations.indexOf( decoration ) === -1 )
+            {
+                editor.setDecorations( decoration, [] );
+            }
+        } );
+
+        decorations[ id ] = nextDecorations;
     }
 }
 
@@ -367,7 +408,37 @@ function triggerHighlight( editor )
     }
 }
 
+function setScanResultsProvider( provider )
+{
+    scanResultsProvider = typeof ( provider ) === 'function' ? provider : function( document )
+    {
+        return detection.scanDocument( document );
+    };
+}
+
+function resetCaches()
+{
+    Object.keys( highlightTimer ).forEach( function( key )
+    {
+        clearTimeout( highlightTimer[ key ] );
+        delete highlightTimer[ key ];
+    } );
+
+    Object.keys( decorations ).forEach( function( key )
+    {
+        delete decorations[ key ];
+    } );
+
+    decorationCache.forEach( function( decoration )
+    {
+        decoration.dispose();
+    } );
+    decorationCache.clear();
+}
+
 module.exports.init = init;
 module.exports.getDecoration = getDecoration;
 module.exports.highlight = highlight;
 module.exports.triggerHighlight = triggerHighlight;
+module.exports.setScanResultsProvider = setScanResultsProvider;
+module.exports.resetCaches = resetCaches;

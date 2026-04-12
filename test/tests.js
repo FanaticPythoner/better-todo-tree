@@ -1,4 +1,6 @@
+var fs = require( 'fs' );
 var os = require( 'os' );
+var path = require( 'path' );
 var strftime = require( 'fast-strftime' );
 var utils = require( '../src/utils.js' );
 var attributes = require( '../src/attributes.js' );
@@ -565,6 +567,40 @@ QUnit.test( "utils.setRgbAlpha", function( assert )
     assert.equal( utils.setRgbAlpha( "rgba(0,0,0,1.0)", 0.5 ), "rgba(0,0,0,0.5)" );
 } );
 
+QUnit.test( "utils.getSubmoduleExcludeGlobs reads and caches .gitmodules paths", function( assert )
+{
+    var tempRoot = fs.mkdtempSync( path.join( os.tmpdir(), 'better-todo-tree-submodules-' ) );
+    var gitmodulesPath = path.join( tempRoot, '.gitmodules' );
+
+    try
+    {
+        fs.writeFileSync( gitmodulesPath, [
+            '[submodule "packages/one"]',
+            '\tpath = packages/one',
+            '[submodule "libs/two"]',
+            '\tpath = libs/two'
+        ].join( '\n' ) + '\n' );
+
+        utils.clearSubmoduleExcludeGlobCache();
+        assert.deepEqual( utils.getSubmoduleExcludeGlobs( tempRoot ), [ 'packages/one/**', 'libs/two/**' ] );
+
+        fs.writeFileSync( gitmodulesPath, [
+            '[submodule "changed"]',
+            '\tpath = changed'
+        ].join( '\n' ) + '\n' );
+
+        assert.deepEqual( utils.getSubmoduleExcludeGlobs( tempRoot ), [ 'packages/one/**', 'libs/two/**' ] );
+
+        utils.clearSubmoduleExcludeGlobCache();
+        assert.deepEqual( utils.getSubmoduleExcludeGlobs( tempRoot ), [ 'changed/**' ] );
+    }
+    finally
+    {
+        utils.clearSubmoduleExcludeGlobCache();
+        fs.rmSync( tempRoot, { recursive: true, force: true } );
+    }
+} );
+
 QUnit.test( "attributes.getForeground uses colour scheme", function( assert )
 {
     var testConfig = stubs.getTestConfig();
@@ -662,6 +698,41 @@ QUnit.test( "defaultHighlight provides fallback attributes when customHighlight 
     assert.equal( attributes.getIconColour( 'FIXME' ), '#ff1493' );
     assert.equal( attributes.getAttribute( 'FIXME', 'gutterIcon', false ), true );
     assert.equal( attributes.getAttribute( 'FIXME', 'type', undefined ), 'text' );
+} );
+
+QUnit.test( "customHighlight resolves exact keys case-insensitively without recompiling per lookup", function( assert )
+{
+    var testConfig = stubs.getTestConfig();
+    testConfig.shouldBeCaseSensitive = false;
+    testConfig.customHighlight = function()
+    {
+        return {
+            todo: {
+                foreground: '#abcdef'
+            }
+        };
+    };
+    attributes.init( testConfig );
+
+    assert.equal( attributes.getForeground( 'TODO' ), '#abcdef' );
+    assert.equal( attributes.getForeground( 'todo' ), '#abcdef' );
+} );
+
+QUnit.test( "customHighlight preserves legacy partial literal matching semantics", function( assert )
+{
+    var testConfig = stubs.getTestConfig();
+    testConfig.shouldBeCaseSensitive = false;
+    testConfig.customHighlight = function()
+    {
+        return {
+            TODO: {
+                foreground: '#123456'
+            }
+        };
+    };
+    attributes.init( testConfig );
+
+    assert.equal( attributes.getForeground( 'TODO(owner)' ), '#123456' );
 } );
 
 QUnit.test( "utils.formatLabel replaces afterOrBefore tag", function( assert )
