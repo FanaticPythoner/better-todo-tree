@@ -22,7 +22,7 @@ Todo Tree is THE visual map I rely on to track every scattered issue across proj
   * **Drop-in Ready 🤝:** Zero friction. Same workflow. Same exact settings.
   * **Bulletproof Fixes 🛡️:** Notebook behavior, scan parity, strict regex handling, and modern VS Code compatibility actually move forward.
   * **Alive & Active 💖:** Keeping this project alive takes a lot of time and, predictably, more coffee than I'd like to admit (caffeine or rent? Who knows what it will be next week 💀 #tariffs). If you're in the same boat:  
-  `// TODO: ☕ buy the Better Todo Tree guy a coffee` → [buymeacoffee.com/FanaticPythoner](https://buymeacoffee.com/FanaticPythoner)
+  `// TODO: buy the Better Todo Tree guy a coffee` ☕ → [buymeacoffee.com/FanaticPythoner](https://buymeacoffee.com/FanaticPythoner)
 
 **Links:**
 
