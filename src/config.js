@@ -5,6 +5,7 @@ var attributes = require( './attributes.js' );
 var identity = require( './extensionIdentity.js' );
 
 var context;
+var treeStateOverrides = {};
 
 var tagGroupLookup = {};
 var ripgrepPathCache = {
@@ -19,29 +20,58 @@ function init( c )
     refreshTagGroupLookup();
 }
 
+function getTreeStateValue( key, setting, defaultValue )
+{
+    if( Object.prototype.hasOwnProperty.call( treeStateOverrides, key ) )
+    {
+        return treeStateOverrides[ key ];
+    }
+
+    return context.workspaceState.get( key, identity.getSetting( setting, defaultValue ) );
+}
+
+function setTreeStateOverride( key, value )
+{
+    if( value === undefined )
+    {
+        delete treeStateOverrides[ key ];
+        return;
+    }
+
+    treeStateOverrides[ key ] = value;
+}
+
+function setTreeStateOverrides( values )
+{
+    Object.keys( values || {} ).forEach( function( key )
+    {
+        setTreeStateOverride( key, values[ key ] );
+    } );
+}
+
 function shouldGroupByTag()
 {
-    return context.workspaceState.get( 'groupedByTag', identity.getSetting( 'tree.groupedByTag', false ) );
+    return getTreeStateValue( 'groupedByTag', 'tree.groupedByTag', false );
 }
 
 function shouldGroupBySubTag()
 {
-    return context.workspaceState.get( 'groupedBySubTag', identity.getSetting( 'tree.groupedBySubTag', false ) );
+    return getTreeStateValue( 'groupedBySubTag', 'tree.groupedBySubTag', false );
 }
 
 function shouldExpand()
 {
-    return context.workspaceState.get( 'expanded', identity.getSetting( 'tree.expanded', false ) );
+    return getTreeStateValue( 'expanded', 'tree.expanded', false );
 }
 
 function shouldFlatten()
 {
-    return context.workspaceState.get( 'flat', identity.getSetting( 'tree.flat', false ) );
+    return getTreeStateValue( 'flat', 'tree.flat', false );
 }
 
 function shouldShowTagsOnly()
 {
-    return context.workspaceState.get( 'tagsOnly', identity.getSetting( 'tree.tagsOnly', false ) );
+    return getTreeStateValue( 'tagsOnly', 'tree.tagsOnly', false );
 }
 
 function shouldShowCounts()
@@ -334,3 +364,6 @@ module.exports.customHighlight = customHighlight;
 module.exports.subTagClickUrl = subTagClickUrl;
 module.exports.shouldShowIconsInsteadOfTagsInStatusBar = shouldShowIconsInsteadOfTagsInStatusBar;
 module.exports.shouldShowActivityBarBadge = shouldShowActivityBarBadge;
+module.exports.getTreeStateValue = getTreeStateValue;
+module.exports.setTreeStateOverride = setTreeStateOverride;
+module.exports.setTreeStateOverrides = setTreeStateOverrides;

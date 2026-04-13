@@ -1127,7 +1127,7 @@ class TreeNodeProvider
         this._statusBarCountsByFile.clear();
         this._pendingCountUris.clear();
         this._dirtyRoots.clear();
-        this._rootListDirty = false;
+        this._rootListDirty = true;
         this._pendingRefreshRoots = undefined;
 
         nodes.forEach( function( node )
@@ -1238,7 +1238,10 @@ class TreeNodeProvider
         }
 
         this._recalculatePendingCounts();
-        this._pendingRefreshRoots = this._rootListDirty === true ? undefined : Array.from( this._dirtyRoots );
+        this._pendingRefreshRoots =
+            options.forceFullRefresh === true || this._rootListDirty === true ?
+                undefined :
+                Array.from( this._dirtyRoots );
         this._dirtyRoots.clear();
         this._rootListDirty = false;
     }

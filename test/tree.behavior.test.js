@@ -19,10 +19,12 @@ function createWorkspaceState()
 
 function createVscodeStub()
 {
+    var eventFires = [];
+
     function EventEmitter()
     {
         this.event = function() {};
-        this.fire = function() {};
+        this.fire = function( value ) { eventFires.push( value ); };
     }
 
     function TreeItem( label )
@@ -90,7 +92,8 @@ function createVscodeStub()
                     }
                 };
             }
-        }
+        },
+        __eventFires: eventFires
     };
 }
 
@@ -155,6 +158,11 @@ QUnit.module( "behavioral tree", function()
 {
     function loadTreeModule( configStub )
     {
+        return loadTreeHarness( configStub ).tree;
+    }
+
+    function loadTreeHarness( configStub )
+    {
         var vscodeStub = createVscodeStub();
         utils.init( Object.assign( createConfig(), {
             regex: function() { return { tags: [ 'TODO', 'FIXME' ], regex: '($TAGS)', caseSensitive: true, multiLine: false }; },
@@ -168,17 +176,20 @@ QUnit.module( "behavioral tree", function()
             backgroundColourScheme: function() { return []; }
         } ) );
 
-        return helpers.loadWithStubs( '../src/tree.js', {
-            vscode: vscodeStub,
-            './config.js': configStub,
-            './utils.js': utils,
-            './icons.js': {
-                getTreeIcon: function()
-                {
-                    return { dark: '/tmp/icon.svg', light: '/tmp/icon.svg' };
+        return {
+            tree: helpers.loadWithStubs( '../src/tree.js', {
+                vscode: vscodeStub,
+                './config.js': configStub,
+                './utils.js': utils,
+                './icons.js': {
+                    getTreeIcon: function()
+                    {
+                        return { dark: '/tmp/icon.svg', light: '/tmp/icon.svg' };
+                    }
                 }
-            }
-        } );
+            } ),
+            vscode: vscodeStub
+        };
     }
 
     QUnit.test( "multiline todos stay as one logical node and preserve full text in tooltip", function( assert )
@@ -335,5 +346,102 @@ QUnit.module( "behavioral tree", function()
         provider.finalizePendingChanges( undefined, { fullSort: false } );
 
         assert.deepEqual( provider.getChildren( workspaceRoot ).map( function( node ) { return node.label; } ), [ 'TODO', 'FIXME' ] );
+    } );
+
+    QUnit.test( "forceFullRefresh emits a full tree refresh for in-flight workspace updates", function( assert )
+    {
+        var configStub = createConfig();
+        var harness = loadTreeHarness( configStub );
+        var provider = new harness.tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+        var workspaceFolder = {
+            name: 'workspace',
+            uri: {
+                scheme: 'file',
+                fsPath: '/workspace'
+            }
+        };
+        var result = createResult( '/workspace/a.js', 'TODO', 'streamed item' );
+
+        provider.clear( [ workspaceFolder ] );
+        provider.replaceDocument( result.uri, [ result ] );
+        provider.finalizePendingChanges( undefined, { fullSort: false, forceFullRefresh: true } );
+        provider.refresh();
+
+        assert.deepEqual( harness.vscode.__eventFires, [ undefined ] );
+    } );
+
+    QUnit.test( "switching from tags-only roots back to tree roots emits a full refresh and rebuilds workspace roots", function( assert )
+    {
+        var viewState = {
+            tagsOnly: true,
+            flat: false
+        };
+        var configStub = createConfig( {
+            shouldShowTagsOnly: function() { return viewState.tagsOnly; },
+            shouldFlatten: function() { return viewState.flat; }
+        } );
+        var harness = loadTreeHarness( configStub );
+        var provider = new harness.tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+        var workspaceFolder = {
+            name: 'workspace',
+            uri: {
+                scheme: 'file',
+                fsPath: '/workspace'
+            }
+        };
+        var result = createResult( '/workspace/a.js', 'TODO', 'root change item' );
+
+        provider.clear( [ workspaceFolder ] );
+        provider.replaceDocument( result.uri, [ result ] );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+        provider.refresh();
+
+        harness.vscode.__eventFires.length = 0;
+        viewState.tagsOnly = false;
+        provider.clear( [ workspaceFolder ] );
+        provider.replaceDocument( result.uri, [ result ] );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+        provider.refresh();
+
+        assert.deepEqual( harness.vscode.__eventFires, [ undefined ] );
+        assert.equal( provider.getChildren()[ 0 ].label, 'workspace' );
+        assert.equal( provider.getChildren( provider.getChildren()[ 0 ] )[ 0 ].label, 'a.js' );
+    } );
+
+    QUnit.test( "switching from tree roots to tags-only roots emits a full refresh and removes workspace roots", function( assert )
+    {
+        var viewState = {
+            tagsOnly: false,
+            flat: false
+        };
+        var configStub = createConfig( {
+            shouldShowTagsOnly: function() { return viewState.tagsOnly; },
+            shouldFlatten: function() { return viewState.flat; }
+        } );
+        var harness = loadTreeHarness( configStub );
+        var provider = new harness.tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+        var workspaceFolder = {
+            name: 'workspace',
+            uri: {
+                scheme: 'file',
+                fsPath: '/workspace'
+            }
+        };
+        var result = createResult( '/workspace/a.js', 'TODO', 'root change item' );
+
+        provider.clear( [ workspaceFolder ] );
+        provider.replaceDocument( result.uri, [ result ] );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+        provider.refresh();
+
+        harness.vscode.__eventFires.length = 0;
+        viewState.tagsOnly = true;
+        provider.clear( [ workspaceFolder ] );
+        provider.replaceDocument( result.uri, [ result ] );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+        provider.refresh();
+
+        assert.deepEqual( harness.vscode.__eventFires, [ undefined ] );
+        assert.equal( provider.getChildren()[ 0 ].label, 'TODO root change item' );
     } );
 } );

@@ -64,7 +64,7 @@ function loadWithStubsAndTimers( modulePath, stubs, timerStubs )
     }
 }
 
-function createConfigurationSection( values, explicitTarget )
+function createConfigurationSection( values, explicitTarget, updateLog )
 {
     function getNestedValue( source, key )
     {
@@ -81,8 +81,16 @@ function createConfigurationSection( values, explicitTarget )
         var value = getNestedValue( values, key );
         return value === undefined ? defaultValue : value;
     };
-    section.update = function()
+    section.update = function( key, value, target )
     {
+        if( Array.isArray( updateLog ) )
+        {
+            updateLog.push( {
+                key: key,
+                value: value,
+                target: target
+            } );
+        }
         return Promise.resolve();
     };
     section.inspect = function( key )
@@ -252,12 +260,65 @@ function createProviderStub()
     };
 }
 
+function instrumentProvider( provider )
+{
+    provider.replaceCalls = [];
+    provider.latestResultsByUri = new Map();
+    provider.refreshCalls = 0;
+    provider.clearCalls = 0;
+    provider.rebuildCalls = 0;
+    provider.finalizeCalls = [];
+
+    var originalClear = provider.clear ? provider.clear.bind( provider ) : function() {};
+    var originalRebuild = provider.rebuild ? provider.rebuild.bind( provider ) : function() {};
+    var originalReplaceDocument = provider.replaceDocument ? provider.replaceDocument.bind( provider ) : function() {};
+    var originalFinalizePendingChanges = provider.finalizePendingChanges ? provider.finalizePendingChanges.bind( provider ) : function() {};
+    var originalRefresh = provider.refresh ? provider.refresh.bind( provider ) : function() {};
+
+    provider.clear = function()
+    {
+        this.clearCalls++;
+        this.latestResultsByUri.clear();
+        return originalClear.apply( this, arguments );
+    };
+    provider.rebuild = function()
+    {
+        this.rebuildCalls++;
+        return originalRebuild.apply( this, arguments );
+    };
+    provider.replaceDocument = function( uri, results )
+    {
+        var entry = { uri: uri, results: results };
+        this.replaceCalls.push( entry );
+        this.latestResultsByUri.set( uri.toString(), entry );
+        return originalReplaceDocument.apply( this, arguments );
+    };
+    provider.finalizePendingChanges = function( filter, options )
+    {
+        this.finalizeCalls.push( { filter: filter, options: options } );
+        return originalFinalizePendingChanges.apply( this, arguments );
+    };
+    provider.refresh = function()
+    {
+        this.refreshCalls++;
+        return originalRefresh.apply( this, arguments );
+    };
+
+    return provider;
+}
+
 function createVscodeStub( options )
 {
     var commandHandlers = {};
     var workspaceListeners = {};
     var windowListeners = {};
     var executedCommands = [];
+    var warningMessages = [];
+    var errorMessages = [];
+    var progressSessions = [];
+    var statusBarItems = [];
+    var treeViews = [];
+    var configurationUpdates = [];
     var automaticGitRefreshInterval = options.automaticGitRefreshInterval !== undefined ? options.automaticGitRefreshInterval : 0;
     var periodicRefreshInterval = options.periodicRefreshInterval !== undefined ? options.periodicRefreshInterval : 0;
     var visibleNotebookEditors = Object.prototype.hasOwnProperty.call( options, 'visibleNotebookEditors' ) ?
@@ -315,7 +376,7 @@ function createVscodeStub( options )
             ripgrepMaxBuffer: 200,
             usePatternFile: false
         }
-    } );
+    }, undefined, configurationUpdates );
 
     var generalSection = createConfigurationSection( {
             debug: false,
@@ -329,7 +390,7 @@ function createVscodeStub( options )
             tags: languageMatrix.DEFAULT_TAGS.slice(),
             tagGroups: {},
             schemes: [ 'file' ]
-        } );
+        }, undefined, configurationUpdates );
     var treeSection = createConfigurationSection( {
             autoRefresh: true,
             trackFile: false,
@@ -340,7 +401,7 @@ function createVscodeStub( options )
             scanAtStartup: true,
             hideTreeWhenEmpty: false,
             buttons: rootSection.get( 'tree.buttons' )
-        } );
+        }, undefined, configurationUpdates );
     var filteringSection = createConfigurationSection( {
             passGlobsToRipgrep: filteringDefaults.passGlobsToRipgrep,
             includeGlobs: filteringDefaults.includeGlobs.slice(),
@@ -350,7 +411,7 @@ function createVscodeStub( options )
             excludedWorkspaces: [],
             useBuiltInExcludes: filteringDefaults.useBuiltInExcludes,
             scopes: []
-        } );
+        }, undefined, configurationUpdates );
     var regexSection = createConfigurationSection( {
             regex: options.resourceConfig && options.resourceConfig.isDefaultRegex === true ?
                 actualUtils.DEFAULT_REGEX_SOURCE :
@@ -358,12 +419,12 @@ function createVscodeStub( options )
             regexCaseSensitive: true,
             enableMultiLine: false,
             subTagRegex: options.resourceConfig && options.resourceConfig.subTagRegex ? options.resourceConfig.subTagRegex : ''
-        } );
+        }, undefined, configurationUpdates );
     var ripgrepSection = createConfigurationSection( {
             ripgrepArgs: '',
             ripgrepMaxBuffer: 200,
             usePatternFile: false
-        } );
+        }, undefined, configurationUpdates );
 
     var sections = {
         'todo-tree': rootSection,
@@ -378,9 +439,9 @@ function createVscodeStub( options )
         'better-todo-tree.regex': regexSection,
         'todo-tree.ripgrep': ripgrepSection,
         'better-todo-tree.ripgrep': ripgrepSection,
-        'files.exclude': createConfigurationSection( {} ),
-        'search.exclude': createConfigurationSection( {} ),
-        'explorer': createConfigurationSection( { compactFolders: false } )
+        'files.exclude': createConfigurationSection( {}, undefined, configurationUpdates ),
+        'search.exclude': createConfigurationSection( {}, undefined, configurationUpdates ),
+        'explorer': createConfigurationSection( { compactFolders: false }, undefined, configurationUpdates )
     };
 
     function registerListener( store, name, listener )
@@ -389,23 +450,99 @@ function createVscodeStub( options )
         return { dispose: function() {} };
     }
 
-    function createTreeView()
+    function createTreeView( id, options )
     {
-        return {
+        var view = {
             badge: undefined,
             title: 'Tree',
             message: '',
             visible: false,
+            treeDataProvider: options && options.treeDataProvider,
+            revealCalls: [],
             onDidExpandElement: function( listener ) { return registerListener( windowListeners, 'expand', listener ); },
-            onDidCollapseElement: function( listener ) { return registerListener( windowListeners, 'collapse', listener ); }
+            onDidCollapseElement: function( listener ) { return registerListener( windowListeners, 'collapse', listener ); },
+            reveal: function( element, revealOptions )
+            {
+                this.revealCalls.push( {
+                    element: element,
+                    options: revealOptions
+                } );
+                return Promise.resolve();
+            }
         };
+
+        treeViews.push( view );
+        return view;
     }
+
+    function createProgressSession( options, callback )
+    {
+        var cancellationListeners = [];
+        var session = {
+            options: options,
+            reports: [],
+            completed: false,
+            cancel: function()
+            {
+                cancellationListeners.forEach( function( listener )
+                {
+                    listener();
+                } );
+            }
+        };
+        var progress = {
+            report: function( value )
+            {
+                session.reports.push( value );
+            }
+        };
+        var token = {
+            onCancellationRequested: function( listener )
+            {
+                cancellationListeners.push( listener );
+                return { dispose: function() {} };
+            }
+        };
+
+        progressSessions.push( session );
+
+        session.promise = Promise.resolve( callback( progress, token ) ).then( function( value )
+        {
+            session.completed = true;
+            return value;
+        } );
+
+        return session.promise;
+    }
+
+    function EventEmitter()
+    {
+        this.event = function() {};
+        this.fire = function() {};
+    }
+
+    function TreeItem( label )
+    {
+        this.label = label;
+    }
+
+    function ThemeIcon( name )
+    {
+        this.id = name;
+    }
+
+    ThemeIcon.Folder = new ThemeIcon( 'folder' );
+    ThemeIcon.File = new ThemeIcon( 'file' );
 
     return {
         commandHandlers: commandHandlers,
         workspaceListeners: workspaceListeners,
         windowListeners: windowListeners,
         executedCommands: executedCommands,
+        progressSessions: progressSessions,
+        statusBarItems: statusBarItems,
+        treeViews: treeViews,
+        configurationUpdates: configurationUpdates,
         extensions: {
             all: options.extensions || [ {
                 packageJSON: {
@@ -421,7 +558,16 @@ function createVscodeStub( options )
             } ]
         },
         StatusBarAlignment: { Left: 0 },
+        ProgressLocation: { Notification: 15, Window: 10 },
         ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
+        EventEmitter: EventEmitter,
+        TreeItem: TreeItem,
+        ThemeIcon: ThemeIcon,
+        TreeItemCollapsibleState: {
+            None: 0,
+            Collapsed: 1,
+            Expanded: 2
+        },
         ThemeColor: function( name ) { this.name = name; },
         Position: function( line, character ) { this.line = line; this.character = character; },
         Range: function( start, end ) { this.start = start; this.end = end; },
@@ -458,7 +604,7 @@ function createVscodeStub( options )
             visibleNotebookEditors: visibleNotebookEditors,
             createStatusBarItem: function()
             {
-                return {
+                var item = {
                     text: '',
                     tooltip: '',
                     command: undefined,
@@ -466,10 +612,16 @@ function createVscodeStub( options )
                     hide: function() {},
                     dispose: function() {}
                 };
+                statusBarItems.push( item );
+                return item;
             },
             createTreeView: function()
             {
-                return createTreeView();
+                return createTreeView.apply( undefined, arguments );
+            },
+            withProgress: function( progressOptions, task )
+            {
+                return createProgressSession( progressOptions, task );
             },
             createOutputChannel: function()
             {
@@ -479,14 +631,24 @@ function createVscodeStub( options )
                 };
             },
             showInformationMessage: function() { return Promise.resolve(); },
-            showWarningMessage: function() { return Promise.resolve(); },
-            showErrorMessage: function() { return Promise.resolve(); },
+            showWarningMessage: function( message )
+            {
+                warningMessages.push( message );
+                return Promise.resolve();
+            },
+            showErrorMessage: function( message )
+            {
+                errorMessages.push( message );
+                return Promise.resolve();
+            },
             showInputBox: function() { return Promise.resolve(); },
             showQuickPick: function() { return Promise.resolve(); },
             showTextDocument: function() { return Promise.resolve(); },
             onDidChangeActiveTextEditor: function( listener ) { return registerListener( workspaceListeners, 'activeEditor', listener ); },
             onDidChangeVisibleNotebookEditors: function( listener ) { return registerListener( windowListeners, 'visibleNotebookEditors', listener ); }
         },
+        warningMessages: warningMessages,
+        errorMessages: errorMessages,
         workspace: {
             workspaceFolders: options.workspaceFolders || [],
             registerTextDocumentContentProvider: function()
@@ -514,7 +676,7 @@ function createVscodeStub( options )
 
 function createExtensionHarness( options )
 {
-    var provider = createProviderStub();
+    var provider = options.useActualTreeProvider === true ? undefined : createProviderStub();
     var searchResults = createSearchResultsStub();
     var ripgrepSearchCalls = [];
     var scanDocumentCalls = [];
@@ -523,6 +685,7 @@ function createExtensionHarness( options )
     var readFileCalls = [];
     var ripgrepMatchLookup = new Map();
     var validSchemes = options.validSchemes || [ 'file', 'vscode-notebook-cell' ];
+    var treeStateOverrides = {};
     var notebookMetrics = {
         syncCalls: 0,
         getForDocumentCalls: 0,
@@ -554,8 +717,8 @@ function createExtensionHarness( options )
     } );
     var context = {
         subscriptions: { push: function() {} },
-        workspaceState: matrixHelpers.createWorkspaceState(),
-        globalState: matrixHelpers.createWorkspaceState(),
+        workspaceState: options.workspaceState || matrixHelpers.createWorkspaceState(),
+        globalState: options.globalState || matrixHelpers.createWorkspaceState(),
         storageUri: matrixHelpers.createUri( '/tmp/storage' ),
         globalStorageUri: matrixHelpers.createUri( '/tmp/global-storage' )
     };
@@ -602,6 +765,143 @@ function createExtensionHarness( options )
             };
         }
     } );
+    var configStub = {
+        init: function() {},
+        refreshTagGroupLookup: function() {},
+        setTreeStateOverride: function( key, value )
+        {
+            if( value === undefined )
+            {
+                delete treeStateOverrides[ key ];
+                return;
+            }
+
+            treeStateOverrides[ key ] = value;
+        },
+        setTreeStateOverrides: function( values )
+        {
+            Object.keys( values || {} ).forEach( function( key )
+            {
+                this.setTreeStateOverride( key, values[ key ] );
+            }, this );
+        },
+        ripgrepPath: function() { return '/tmp/rg'; },
+        regex: function()
+        {
+            return {
+                tags: languageMatrix.DEFAULT_TAGS.slice(),
+                regex: options.resourceConfig && options.resourceConfig.isDefaultRegex === true ?
+                    actualUtils.DEFAULT_REGEX_SOURCE :
+                    ( options.regexSource || '($TAGS)' ),
+                caseSensitive: options.resourceConfig && options.resourceConfig.regexCaseSensitive !== false,
+                multiLine: options.resourceConfig && options.resourceConfig.enableMultiLine === true
+            };
+        },
+        subTagRegex: function()
+        {
+            return options.resourceConfig && options.resourceConfig.subTagRegex ? options.resourceConfig.subTagRegex : '(^:\\s*)';
+        },
+        scanMode: function() { return options.scanMode; },
+        shouldIgnoreGitSubmodules: function() { return false; },
+        shouldUseBuiltInFileExcludes: function() { return false; },
+        shouldUseBuiltInSearchExcludes: function() { return false; },
+        shouldShowActivityBarBadge: function() { return false; },
+        shouldFlatten: function() { return Object.prototype.hasOwnProperty.call( treeStateOverrides, 'flat' ) ? treeStateOverrides.flat : context.workspaceState.get( 'flat', false ); },
+        shouldShowTagsOnly: function() { return Object.prototype.hasOwnProperty.call( treeStateOverrides, 'tagsOnly' ) ? treeStateOverrides.tagsOnly : context.workspaceState.get( 'tagsOnly', false ); },
+        clickingStatusBarShouldRevealTree: function() { return false; },
+        clickingStatusBarShouldToggleHighlights: function() { return false; },
+        tags: function() { return languageMatrix.DEFAULT_TAGS.slice(); },
+        shouldShowIconsInsteadOfTagsInStatusBar: function() { return false; },
+        shouldCompactFolders: function() { return false; },
+        isValidScheme: function( uri ) { return uri && validSchemes.indexOf( uri.scheme ) !== -1; },
+        labelFormat: function() { return '${tag} ${after}'; },
+        shouldShowScanModeInTree: function() { return false; },
+        shouldExpand: function() { return Object.prototype.hasOwnProperty.call( treeStateOverrides, 'expanded' ) ? treeStateOverrides.expanded : context.workspaceState.get( 'expanded', false ); },
+        shouldGroupByTag: function() { return Object.prototype.hasOwnProperty.call( treeStateOverrides, 'groupedByTag' ) ? treeStateOverrides.groupedByTag : context.workspaceState.get( 'groupedByTag', false ); },
+        shouldGroupBySubTag: function() { return Object.prototype.hasOwnProperty.call( treeStateOverrides, 'groupedBySubTag' ) ? treeStateOverrides.groupedBySubTag : context.workspaceState.get( 'groupedBySubTag', false ); },
+        shouldShowCounts: function() { return false; },
+        shouldHideIconsWhenGroupedByTag: function() { return false; },
+        tooltipFormat: function() { return '${filepath}, ${line}'; },
+        showFilterCaseSensitive: function() { return false; },
+        isRegexCaseSensitive: function() { return true; },
+        shouldHideFromTree: function() { return false; },
+        shouldHideFromStatusBar: function() { return false; },
+        shouldHideFromActivityBar: function() { return false; },
+        shouldSortTree: function() { return true; },
+        shouldSortTagsOnlyViewAlphabetically: function() { return false; },
+        showBadges: function() { return false; },
+        shouldUseColourScheme: function() { return false; },
+        defaultHighlight: function() { return {}; },
+        customHighlight: function() { return {}; },
+        foregroundColourScheme: function() { return []; },
+        backgroundColourScheme: function() { return []; },
+        tagGroup: function() { return undefined; }
+    };
+    var utilsStub = {
+        init: function() {},
+        isCodicon: function() { return false; },
+        getCommentPattern: function( candidate ) { return actualUtils.getCommentPattern( candidate ); },
+        getRegexSource: function() { return options.regexSource || '($TAGS)'; },
+        getTagRegexSource: function() { return 'TODO|FIXME|BUG|HACK|XXX|\\[ \\]|\\[x\\]'; },
+        isIncluded: function( name, includes, excludes )
+        {
+            if( typeof ( options.isIncludedImpl ) === 'function' )
+            {
+                return options.isIncludedImpl( name, includes, excludes );
+            }
+
+            return actualUtils.isIncluded( name, includes, excludes );
+        },
+        isHidden: function( filePath )
+        {
+            if( typeof ( options.isHiddenImpl ) === 'function' )
+            {
+                return options.isHiddenImpl( filePath );
+            }
+
+            return actualUtils.isHidden( filePath );
+        },
+        replaceEnvironmentVariables: function( value ) { return value; },
+        getSubmoduleExcludeGlobs: function() { return []; },
+        clearSubmoduleExcludeGlobCache: function() {},
+        formatLabel: function( template ) { return template; },
+        toGlobArray: function( value ) { return actualUtils.toGlobArray( value ); },
+        createFolderGlob: function() { return '**/*'; }
+    };
+    var treeIconsStub = {
+        getTreeIcon: function()
+        {
+            return { dark: '/tmp/icon.svg', light: '/tmp/icon.svg' };
+        }
+    };
+    var treeModule = options.useActualTreeProvider === true ?
+        helpers.loadWithStubs( '../src/tree.js', {
+            vscode: vscodeStub,
+            './config.js': configStub,
+            './utils.js': utilsStub,
+            './icons.js': treeIconsStub,
+            './extensionIdentity.js': extensionIdentity
+        } ) :
+        undefined;
+    var treeStub = options.useActualTreeProvider === true ?
+        {
+            TreeNodeProvider: function()
+            {
+                provider = instrumentProvider( new treeModule.TreeNodeProvider( arguments[ 0 ], arguments[ 1 ], arguments[ 2 ] ) );
+                return provider;
+            },
+            locateWorkspaceNode: treeModule.locateWorkspaceNode
+        } :
+        {
+            TreeNodeProvider: function()
+            {
+                return provider;
+            },
+            locateWorkspaceNode: function()
+            {
+                return undefined;
+            }
+        };
 
     var extensionStubs = {
         vscode: vscodeStub,
@@ -610,6 +910,11 @@ function createExtensionHarness( options )
             search: function( root, searchOptions, onEvent )
             {
                 ripgrepSearchCalls.push( searchOptions );
+
+                if( typeof ( options.ripgrepSearchImpl ) === 'function' )
+                {
+                    return options.ripgrepSearchImpl( root, searchOptions, onEvent );
+                }
 
                 var matchesByFile = new Map();
 
@@ -676,16 +981,7 @@ function createExtensionHarness( options )
                 return value && value.text !== undefined ? value.text : value;
             }
         },
-        './tree.js': {
-            TreeNodeProvider: function()
-            {
-                return provider;
-            },
-            locateWorkspaceNode: function()
-            {
-                return undefined;
-            }
-        },
+        './tree.js': treeStub,
         './colours.js': {
             validateColours: function() { return undefined; },
             validateIconColours: function() { return undefined; }
@@ -699,91 +995,8 @@ function createExtensionHarness( options )
             setScanResultsProvider: function() {},
             resetCaches: function() {}
         },
-        './config.js': {
-            init: function() {},
-            refreshTagGroupLookup: function() {},
-            ripgrepPath: function() { return '/tmp/rg'; },
-            regex: function()
-            {
-                return {
-                    tags: languageMatrix.DEFAULT_TAGS.slice(),
-                    regex: options.resourceConfig && options.resourceConfig.isDefaultRegex === true ?
-                        actualUtils.DEFAULT_REGEX_SOURCE :
-                        ( options.regexSource || '($TAGS)' ),
-                    caseSensitive: options.resourceConfig && options.resourceConfig.regexCaseSensitive !== false,
-                    multiLine: options.resourceConfig && options.resourceConfig.enableMultiLine === true
-                };
-            },
-            subTagRegex: function()
-            {
-                return options.resourceConfig && options.resourceConfig.subTagRegex ? options.resourceConfig.subTagRegex : '(^:\\s*)';
-            },
-            scanMode: function() { return options.scanMode; },
-            shouldIgnoreGitSubmodules: function() { return false; },
-            shouldUseBuiltInFileExcludes: function() { return false; },
-            shouldUseBuiltInSearchExcludes: function() { return false; },
-            shouldShowActivityBarBadge: function() { return false; },
-            shouldFlatten: function() { return false; },
-            shouldShowTagsOnly: function() { return false; },
-            clickingStatusBarShouldRevealTree: function() { return false; },
-            clickingStatusBarShouldToggleHighlights: function() { return false; },
-            tags: function() { return languageMatrix.DEFAULT_TAGS.slice(); },
-            shouldShowIconsInsteadOfTagsInStatusBar: function() { return false; },
-            shouldCompactFolders: function() { return false; },
-            isValidScheme: function( uri ) { return uri && validSchemes.indexOf( uri.scheme ) !== -1; },
-            labelFormat: function() { return '${tag} ${after}'; },
-            shouldShowScanModeInTree: function() { return false; },
-            shouldExpand: function() { return false; },
-            shouldGroupByTag: function() { return false; },
-            shouldGroupBySubTag: function() { return false; },
-            shouldShowCounts: function() { return false; },
-            shouldHideIconsWhenGroupedByTag: function() { return false; },
-            tooltipFormat: function() { return '${filepath}, ${line}'; },
-            showFilterCaseSensitive: function() { return false; },
-            isRegexCaseSensitive: function() { return true; },
-            shouldHideFromTree: function() { return false; },
-            shouldHideFromStatusBar: function() { return false; },
-            shouldHideFromActivityBar: function() { return false; },
-            shouldSortTree: function() { return true; },
-            showBadges: function() { return false; },
-            shouldUseColourScheme: function() { return false; },
-            defaultHighlight: function() { return {}; },
-            customHighlight: function() { return {}; },
-            foregroundColourScheme: function() { return []; },
-            backgroundColourScheme: function() { return []; },
-            tagGroup: function() { return undefined; }
-        },
-        './utils.js': {
-            init: function() {},
-            isCodicon: function() { return false; },
-            getCommentPattern: function( candidate ) { return actualUtils.getCommentPattern( candidate ); },
-            getRegexSource: function() { return options.regexSource || '($TAGS)'; },
-            getTagRegexSource: function() { return 'TODO|FIXME|BUG|HACK|XXX|\\[ \\]|\\[x\\]'; },
-            isIncluded: function( name, includes, excludes )
-            {
-                if( typeof ( options.isIncludedImpl ) === 'function' )
-                {
-                    return options.isIncludedImpl( name, includes, excludes );
-                }
-
-                return actualUtils.isIncluded( name, includes, excludes );
-            },
-            isHidden: function( filePath )
-            {
-                if( typeof ( options.isHiddenImpl ) === 'function' )
-                {
-                    return options.isHiddenImpl( filePath );
-                }
-
-                return actualUtils.isHidden( filePath );
-            },
-            replaceEnvironmentVariables: function( value ) { return value; },
-            getSubmoduleExcludeGlobs: function() { return []; },
-            clearSubmoduleExcludeGlobCache: function() {},
-            formatLabel: function( template ) { return template; },
-            toGlobArray: function( value ) { return actualUtils.toGlobArray( value ); },
-            createFolderGlob: function() { return '**/*'; }
-        },
+        './config.js': configStub,
+        './utils.js': utilsStub,
         './attributes.js': {
             init: function() {},
             getIcon: function() { return 'check'; }
@@ -854,6 +1067,15 @@ function createExtensionHarness( options )
             readFile: function( filePath, encoding, callback )
             {
                 readFileCalls.push( filePath );
+                if( typeof ( options.readFileImpl ) === 'function' )
+                {
+                    return options.readFileImpl( filePath, encoding, callback );
+                }
+                if( options.readFileErrors && options.readFileErrors[ filePath ] )
+                {
+                    callback( options.readFileErrors[ filePath ] );
+                    return;
+                }
                 callback( null, options.fileContents[ filePath ] );
             },
             promises: {
@@ -861,6 +1083,14 @@ function createExtensionHarness( options )
                 readFile: function( filePath )
                 {
                     readFileCalls.push( filePath );
+                    if( typeof ( options.readFilePromiseImpl ) === 'function' )
+                    {
+                        return options.readFilePromiseImpl( filePath );
+                    }
+                    if( options.readFileErrors && options.readFileErrors[ filePath ] )
+                    {
+                        return Promise.reject( options.readFileErrors[ filePath ] );
+                    }
                     return Promise.resolve( options.fileContents[ filePath ] );
                 },
                 readdir: function() { return Promise.resolve( [] ); },
@@ -882,7 +1112,10 @@ function createExtensionHarness( options )
     return {
         extension: extension,
         context: context,
-        provider: provider,
+        get provider()
+        {
+            return provider;
+        },
         ripgrepSearchCalls: ripgrepSearchCalls,
         scanDocumentCalls: scanDocumentCalls,
         scanTextCalls: scanTextCalls,
@@ -890,7 +1123,9 @@ function createExtensionHarness( options )
         readFileCalls: readFileCalls,
         notebookMetrics: notebookMetrics,
         vscode: vscodeStub,
-        windowListeners: vscodeStub.windowListeners
+        windowListeners: vscodeStub.windowListeners,
+        warningMessages: vscodeStub.warningMessages,
+        errorMessages: vscodeStub.errorMessages
     };
 }
 
@@ -935,6 +1170,23 @@ function waitForDelay( delay )
     {
         setTimeout( resolve, delay );
     } );
+}
+
+function createDeferred()
+{
+    var resolve;
+    var reject;
+    var promise = new Promise( function( promiseResolve, promiseReject )
+    {
+        resolve = promiseResolve;
+        reject = promiseReject;
+    } );
+
+    return {
+        promise: promise,
+        resolve: resolve,
+        reject: reject
+    };
 }
 
 function summarizeNotebookResults( results )
@@ -1778,6 +2030,1418 @@ QUnit.test( "workspace-only mode ignores external open documents", function( ass
     } );
 } );
 
+QUnit.test( "workspace scan resolves root-relative ripgrep paths back to absolute workspace files", function( assert )
+{
+    var fixture = [ {
+        uri: matrixHelpers.createUri( '/workspace/src/relative.py' ),
+        actualTag: 'TODO',
+        displayText: 'relative workspace item',
+        continuationText: []
+    } ];
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [ { fsPath: 'src/relative.py' } ],
+        workspaceResults: fixture,
+        fileContents: {
+            '/workspace/src/relative.py': '# TODO relative workspace item'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.readFileCalls.length, 1 );
+        assert.equal( harness.readFileCalls[ 0 ], '/workspace/src/relative.py' );
+        assert.equal( harness.scanTextCalls.length, 1 );
+        assert.equal( harness.scanTextCalls[ 0 ].uri.fsPath, '/workspace/src/relative.py' );
+        assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, fixture );
+    } );
+} );
+
+QUnit.test( "workspace and open files mode does not rescan workspace-covered documents when focus changes", function( assert )
+{
+    var firstDocument = matrixHelpers.createDocument( '/workspace/src/first.py', '# TODO first item' );
+    var secondDocument = matrixHelpers.createDocument( '/workspace/src/second.py', '# TODO second item' );
+    var workspaceFixture = [ {
+        uri: matrixHelpers.createUri( '/workspace/src/workspace.py' ),
+        actualTag: 'TODO',
+        displayText: 'workspace item',
+        continuationText: []
+    } ];
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        visibleTextEditors: [ { document: firstDocument }, { document: secondDocument } ],
+        activeTextEditor: { document: firstDocument },
+        ripgrepMatches: [ { fsPath: '/workspace/src/workspace.py' } ],
+        workspaceResults: workspaceFixture,
+        fileContents: {
+            '/workspace/src/workspace.py': '# TODO workspace item'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 0 );
+        assert.equal( harness.scanTextCalls.length, 1 );
+
+        harness.vscode.window.activeTextEditor = { document: secondDocument };
+        return harness.vscode.workspaceListeners.activeEditor( { document: secondDocument } );
+    } ).then( function()
+    {
+        return waitForDelay( 550 );
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 0 );
+        assert.equal( harness.scanTextCalls.length, 1 );
+        assert.deepEqual( harness.provider.replaceCalls.map( function( call ) { return call.uri.fsPath; } ), [
+            '/workspace/src/workspace.py'
+        ] );
+    } );
+} );
+
+QUnit.test( "workspace candidate scanning streams results before ripgrep finishes the workspace walk", function( assert )
+{
+    var releaseSearch = createDeferred();
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        scanTextImpl: function( uri )
+        {
+            return [ {
+                uri: uri,
+                actualTag: 'TODO',
+                displayText: path.basename( uri.fsPath ),
+                continuationText: []
+            } ];
+        },
+        ripgrepSearchImpl: function( root, searchOptions, onEvent )
+        {
+            onEvent( {
+                type: 'match',
+                data: {
+                    path: { text: './a.js' }
+                }
+            } );
+            onEvent( {
+                type: 'end',
+                data: {
+                    path: { text: './a.js' }
+                }
+            } );
+
+            return releaseSearch.promise.then( function()
+            {
+                onEvent( {
+                    type: 'match',
+                    data: {
+                        path: { text: './b.js' }
+                    }
+                } );
+                onEvent( {
+                    type: 'end',
+                    data: {
+                        path: { text: './b.js' }
+                    }
+                } );
+
+                return { stats: { matches: 2 } };
+            } );
+        },
+        timerStubs: {
+            setTimeout: function( callback )
+            {
+                callback();
+                return { callback: callback };
+            },
+            clearTimeout: function() {},
+            setInterval: function() { return {}; },
+            clearInterval: function() {}
+        },
+        fileContents: {
+            '/workspace/a.js': '# TODO a',
+            '/workspace/b.js': '# TODO b'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.deepEqual( harness.provider.replaceCalls.map( function( call ) { return call.uri.fsPath; } ), [
+            '/workspace/a.js'
+        ] );
+        assert.equal( harness.provider.finalizeCalls.some( function( call )
+        {
+            return call.options.forceFullRefresh === true;
+        } ), true );
+
+        releaseSearch.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.deepEqual( harness.provider.replaceCalls.map( function( call ) { return call.uri.fsPath; } ), [
+            '/workspace/a.js',
+            '/workspace/b.js'
+        ] );
+    } );
+} );
+
+QUnit.test( "view commands preserve streamed workspace results while a rebuild is still in flight", function( assert )
+{
+    var releaseSearch = createDeferred();
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        scanTextImpl: function( uri )
+        {
+            return [ {
+                uri: uri,
+                actualTag: 'TODO',
+                displayText: 'streamed item',
+                continuationText: []
+            } ];
+        },
+        ripgrepSearchImpl: function( root, searchOptions, onEvent )
+        {
+            onEvent( {
+                type: 'match',
+                data: {
+                    path: { text: './streamed.js' }
+                }
+            } );
+            onEvent( {
+                type: 'end',
+                data: {
+                    path: { text: './streamed.js' }
+                }
+            } );
+
+            return releaseSearch.promise.then( function()
+            {
+                return { stats: { matches: 1 } };
+            } );
+        },
+        timerStubs: {
+            setTimeout: function( callback )
+            {
+                callback();
+                return { callback: callback };
+            },
+            clearTimeout: function() {},
+            setInterval: function() { return {}; },
+            clearInterval: function() {}
+        },
+        fileContents: {
+            '/workspace/streamed.js': '# TODO streamed item'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.provider.latestResultsByUri.has( '/workspace/streamed.js' ), true );
+
+        harness.vscode.commandHandlers[ 'better-todo-tree.showFlatView' ]();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.provider.latestResultsByUri.has( '/workspace/streamed.js' ), true );
+        assert.equal( harness.provider.latestResultsByUri.get( '/workspace/streamed.js' ).results.length, 1 );
+
+        releaseSearch.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } );
+} );
+
+QUnit.test( "view commands wait for all workspace-state writes before refreshing", function( assert )
+{
+    var tagsOnlyWrite = createDeferred();
+    var workspaceStateValues = {};
+    var workspaceState = {
+        get: function( key, defaultValue )
+        {
+            return Object.prototype.hasOwnProperty.call( workspaceStateValues, key ) ? workspaceStateValues[ key ] : defaultValue;
+        },
+        update: function( key, value )
+        {
+            workspaceStateValues[ key ] = value;
+            if( key === 'tagsOnly' )
+            {
+                return tagsOnlyWrite.promise;
+            }
+
+            return Promise.resolve();
+        }
+    };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceState: workspaceState,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        var clearCallsBeforeRefresh = harness.provider.clearCalls;
+        harness.vscode.commandHandlers[ 'better-todo-tree.showFlatView' ]();
+
+        return matrixHelpers.flushAsyncWork().then( function()
+        {
+            assert.equal( harness.provider.clearCalls, clearCallsBeforeRefresh );
+
+            tagsOnlyWrite.resolve();
+            return matrixHelpers.flushAsyncWork();
+        } ).then( function()
+        {
+            assert.ok( harness.provider.clearCalls > clearCallsBeforeRefresh );
+            assert.equal( workspaceState.get( 'flat' ), true );
+            assert.equal( workspaceState.get( 'tagsOnly' ), false );
+        } );
+    } );
+} );
+
+QUnit.test( "later view commands are ignored while an earlier view write is still busy", function( assert )
+{
+    var flatViewWrite = createDeferred();
+    var workspaceStateValues = {};
+    var workspaceState = {
+        get: function( key, defaultValue )
+        {
+            return Object.prototype.hasOwnProperty.call( workspaceStateValues, key ) ? workspaceStateValues[ key ] : defaultValue;
+        },
+        update: function( key, value )
+        {
+            if( key === 'flat' && value === true )
+            {
+                return flatViewWrite.promise.then( function()
+                {
+                    workspaceStateValues[ key ] = value;
+                } );
+            }
+
+            workspaceStateValues[ key ] = value;
+            return Promise.resolve();
+        }
+    };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceState: workspaceState,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        harness.vscode.commandHandlers[ 'better-todo-tree.showFlatView' ]();
+        harness.vscode.commandHandlers[ 'better-todo-tree.showTreeView' ]();
+
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( workspaceState.get( 'flat', false ), false );
+
+        flatViewWrite.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( workspaceState.get( 'flat', false ), true );
+        assert.equal( workspaceState.get( 'tagsOnly', false ), false );
+    } );
+} );
+
+QUnit.test( "cycleViewStyle uses live workspace state for deterministic view transitions", function( assert )
+{
+    var workspaceStateValues = {
+        flat: false,
+        tagsOnly: false
+    };
+    var workspaceState = {
+        get: function( key, defaultValue )
+        {
+            return Object.prototype.hasOwnProperty.call( workspaceStateValues, key ) ? workspaceStateValues[ key ] : defaultValue;
+        },
+        update: function( key, value )
+        {
+            workspaceStateValues[ key ] = value;
+            return Promise.resolve();
+        }
+    };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceState: workspaceState,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.cycleViewStyle' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.deepEqual( workspaceStateValues, { flat: true, tagsOnly: false } );
+        return harness.vscode.commandHandlers[ 'better-todo-tree.cycleViewStyle' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.deepEqual( workspaceStateValues, { flat: false, tagsOnly: true } );
+        return harness.vscode.commandHandlers[ 'better-todo-tree.cycleViewStyle' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.deepEqual( workspaceStateValues, { flat: false, tagsOnly: false } );
+    } );
+} );
+
+QUnit.test( "cycleViewStyle uses immediate tree-state overrides when workspace persistence lags behind reads", function( assert )
+{
+    var visibleStateValues = {
+        flat: false,
+        tagsOnly: false
+    };
+    var updateCalls = [];
+    var workspaceState = {
+        get: function( key, defaultValue )
+        {
+            return Object.prototype.hasOwnProperty.call( visibleStateValues, key ) ? visibleStateValues[ key ] : defaultValue;
+        },
+        update: function( key, value )
+        {
+            updateCalls.push( { key: key, value: value } );
+            return Promise.resolve();
+        }
+    };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceState: workspaceState,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.showFlatView' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.cycleViewStyle' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.deepEqual( updateCalls.slice( 0, 4 ), [
+            { key: 'tagsOnly', value: false },
+            { key: 'flat', value: true },
+            { key: 'flat', value: false },
+            { key: 'tagsOnly', value: true }
+        ] );
+    } );
+} );
+
+QUnit.test( "cycleViewStyle ignores repeated clicks while the current view mutation is still in flight", function( assert )
+{
+    var writeDeferred = createDeferred();
+    var updateCalls = [];
+    var workspaceState = {
+        get: function( key, defaultValue )
+        {
+            if( key === 'flat' )
+            {
+                return false;
+            }
+
+            if( key === 'tagsOnly' )
+            {
+                return false;
+            }
+
+            return defaultValue;
+        },
+        update: function( key, value )
+        {
+            updateCalls.push( { key: key, value: value } );
+            return writeDeferred.promise;
+        }
+    };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceState: workspaceState,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        harness.vscode.commandHandlers[ 'better-todo-tree.cycleViewStyle' ]();
+        harness.vscode.commandHandlers[ 'better-todo-tree.cycleViewStyle' ]();
+        harness.vscode.commandHandlers[ 'better-todo-tree.cycleViewStyle' ]();
+
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.deepEqual( updateCalls, [
+            { key: 'tagsOnly', value: false },
+            { key: 'flat', value: true }
+        ] );
+
+        writeDeferred.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } );
+} );
+
+QUnit.test( "explicit view changes refresh the tree immediately instead of waiting for the generic debounce", function( assert )
+{
+    var scheduledTimeouts = [];
+    var workspaceStateValues = {
+        flat: false,
+        tagsOnly: false
+    };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceState: {
+            get: function( key, defaultValue )
+            {
+                return Object.prototype.hasOwnProperty.call( workspaceStateValues, key ) ? workspaceStateValues[ key ] : defaultValue;
+            },
+            update: function( key, value )
+            {
+                workspaceStateValues[ key ] = value;
+                return Promise.resolve();
+            }
+        },
+        timerStubs: {
+            setTimeout: function( callback, delay )
+            {
+                scheduledTimeouts.push( { callback: callback, delay: delay } );
+                return { callback: callback, delay: delay };
+            },
+            clearTimeout: function() {},
+            setInterval: function() { return {}; },
+            clearInterval: function() {}
+        },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        var baselineRefreshCalls = harness.provider.refreshCalls;
+        var baselineDebouncedRefreshTimers = scheduledTimeouts.filter( function( entry )
+        {
+            return entry.delay === 200;
+        } ).length;
+        return harness.vscode.commandHandlers[ 'better-todo-tree.showFlatView' ]().then( function()
+        {
+            return matrixHelpers.flushAsyncWork().then( function()
+            {
+                assert.equal( harness.provider.refreshCalls, baselineRefreshCalls + 1 );
+                assert.equal( scheduledTimeouts.filter( function( entry )
+                {
+                    return entry.delay === 200;
+                } ).length, baselineDebouncedRefreshTimers );
+            } );
+        } );
+    } );
+} );
+
+QUnit.test( "showTreeView rebuilds the actual provider even when workspace state already says tree", function( assert )
+{
+    var workspaceState = matrixHelpers.createWorkspaceState( {
+        flat: false,
+        tagsOnly: true
+    } );
+    var workspaceResult = {
+        uri: matrixHelpers.createUri( '/workspace/src/nested/file.js' ),
+        line: 1,
+        column: 1,
+        endLine: 1,
+        endColumn: 5,
+        actualTag: 'TODO',
+        displayText: 'view item',
+        before: '',
+        after: 'view item',
+        continuationText: [],
+        match: 'TODO view item'
+    };
+    var harness = createExtensionHarness( {
+        useActualTreeProvider: true,
+        scanMode: 'workspace',
+        workspaceState: workspaceState,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [ { fsPath: '/workspace/src/nested/file.js' } ],
+        workspaceResults: [ workspaceResult ],
+        fileContents: {
+            '/workspace/src/nested/file.js': '// TODO view item'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.provider.getChildren()[ 0 ].label, 'TODO view item' );
+
+        return workspaceState.update( 'tagsOnly', false );
+    } ).then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.showTreeView' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        var rootNode = harness.provider.getChildren()[ 0 ];
+
+        assert.equal( harness.vscode.treeViews[ 0 ].title, 'Tree' );
+        assert.equal( rootNode.label, 'workspace' );
+        assert.equal( harness.provider.getChildren( rootNode )[ 0 ].label, 'src' );
+    } );
+} );
+
+QUnit.test( "cycleViewStyle rebuilds the actual provider layout on every click", function( assert )
+{
+    var workspaceResult = {
+        uri: matrixHelpers.createUri( '/workspace/src/nested/file.js' ),
+        line: 1,
+        column: 1,
+        endLine: 1,
+        endColumn: 5,
+        actualTag: 'TODO',
+        displayText: 'view item',
+        before: '',
+        after: 'view item',
+        continuationText: [],
+        match: 'TODO view item'
+    };
+    var harness = createExtensionHarness( {
+        useActualTreeProvider: true,
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [ { fsPath: '/workspace/src/nested/file.js' } ],
+        workspaceResults: [ workspaceResult ],
+        fileContents: {
+            '/workspace/src/nested/file.js': '// TODO view item'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        var treeRoot = harness.provider.getChildren()[ 0 ];
+
+        assert.equal( harness.vscode.treeViews[ 0 ].title, 'Tree' );
+        assert.equal( treeRoot.label, 'workspace' );
+        assert.equal( harness.provider.getChildren( treeRoot )[ 0 ].label, 'src' );
+
+        return harness.vscode.commandHandlers[ 'better-todo-tree.cycleViewStyle' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        var flatRoot = harness.provider.getChildren()[ 0 ];
+
+        assert.equal( harness.vscode.treeViews[ 0 ].title, 'Flat' );
+        assert.equal( flatRoot.label, 'workspace' );
+        assert.equal( harness.provider.getChildren( flatRoot )[ 0 ].label, 'file.js' );
+
+        return harness.vscode.commandHandlers[ 'better-todo-tree.cycleViewStyle' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.vscode.treeViews[ 0 ].title, 'Tags' );
+        assert.equal( harness.provider.getChildren()[ 0 ].label, 'TODO view item' );
+
+        return harness.vscode.commandHandlers[ 'better-todo-tree.cycleViewStyle' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        var treeRoot = harness.provider.getChildren()[ 0 ];
+
+        assert.equal( harness.vscode.treeViews[ 0 ].title, 'Tree' );
+        assert.equal( treeRoot.label, 'workspace' );
+        assert.equal( harness.provider.getChildren( treeRoot )[ 0 ].label, 'src' );
+    } );
+} );
+
+QUnit.test( "grouping commands rebuild the actual provider roots between grouped and ungrouped tags", function( assert )
+{
+    var workspaceState = matrixHelpers.createWorkspaceState( {
+        flat: false,
+        tagsOnly: true,
+        groupedByTag: false
+    } );
+    var workspaceResults = [
+        {
+            uri: matrixHelpers.createUri( '/workspace/src/file.js' ),
+            line: 1,
+            column: 1,
+            endLine: 1,
+            endColumn: 5,
+            actualTag: 'TODO',
+            displayText: 'todo item one',
+            before: '',
+            after: 'todo item one',
+            continuationText: [],
+            match: 'TODO todo item one'
+        },
+        {
+            uri: matrixHelpers.createUri( '/workspace/src/file.js' ),
+            line: 2,
+            column: 1,
+            endLine: 2,
+            endColumn: 6,
+            actualTag: 'FIXME',
+            displayText: 'fixme item one',
+            before: '',
+            after: 'fixme item one',
+            continuationText: [],
+            match: 'FIXME fixme item one'
+        },
+        {
+            uri: matrixHelpers.createUri( '/workspace/src/file.js' ),
+            line: 3,
+            column: 1,
+            endLine: 3,
+            endColumn: 5,
+            actualTag: 'TODO',
+            displayText: 'todo item two',
+            before: '',
+            after: 'todo item two',
+            continuationText: [],
+            match: 'TODO todo item two'
+        },
+        {
+            uri: matrixHelpers.createUri( '/workspace/src/file.js' ),
+            line: 4,
+            column: 1,
+            endLine: 4,
+            endColumn: 6,
+            actualTag: 'FIXME',
+            displayText: 'fixme item two',
+            before: '',
+            after: 'fixme item two',
+            continuationText: [],
+            match: 'FIXME fixme item two'
+        }
+    ];
+    var harness = createExtensionHarness( {
+        useActualTreeProvider: true,
+        scanMode: 'workspace',
+        workspaceState: workspaceState,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [ { fsPath: '/workspace/src/file.js' } ],
+        workspaceResults: workspaceResults,
+        fileContents: {
+            '/workspace/src/file.js': '// TODO todo item one\n// FIXME fixme item one\n// TODO todo item two\n// FIXME fixme item two'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.deepEqual( harness.provider.getChildren().map( function( node ) { return node.label; } ), [
+            'FIXME fixme item one',
+            'FIXME fixme item two',
+            'TODO todo item one',
+            'TODO todo item two'
+        ] );
+        return harness.vscode.commandHandlers[ 'better-todo-tree.groupByTag' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        var roots = harness.provider.getChildren();
+
+        assert.deepEqual( roots.map( function( node ) { return node.label; } ), [ 'FIXME', 'TODO' ] );
+        assert.deepEqual( harness.provider.getChildren( roots[ 0 ] ).map( function( node ) { return node.label; } ), [
+            'fixme item one',
+            'fixme item two'
+        ] );
+        assert.deepEqual( harness.provider.getChildren( roots[ 1 ] ).map( function( node ) { return node.label; } ), [
+            'todo item one',
+            'todo item two'
+        ] );
+
+        return harness.vscode.commandHandlers[ 'better-todo-tree.ungroupByTag' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.deepEqual( harness.provider.getChildren().map( function( node ) { return node.label; } ), [
+            'FIXME fixme item one',
+            'FIXME fixme item two',
+            'TODO todo item one',
+            'TODO todo item two'
+        ] );
+    } );
+} );
+
+QUnit.test( "expansion commands rebuild the actual provider collapsible state", function( assert )
+{
+    var workspaceState = matrixHelpers.createWorkspaceState( {
+        expanded: false
+    } );
+    var workspaceResult = {
+        uri: matrixHelpers.createUri( '/workspace/src/nested/file.js' ),
+        line: 1,
+        column: 1,
+        endLine: 1,
+        endColumn: 5,
+        actualTag: 'TODO',
+        displayText: 'expand item',
+        before: '',
+        after: 'expand item',
+        continuationText: [],
+        match: 'TODO expand item'
+    };
+    var harness = createExtensionHarness( {
+        useActualTreeProvider: true,
+        scanMode: 'workspace',
+        workspaceState: workspaceState,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [ { fsPath: '/workspace/src/nested/file.js' } ],
+        workspaceResults: [ workspaceResult ],
+        fileContents: {
+            '/workspace/src/nested/file.js': '// TODO expand item'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        var rootNode = harness.provider.getChildren()[ 0 ];
+        assert.equal( harness.provider.getTreeItem( rootNode ).collapsibleState, harness.vscode.TreeItemCollapsibleState.Collapsed );
+        assert.deepEqual( harness.vscode.treeViews[ 0 ].revealCalls, [] );
+
+        return harness.vscode.commandHandlers[ 'better-todo-tree.expand' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        var rootNode = harness.provider.getChildren()[ 0 ];
+        assert.equal( harness.provider.getTreeItem( rootNode ).collapsibleState, harness.vscode.TreeItemCollapsibleState.Expanded );
+        assert.equal( harness.vscode.treeViews[ 0 ].revealCalls.length, 1 );
+        assert.strictEqual( harness.vscode.treeViews[ 0 ].revealCalls[ 0 ].element, rootNode );
+        assert.ok( harness.vscode.treeViews[ 0 ].revealCalls[ 0 ].options.expand >= 1 );
+        assert.deepEqual( harness.vscode.executedCommands.filter( function( call )
+        {
+            return call[ 0 ] === 'workbench.actions.treeView.todo-tree-view.collapseAll';
+        } ), [] );
+
+        return harness.vscode.commandHandlers[ 'better-todo-tree.collapse' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        var rootNode = harness.provider.getChildren()[ 0 ];
+        assert.equal( harness.provider.getTreeItem( rootNode ).collapsibleState, harness.vscode.TreeItemCollapsibleState.Collapsed );
+        assert.deepEqual( harness.vscode.executedCommands.filter( function( call )
+        {
+            return call[ 0 ] === 'workbench.actions.treeView.todo-tree-view.collapseAll';
+        } ), [
+            [ 'workbench.actions.treeView.todo-tree-view.collapseAll' ]
+        ] );
+    } );
+} );
+
+QUnit.test( "toggleTreeExpansion drives live expand and collapse operations on the actual tree view", function( assert )
+{
+    var workspaceStateValues = {
+        expanded: false
+    };
+    var workspaceState = {
+        get: function( key, defaultValue )
+        {
+            return Object.prototype.hasOwnProperty.call( workspaceStateValues, key ) ? workspaceStateValues[ key ] : defaultValue;
+        },
+        update: function( key, value )
+        {
+            workspaceStateValues[ key ] = value;
+            return Promise.resolve();
+        }
+    };
+    var workspaceResult = {
+        uri: matrixHelpers.createUri( '/workspace/src/deep/nested/file.js' ),
+        line: 1,
+        column: 1,
+        endLine: 1,
+        endColumn: 5,
+        actualTag: 'TODO',
+        displayText: 'toggle item',
+        before: '',
+        after: 'toggle item',
+        continuationText: [],
+        match: 'TODO toggle item'
+    };
+    var harness = createExtensionHarness( {
+        useActualTreeProvider: true,
+        scanMode: 'workspace',
+        workspaceState: workspaceState,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [ { fsPath: '/workspace/src/deep/nested/file.js' } ],
+        workspaceResults: [ workspaceResult ],
+        fileContents: {
+            '/workspace/src/deep/nested/file.js': '// TODO toggle item'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.toggleTreeExpansion' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( workspaceStateValues.expanded, true );
+        assert.equal( harness.vscode.treeViews[ 0 ].revealCalls.length, 1 );
+        assert.ok( harness.vscode.treeViews[ 0 ].revealCalls[ 0 ].options.expand >= 3 );
+
+        return harness.vscode.commandHandlers[ 'better-todo-tree.toggleTreeExpansion' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( workspaceStateValues.expanded, false );
+        assert.deepEqual( harness.vscode.executedCommands.filter( function( call )
+        {
+            return call[ 0 ] === 'workbench.actions.treeView.todo-tree-view.collapseAll';
+        } ), [
+            [ 'workbench.actions.treeView.todo-tree-view.collapseAll' ]
+        ] );
+    } );
+} );
+
+QUnit.test( "view changes and expansion mutations stay serialized across the actual tree view", function( assert )
+{
+    var workspaceStateValues = {
+        flat: false,
+        tagsOnly: false,
+        expanded: false
+    };
+    var workspaceState = {
+        get: function( key, defaultValue )
+        {
+            return Object.prototype.hasOwnProperty.call( workspaceStateValues, key ) ? workspaceStateValues[ key ] : defaultValue;
+        },
+        update: function( key, value )
+        {
+            workspaceStateValues[ key ] = value;
+            return Promise.resolve();
+        }
+    };
+    var workspaceResult = {
+        uri: matrixHelpers.createUri( '/workspace/src/deep/nested/file.js' ),
+        line: 1,
+        column: 1,
+        endLine: 1,
+        endColumn: 5,
+        actualTag: 'TODO',
+        displayText: 'mixed action item',
+        before: '',
+        after: 'mixed action item',
+        continuationText: [],
+        match: 'TODO mixed action item'
+    };
+    var harness = createExtensionHarness( {
+        useActualTreeProvider: true,
+        scanMode: 'workspace',
+        workspaceState: workspaceState,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [ { fsPath: '/workspace/src/deep/nested/file.js' } ],
+        workspaceResults: [ workspaceResult ],
+        fileContents: {
+            '/workspace/src/deep/nested/file.js': '// TODO mixed action item'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        harness.vscode.commandHandlers[ 'better-todo-tree.showFlatView' ]();
+        harness.vscode.commandHandlers[ 'better-todo-tree.expand' ]();
+
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        var flatRoot = harness.provider.getChildren()[ 0 ];
+
+        assert.equal( harness.vscode.treeViews[ 0 ].title, 'Flat' );
+        assert.equal( workspaceStateValues.flat, true );
+        assert.equal( workspaceStateValues.expanded, true );
+        assert.equal( flatRoot.label, 'workspace' );
+        assert.equal( harness.provider.getChildren( flatRoot )[ 0 ].label, 'file.js' );
+        assert.equal( harness.vscode.treeViews[ 0 ].revealCalls.length, 1 );
+
+        harness.vscode.commandHandlers[ 'better-todo-tree.showTagsOnlyView' ]();
+        harness.vscode.commandHandlers[ 'better-todo-tree.collapse' ]();
+
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.vscode.treeViews[ 0 ].title, 'Tags' );
+        assert.equal( workspaceStateValues.tagsOnly, true );
+        assert.equal( workspaceStateValues.expanded, false );
+        assert.equal( harness.provider.getChildren()[ 0 ].label, 'TODO mixed action item' );
+        assert.deepEqual( harness.vscode.executedCommands.filter( function( call )
+        {
+            return call[ 0 ] === 'workbench.actions.treeView.todo-tree-view.collapseAll';
+        } ), [
+            [ 'workbench.actions.treeView.todo-tree-view.collapseAll' ]
+        ] );
+    } );
+} );
+
+QUnit.test( "grouping commands ignore repeated clicks while the current grouping mutation is still in flight", function( assert )
+{
+    var writeDeferred = createDeferred();
+    var updateCalls = [];
+    var workspaceState = {
+        get: function( key, defaultValue )
+        {
+            if( key === 'groupedByTag' )
+            {
+                return false;
+            }
+
+            return defaultValue;
+        },
+        update: function( key, value )
+        {
+            updateCalls.push( { key: key, value: value } );
+            return writeDeferred.promise;
+        }
+    };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceState: workspaceState,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        harness.vscode.commandHandlers[ 'better-todo-tree.groupByTag' ]();
+        harness.vscode.commandHandlers[ 'better-todo-tree.groupByTag' ]();
+        harness.vscode.commandHandlers[ 'better-todo-tree.groupByTag' ]();
+
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.deepEqual( updateCalls, [
+            { key: 'groupedByTag', value: true }
+        ] );
+
+        writeDeferred.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } );
+} );
+
+QUnit.test( "expansion commands ignore repeated clicks while the current expansion mutation is still in flight", function( assert )
+{
+    var writeDeferred = createDeferred();
+    var updateCalls = [];
+    var workspaceState = {
+        get: function( key, defaultValue )
+        {
+            if( key === 'expanded' )
+            {
+                return false;
+            }
+
+            return defaultValue;
+        },
+        update: function( key, value )
+        {
+            updateCalls.push( { key: key, value: value } );
+            return writeDeferred.promise;
+        }
+    };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceState: workspaceState,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        harness.vscode.commandHandlers[ 'better-todo-tree.expand' ]();
+        harness.vscode.commandHandlers[ 'better-todo-tree.expand' ]();
+        harness.vscode.commandHandlers[ 'better-todo-tree.expand' ]();
+
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.deepEqual( updateCalls, [
+            { key: 'expanded', value: true }
+        ] );
+
+        writeDeferred.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } );
+} );
+
+QUnit.test( "scan mode button commands return the underlying setting write promise", function( assert )
+{
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        var commands = [
+            'better-todo-tree.scanWorkspaceAndOpenFiles',
+            'better-todo-tree.scanOpenFilesOnly',
+            'better-todo-tree.scanCurrentFileOnly',
+            'better-todo-tree.scanWorkspaceOnly'
+        ];
+
+        return commands.reduce( function( promise, commandName )
+        {
+            return promise.then( function()
+            {
+                return harness.vscode.commandHandlers[ commandName ]();
+            } );
+        }, Promise.resolve() );
+    } ).then( function()
+    {
+        assert.deepEqual( harness.vscode.configurationUpdates.slice( -4 ), [
+            { key: 'tree.scanMode', value: 'workspace', target: harness.vscode.ConfigurationTarget.Workspace },
+            { key: 'tree.scanMode', value: 'open files', target: harness.vscode.ConfigurationTarget.Workspace },
+            { key: 'tree.scanMode', value: 'current file', target: harness.vscode.ConfigurationTarget.Workspace },
+            { key: 'tree.scanMode', value: 'workspace only', target: harness.vscode.ConfigurationTarget.Workspace }
+        ] );
+    } );
+} );
+
+QUnit.test( "toggleTreeExpansion uses live workspace state for deterministic expansion toggles", function( assert )
+{
+    var workspaceStateValues = {
+        expanded: false
+    };
+    var workspaceState = {
+        get: function( key, defaultValue )
+        {
+            return Object.prototype.hasOwnProperty.call( workspaceStateValues, key ) ? workspaceStateValues[ key ] : defaultValue;
+        },
+        update: function( key, value )
+        {
+            workspaceStateValues[ key ] = value;
+            return Promise.resolve();
+        }
+    };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceState: workspaceState,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.toggleTreeExpansion' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( workspaceStateValues.expanded, true );
+        return harness.vscode.commandHandlers[ 'better-todo-tree.toggleTreeExpansion' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( workspaceStateValues.expanded, false );
+    } );
+} );
+
+QUnit.test( "workspace scans publish progress, current target, and clear the tree message when complete", function( assert )
+{
+    var releaseSearch = createDeferred();
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        scanTextImpl: function( uri )
+        {
+            return [ {
+                uri: uri,
+                actualTag: 'TODO',
+                displayText: path.basename( uri.fsPath ),
+                continuationText: []
+            } ];
+        },
+        ripgrepSearchImpl: function( root, searchOptions, onEvent )
+        {
+            onEvent( {
+                type: 'match',
+                data: {
+                    path: { text: './tracked.js' }
+                }
+            } );
+            onEvent( {
+                type: 'end',
+                data: {
+                    path: { text: './tracked.js' }
+                }
+            } );
+
+            return releaseSearch.promise.then( function()
+            {
+                return { stats: { matches: 1 } };
+            } );
+        },
+        fileContents: {
+            '/workspace/tracked.js': '# TODO tracked'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.vscode.progressSessions.length, 1 );
+        assert.equal( harness.vscode.progressSessions[ 0 ].options.location, harness.vscode.ProgressLocation.Notification );
+        assert.equal( harness.vscode.progressSessions[ 0 ].reports.length > 0, true );
+        assert.equal( harness.vscode.progressSessions[ 0 ].reports.some( function( report )
+        {
+            return typeof report.message === 'string' && report.message.indexOf( 'tracked.js' ) >= 0;
+        } ), true );
+        assert.equal( harness.vscode.treeViews[ 0 ].message.indexOf( 'tracked.js' ) >= 0, true );
+        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( 'Better Todo Tree' ) >= 0, true );
+        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '100%' ) === -1, true );
+
+        releaseSearch.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.vscode.progressSessions[ 0 ].completed, true );
+        assert.equal( harness.vscode.treeViews[ 0 ].message, '' );
+        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '100%' ) === -1, true );
+    } );
+} );
+
+QUnit.test( "scan progress cancellation interrupts the active scan and surfaces a cancellation message", function( assert )
+{
+    var releaseSearch = createDeferred();
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepSearchImpl: function()
+        {
+            return releaseSearch.promise;
+        },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.vscode.progressSessions.length, 1 );
+        harness.vscode.progressSessions[ 0 ].cancel();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.vscode.progressSessions[ 0 ].completed, true );
+        assert.equal( harness.vscode.statusBarItems[ 0 ].text, 'Better Todo Tree: Scanning interrupted.' );
+        assert.equal( harness.vscode.treeViews[ 0 ].message, 'Scan cancelled.' );
+    } );
+} );
+
+QUnit.test( "view refreshes during a streamed rebuild keep earlier workspace results after later streamed files arrive", function( assert )
+{
+    var releaseSearch = createDeferred();
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        scanTextImpl: function( uri )
+        {
+            return [ {
+                uri: uri,
+                actualTag: 'TODO',
+                displayText: path.basename( uri.fsPath ),
+                continuationText: []
+            } ];
+        },
+        ripgrepSearchImpl: function( root, searchOptions, onEvent )
+        {
+            onEvent( {
+                type: 'match',
+                data: {
+                    path: { text: './first.js' }
+                }
+            } );
+            onEvent( {
+                type: 'end',
+                data: {
+                    path: { text: './first.js' }
+                }
+            } );
+
+            return releaseSearch.promise.then( function()
+            {
+                onEvent( {
+                    type: 'match',
+                    data: {
+                        path: { text: './second.js' }
+                    }
+                } );
+                onEvent( {
+                    type: 'end',
+                    data: {
+                        path: { text: './second.js' }
+                    }
+                } );
+
+                return { stats: { matches: 2 } };
+            } );
+        },
+        timerStubs: {
+            setTimeout: function( callback )
+            {
+                callback();
+                return { callback: callback };
+            },
+            clearTimeout: function() {},
+            setInterval: function() { return {}; },
+            clearInterval: function() {}
+        },
+        fileContents: {
+            '/workspace/first.js': '# TODO first',
+            '/workspace/second.js': '# TODO second'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.provider.latestResultsByUri.has( '/workspace/first.js' ), true );
+
+        harness.vscode.commandHandlers[ 'better-todo-tree.showFlatView' ]();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        releaseSearch.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.provider.latestResultsByUri.has( '/workspace/first.js' ), true );
+        assert.equal( harness.provider.latestResultsByUri.has( '/workspace/second.js' ), true );
+    } );
+} );
+
+QUnit.test( "workspace scan keeps successful results when one workspace file read fails", function( assert )
+{
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        scanTextImpl: function( uri )
+        {
+            return [ {
+                uri: uri,
+                actualTag: 'TODO',
+                displayText: path.basename( uri.fsPath ),
+                continuationText: []
+            } ];
+        },
+        ripgrepMatches: [
+            { fsPath: './good.js' },
+            { fsPath: './bad.js' }
+        ],
+        readFileErrors: {
+            '/workspace/bad.js': new Error( 'read failed' )
+        },
+        fileContents: {
+            '/workspace/good.js': '# TODO good'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.deepEqual( harness.provider.replaceCalls.map( function( call ) { return call.uri.fsPath; } ), [
+            '/workspace/good.js'
+        ] );
+        assert.equal( harness.warningMessages.length, 1 );
+        assert.equal( harness.warningMessages[ 0 ].indexOf( '/workspace/bad.js' ) > -1, true );
+        assert.equal( harness.errorMessages.length, 0 );
+    } );
+} );
+
 QUnit.test( "issue #820 workspace mode uses tag-only candidate search before reparsing Python files", function( assert )
 {
     var pythonText = [
@@ -1978,6 +3642,47 @@ QUnit.test( "workspace mode custom regex scanning normalizes ripgrep matches int
     {
         assert.equal( harness.normalizeCalls.length, 2 );
         assert.equal( harness.scanTextCalls.length, 0 );
+        assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, canonicalFixture );
+    } );
+} );
+
+QUnit.test( "workspace mode custom regex scanning resolves root-relative ripgrep paths before normalization", function( assert )
+{
+    var canonicalFixture = [
+        {
+            uri: matrixHelpers.createUri( '/workspace/src/relative-custom.js' ),
+            actualTag: 'TODO',
+            displayText: 'relative custom item',
+            continuationText: []
+        }
+    ];
+    var ripgrepMatches = [
+        { fsPath: 'src/relative-custom.js', line: 1, column: 1, match: 'TODO relative custom item' }
+    ];
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        regexSource: '($TAGS)',
+        resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: ripgrepMatches,
+        normalizeResult: function()
+        {
+            return canonicalFixture[ 0 ];
+        },
+        fileContents: {
+            '/workspace/src/relative-custom.js': 'TODO relative custom item'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.readFileCalls.length, 1 );
+        assert.equal( harness.readFileCalls[ 0 ], '/workspace/src/relative-custom.js' );
+        assert.equal( harness.normalizeCalls.length, 1 );
+        assert.equal( harness.normalizeCalls[ 0 ].uri.fsPath, '/workspace/src/relative-custom.js' );
+        assert.equal( harness.normalizeCalls[ 0 ].match.fsPath, '/workspace/src/relative-custom.js' );
         assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, canonicalFixture );
     } );
 } );

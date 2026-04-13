@@ -15,9 +15,11 @@ var commandSuffixes = [
     'showFlatView',
     'showTagsOnlyView',
     'showTreeView',
+    'cycleViewStyle',
     'refresh',
     'expand',
     'collapse',
+    'toggleTreeExpansion',
     'filter',
     'filterClear',
     'groupByTag',
@@ -48,6 +50,8 @@ var commandSuffixes = [
     'revealInFile',
     'openUrl',
     'stopScan',
+    'treeStateBusy',
+    'scanBusy',
     'onStatusBarClicked',
     'importLegacySettings'
 ];
@@ -79,7 +83,12 @@ var contextSuffixes = [
     'can-toggle-compact-folders',
     'has-sub-tags',
     'scan-mode',
-    'is-empty'
+    'is-empty',
+    'tree-state-busy',
+    'view-style-busy',
+    'expansion-busy',
+    'grouping-busy',
+    'scan-busy'
 ];
 
 function buildCommandMap( namespace, suffixes )

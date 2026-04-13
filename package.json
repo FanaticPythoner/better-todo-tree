@@ -65,57 +65,57 @@
                 },
                 {
                     "command": "better-todo-tree.scanOpenFilesOnly",
-                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode == 'workspace only' && better-todo-tree-show-scan-mode-button == true",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode == 'workspace only' && better-todo-tree-show-scan-mode-button == true && better-todo-tree-scan-busy == false",
                     "group": "navigation@3"
                 },
                 {
                     "command": "better-todo-tree.scanCurrentFileOnly",
-                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode == 'open files' && better-todo-tree-show-scan-mode-button == true",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode == 'open files' && better-todo-tree-show-scan-mode-button == true && better-todo-tree-scan-busy == false",
                     "group": "navigation@3"
                 },
                 {
                     "command": "better-todo-tree.scanWorkspaceAndOpenFiles",
-                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode == 'current file' && better-todo-tree-show-scan-mode-button == true",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode == 'current file' && better-todo-tree-show-scan-mode-button == true && better-todo-tree-scan-busy == false",
                     "group": "navigation@3"
                 },
                 {
                     "command": "better-todo-tree.scanWorkspaceOnly",
-                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode == 'workspace' && better-todo-tree-show-scan-mode-button == true",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-scan-mode == 'workspace' && better-todo-tree-show-scan-mode-button == true && better-todo-tree-scan-busy == false",
                     "group": "navigation@3"
                 },
                 {
-                    "command": "better-todo-tree.showFlatView",
-                    "when": "view =~ /todo-tree/ && better-todo-tree-flat == false && better-todo-tree-tags-only == false && better-todo-tree-show-view-style-button == true",
+                    "command": "better-todo-tree.cycleViewStyle",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-show-view-style-button == true && better-todo-tree-view-style-busy == false",
                     "group": "navigation@4"
                 },
                 {
-                    "command": "better-todo-tree.showTagsOnlyView",
-                    "when": "view =~ /todo-tree/ && better-todo-tree-flat == true && better-todo-tree-tags-only == false && better-todo-tree-show-view-style-button == true",
-                    "group": "navigation@4"
-                },
-                {
-                    "command": "better-todo-tree.showTreeView",
-                    "when": "view =~ /todo-tree/ && better-todo-tree-flat == false && better-todo-tree-tags-only == true && better-todo-tree-show-view-style-button == true",
+                    "command": "better-todo-tree.treeStateBusy",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-show-view-style-button == true && better-todo-tree-view-style-busy == true",
                     "group": "navigation@4"
                 },
                 {
                     "command": "better-todo-tree.groupByTag",
-                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-tag == false && better-todo-tree-show-group-by-tag-button == true",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-tag == false && better-todo-tree-show-group-by-tag-button == true && better-todo-tree-grouping-busy == false",
                     "group": "navigation@5"
                 },
                 {
                     "command": "better-todo-tree.ungroupByTag",
-                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-tag == true && better-todo-tree-show-group-by-tag-button == true",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-tag == true && better-todo-tree-show-group-by-tag-button == true && better-todo-tree-grouping-busy == false",
+                    "group": "navigation@5"
+                },
+                {
+                    "command": "better-todo-tree.treeStateBusy",
+                    "when": "view =~ /todo-tree/ && (better-todo-tree-show-group-by-tag-button == true || (better-todo-tree-show-group-by-sub-tag-button == true && better-todo-tree-has-sub-tags == true)) && better-todo-tree-grouping-busy == true",
                     "group": "navigation@5"
                 },
                 {
                     "command": "better-todo-tree.groupBySubTag",
-                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-sub-tag == false && better-todo-tree-show-group-by-sub-tag-button == true && better-todo-tree-has-sub-tags == true",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-sub-tag == false && better-todo-tree-show-group-by-sub-tag-button == true && better-todo-tree-has-sub-tags == true && better-todo-tree-grouping-busy == false",
                     "group": "navigation@6"
                 },
                 {
                     "command": "better-todo-tree.ungroupBySubTag",
-                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-sub-tag == true && better-todo-tree-show-group-by-sub-tag-button == true && better-todo-tree-has-sub-tags == true",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-grouped-by-sub-tag == true && better-todo-tree-show-group-by-sub-tag-button == true && better-todo-tree-has-sub-tags == true && better-todo-tree-grouping-busy == false",
                     "group": "navigation@6"
                 },
                 {
@@ -130,17 +130,22 @@
                 },
                 {
                     "command": "better-todo-tree.refresh",
-                    "when": "view =~ /todo-tree/ && better-todo-tree-show-refresh-button == true",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-show-refresh-button == true && better-todo-tree-scan-busy == false",
                     "group": "navigation@8"
                 },
                 {
-                    "command": "better-todo-tree.expand",
-                    "when": "view =~ /todo-tree/ && better-todo-tree-expanded == false && better-todo-tree-show-expand-button == true",
+                    "command": "better-todo-tree.scanBusy",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-show-refresh-button == true && better-todo-tree-scan-busy == true",
+                    "group": "navigation@8"
+                },
+                {
+                    "command": "better-todo-tree.toggleTreeExpansion",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-show-expand-button == true && better-todo-tree-collapsible == true && better-todo-tree-expansion-busy == false",
                     "group": "navigation@9"
                 },
                 {
-                    "command": "better-todo-tree.collapse",
-                    "when": "view =~ /todo-tree/ && better-todo-tree-expanded == true && better-todo-tree-show-expand-button == true",
+                    "command": "better-todo-tree.treeStateBusy",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-show-expand-button == true && better-todo-tree-collapsible == true && better-todo-tree-expansion-busy == true",
                     "group": "navigation@9"
                 }
             ],
@@ -297,6 +302,12 @@
         },
         "commands": [
             {
+                "command": "better-todo-tree.cycleViewStyle",
+                "title": "%better-todo-tree.command.cycleViewStyle.title%",
+                "category": "%better-todo-tree.command.category%",
+                "icon": "$(list-tree)"
+            },
+            {
                 "command": "better-todo-tree.showFlatView",
                 "title": "%better-todo-tree.command.showFlatView.title%",
                 "category": "%better-todo-tree.command.category%",
@@ -321,6 +332,13 @@
                 "icon": "$(refresh)"
             },
             {
+                "command": "better-todo-tree.toggleTreeExpansion",
+                "title": "%better-todo-tree.command.toggleTreeExpansion.title%",
+                "category": "%better-todo-tree.command.category%",
+                "icon": "$(expand-all)",
+                "enablement": "better-todo-tree-collapsible"
+            },
+            {
                 "command": "better-todo-tree.expand",
                 "title": "%better-todo-tree.command.expand.title%",
                 "category": "%better-todo-tree.command.category%",
@@ -333,6 +351,18 @@
                 "category": "%better-todo-tree.command.category%",
                 "icon": "$(collapse-all)",
                 "enablement": "better-todo-tree-collapsible"
+            },
+            {
+                "command": "better-todo-tree.treeStateBusy",
+                "title": "%better-todo-tree.command.treeStateBusy.title%",
+                "category": "%better-todo-tree.command.category%",
+                "icon": "$(loading~spin)"
+            },
+            {
+                "command": "better-todo-tree.scanBusy",
+                "title": "%better-todo-tree.command.scanBusy.title%",
+                "category": "%better-todo-tree.command.category%",
+                "icon": "$(loading~spin)"
             },
             {
                 "command": "better-todo-tree.filter",

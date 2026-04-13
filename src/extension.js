@@ -74,6 +74,24 @@ function activate( context )
     var activeSearchResults = searchResults.createStore();
     var nextSearchResults = undefined;
     var documentScanCache = documentScanCacheModule.createDocumentScanCache();
+    var workspaceScanIssues = [];
+    var lastWorkspaceScanIssueSignature;
+    var streamingTreeApplyTimer;
+    var streamingTreeApplyGeneration = 0;
+    var streamingTreePreparedGeneration = 0;
+    var treeStateMutationQueue = Promise.resolve();
+    var extensionContextUpdateQueue = Promise.resolve();
+    var extensionContextValues = {};
+    var treeBusyStateCounts = {
+        'view-style-busy': 0,
+        'expansion-busy': 0,
+        'grouping-busy': 0
+    };
+    var scanProgressSession;
+    var scanProgressState;
+
+    var SCAN_PROGRESS_ROOT_UNITS = 5;
+    var SCAN_PROGRESS_MIN_FILES_PER_ROOT = 25;
 
     function settingLocation( setting, uri )
     {
@@ -137,14 +155,76 @@ function activate( context )
         return identity.updateSetting( setting, value, target === undefined ? settingLocation( setting, uri ) : target, uri );
     }
 
+    function queueExtensionContextUpdates( entries )
+    {
+        var latestEntries = new Map();
+
+        ( entries || [] ).forEach( function( entry )
+        {
+            latestEntries.set( entry.suffix, entry.value );
+        } );
+
+        if( latestEntries.size === 0 )
+        {
+            return extensionContextUpdateQueue;
+        }
+
+        var scheduled = extensionContextUpdateQueue.catch( function()
+        {
+            return undefined;
+        } ).then( function()
+        {
+            var changedEntries = Array.from( latestEntries.entries() ).reduce( function( filtered, entry )
+            {
+                if( extensionContextValues[ entry[ 0 ] ] !== entry[ 1 ] )
+                {
+                    filtered.push( {
+                        suffix: entry[ 0 ],
+                        value: entry[ 1 ]
+                    } );
+                }
+                return filtered;
+            }, [] );
+
+            if( changedEntries.length === 0 )
+            {
+                return undefined;
+            }
+
+            changedEntries.forEach( function( entry )
+            {
+                extensionContextValues[ entry.suffix ] = entry.value;
+            } );
+
+            return Promise.all( changedEntries.map( function( entry )
+            {
+                var updates = [
+                    vscode.commands.executeCommand( 'setContext', identity.CONTEXT_KEYS[ entry.suffix ], entry.value )
+                ];
+
+                if( identity.LEGACY_CONTEXT_KEYS[ entry.suffix ] !== undefined )
+                {
+                    updates.push( vscode.commands.executeCommand( 'setContext', identity.LEGACY_CONTEXT_KEYS[ entry.suffix ], entry.value ) );
+                }
+
+                return Promise.all( updates );
+            } ) );
+        } );
+
+        extensionContextUpdateQueue = scheduled.catch( function( error )
+        {
+            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to update command contexts (" + error.message + ")" );
+        } );
+
+        return scheduled;
+    }
+
     function setExtensionContext( suffix, value )
     {
-        vscode.commands.executeCommand( 'setContext', identity.CONTEXT_KEYS[ suffix ], value );
-
-        if( identity.LEGACY_CONTEXT_KEYS[ suffix ] !== undefined )
-        {
-            vscode.commands.executeCommand( 'setContext', identity.LEGACY_CONTEXT_KEYS[ suffix ], value );
-        }
+        return queueExtensionContextUpdates( [ {
+            suffix: suffix,
+            value: value
+        } ] );
     }
 
     function registerExportContentProvider( scheme )
@@ -223,13 +303,599 @@ function activate( context )
         }
     }
 
-    function refreshTree()
+    function refreshTree( immediate )
     {
         clearTimeout( treeRefreshTimeout );
+        if( immediate === true )
+        {
+            treeRefreshTimeout = undefined;
+            provider.refresh();
+            return setButtonsAndContext();
+        }
+
         treeRefreshTimeout = setTimeout( function()
         {
             provider.refresh();
             setButtonsAndContext();
+        }, 200 );
+
+        return Promise.resolve();
+    }
+
+    function updateWorkspaceState( values )
+    {
+        return Promise.all( values.map( function( entry )
+        {
+            return context.workspaceState.update( entry.key, entry.value );
+        } ) );
+    }
+
+    function applyTreeStateOverrides( values )
+    {
+        if( Array.isArray( values ) )
+        {
+            values.forEach( function( entry )
+            {
+                config.setTreeStateOverride( entry.key, entry.value );
+            } );
+            return;
+        }
+
+        config.setTreeStateOverride( values.key, values.value );
+    }
+
+    function normalizeWorkspaceStateEntries( values )
+    {
+        return Array.isArray( values ) ? values.slice() : [ values ];
+    }
+
+    function readEffectiveTreeStateValue( key )
+    {
+        switch( key )
+        {
+        case 'flat':
+            return config.shouldFlatten();
+        case 'tagsOnly':
+            return config.shouldShowTagsOnly();
+        case 'expanded':
+            return config.shouldExpand();
+        case 'groupedByTag':
+            return config.shouldGroupByTag();
+        case 'groupedBySubTag':
+            return config.shouldGroupBySubTag();
+        default:
+            return context.workspaceState.get( key );
+        }
+    }
+
+    function captureWorkspaceStateEntries( values )
+    {
+        return normalizeWorkspaceStateEntries( values ).map( function( entry )
+        {
+            return {
+                key: entry.key,
+                value: readEffectiveTreeStateValue( entry.key )
+            };
+        } );
+    }
+
+    function workspaceStateEntriesChanged( values )
+    {
+        return normalizeWorkspaceStateEntries( values ).some( function( entry )
+        {
+            return readEffectiveTreeStateValue( entry.key ) !== entry.value;
+        } );
+    }
+
+    function updateTreeBusyContexts()
+    {
+        var totalBusyCount = Object.keys( treeBusyStateCounts ).reduce( function( total, key )
+        {
+            return total + treeBusyStateCounts[ key ];
+        }, 0 );
+
+        return queueExtensionContextUpdates( [
+            { suffix: 'tree-state-busy', value: totalBusyCount > 0 },
+            { suffix: 'view-style-busy', value: treeBusyStateCounts[ 'view-style-busy' ] > 0 },
+            { suffix: 'expansion-busy', value: treeBusyStateCounts[ 'expansion-busy' ] > 0 },
+            { suffix: 'grouping-busy', value: treeBusyStateCounts[ 'grouping-busy' ] > 0 }
+        ] );
+    }
+
+    function formatScanDuration( seconds )
+    {
+        if( seconds <= 0 )
+        {
+            return '<1s';
+        }
+
+        if( seconds < 60 )
+        {
+            return Math.round( seconds ) + 's';
+        }
+
+        var minutes = Math.floor( seconds / 60 );
+        var remainingSeconds = Math.round( seconds % 60 );
+        return remainingSeconds > 0 ? minutes + 'm ' + remainingSeconds + 's' : minutes + 'm';
+    }
+
+    function getScanTargetLabel( rootPath, targetPath )
+    {
+        if( !targetPath )
+        {
+            return undefined;
+        }
+
+        if( rootPath )
+        {
+            var relativePath = path.relative( rootPath, targetPath );
+            if( relativePath && !relativePath.startsWith( '..' + path.sep ) && relativePath !== '..' )
+            {
+                return relativePath;
+            }
+        }
+
+        return path.basename( targetPath ) || targetPath;
+    }
+
+    function calculateScanProgressSnapshot( state )
+    {
+        var activeRootCount = state.currentRoot ? 1 : 0;
+        var remainingRootCount = Math.max( state.rootCount - state.rootsCompleted - activeRootCount, 0 );
+        var estimatedFilesPerRoot = SCAN_PROGRESS_MIN_FILES_PER_ROOT;
+
+        if( state.rootsCompleted > 0 )
+        {
+            estimatedFilesPerRoot = Math.max( SCAN_PROGRESS_MIN_FILES_PER_ROOT, Math.ceil( state.completedRootQueuedTotal / state.rootsCompleted ) );
+        }
+        else if( state.currentRootQueued > 0 )
+        {
+            estimatedFilesPerRoot = Math.max( SCAN_PROGRESS_MIN_FILES_PER_ROOT, state.currentRootQueued );
+        }
+
+        var estimatedWorkspaceFilesTotal = Math.max(
+            state.filesQueued + ( remainingRootCount * estimatedFilesPerRoot ),
+            state.filesCompleted + ( activeRootCount > 0 ? Math.max( state.currentRootQueued, estimatedFilesPerRoot ) : 0 ),
+            state.finalizationTotal > 0 ? state.finalizationTotal : 1
+        );
+        var totalUnits = ( Math.max( state.rootCount, 1 ) * SCAN_PROGRESS_ROOT_UNITS ) + estimatedWorkspaceFilesTotal + Math.max( state.finalizationTotal, 1 );
+        var currentRootFraction = state.currentRoot ?
+            ( state.currentRootQueued > 0 ?
+                Math.min( state.currentRootCompleted / Math.max( state.currentRootQueued, 1 ), 1 ) :
+                0.15 ) :
+            0;
+        var completedUnits = ( state.rootsCompleted * SCAN_PROGRESS_ROOT_UNITS ) + state.filesCompleted + state.finalizationCompleted + ( currentRootFraction * SCAN_PROGRESS_ROOT_UNITS );
+        var rawFraction = totalUnits > 0 ? Math.min( completedUnits / totalUnits, state.phase === 'completed' ? 1 : 0.99 ) : 0;
+        var fraction = state.phase === 'completed' ? 1 : Math.max( rawFraction, 0.01 );
+        var completedWorkUnits = Math.max( completedUnits, state.filesCompleted + state.finalizationCompleted + state.rootsCompleted );
+        var totalWorkUnits = Math.max( totalUnits, completedWorkUnits );
+
+        return {
+            fraction: fraction,
+            percent: state.phase === 'completed' ?
+                100 :
+                Math.max( 1, Math.min( 99, Math.floor( fraction * 100 ) ) ),
+            totalUnits: totalWorkUnits,
+            completedUnits: completedWorkUnits
+        };
+    }
+
+    function calculateScanEtaSeconds( state, snapshot, now )
+    {
+        var recentSample = state.progressSamples.length > 0 ? state.progressSamples[ 0 ] : undefined;
+        var remainingUnits = Math.max( snapshot.totalUnits - snapshot.completedUnits, 0 );
+        var rate;
+
+        if( recentSample && recentSample.completedUnits < snapshot.completedUnits && now > recentSample.timestamp )
+        {
+            rate = ( snapshot.completedUnits - recentSample.completedUnits ) / ( ( now - recentSample.timestamp ) / 1000 );
+        }
+        else if( snapshot.completedUnits > 0 && now > state.startedAt )
+        {
+            rate = snapshot.completedUnits / ( ( now - state.startedAt ) / 1000 );
+        }
+
+        if( !rate || !isFinite( rate ) || rate <= 0 || remainingUnits <= 0 )
+        {
+            return undefined;
+        }
+
+        return remainingUnits / rate;
+    }
+
+    function recordScanProgressSample( state, snapshot, now )
+    {
+        state.progressSamples.push( {
+            timestamp: now,
+            completedUnits: snapshot.completedUnits
+        } );
+
+        while( state.progressSamples.length > 0 && ( state.progressSamples.length > 40 || ( now - state.progressSamples[ 0 ].timestamp ) > 5000 ) )
+        {
+            state.progressSamples.shift();
+        }
+    }
+
+    function buildScanProgressMessage( state, snapshot )
+    {
+        var messageParts = [];
+        var currentRootNumber = state.currentRoot ? Math.min( state.rootsCompleted + 1, Math.max( state.rootCount, 1 ) ) : Math.min( state.rootsCompleted, Math.max( state.rootCount, 1 ) );
+        var targetLabel = getScanTargetLabel( state.currentRoot, state.currentFile ) || ( state.currentRoot ? path.basename( state.currentRoot ) : undefined );
+
+        if( state.rootCount > 0 )
+        {
+            messageParts.push( 'Root ' + currentRootNumber + '/' + state.rootCount );
+        }
+
+        if( state.filesCompleted > 0 || state.filesQueued > 0 )
+        {
+            messageParts.push( state.filesCompleted + '/' + Math.max( state.filesQueued, state.filesCompleted ) + ' files' );
+        }
+
+        if( state.phase === 'finalizing' )
+        {
+            messageParts.push( 'Finalizing' );
+        }
+
+        if( snapshot.etaSeconds !== undefined && isFinite( snapshot.etaSeconds ) )
+        {
+            messageParts.push( 'ETA ' + formatScanDuration( snapshot.etaSeconds ) );
+        }
+
+        if( targetLabel )
+        {
+            messageParts.push( targetLabel );
+        }
+
+        if( messageParts.length === 0 )
+        {
+            return state.phase === 'finalizing' ? 'Finalizing scan' : 'Preparing scan';
+        }
+
+        return messageParts.join( ' · ' );
+    }
+
+    function applyScanProgressUi( state, snapshot )
+    {
+        var message = buildScanProgressMessage( state, snapshot );
+
+        statusBarIndicator.text = "$(loading~spin) " + identity.DISPLAY_NAME + " " + snapshot.percent + "%";
+        statusBarIndicator.show();
+        statusBarIndicator.command = identity.COMMANDS.stopScan;
+        statusBarIndicator.tooltip = message || 'Click to interrupt scan';
+        todoTreeView.message = message;
+
+        if( scanProgressSession && scanProgressSession.progress )
+        {
+            var increment = Math.max( snapshot.percent - scanProgressSession.lastReportedPercent, 0 );
+            if( increment > 0 || message !== scanProgressSession.lastReportedMessage )
+            {
+                scanProgressSession.progress.report( {
+                    increment: increment,
+                    message: message
+                } );
+                scanProgressSession.lastReportedPercent = Math.max( scanProgressSession.lastReportedPercent, snapshot.percent );
+                scanProgressSession.lastReportedMessage = message;
+            }
+        }
+    }
+
+    function updateScanProgress( generation, patch, force )
+    {
+        if( !scanProgressState || scanProgressState.generation !== generation )
+        {
+            return;
+        }
+
+        Object.keys( patch || {} ).forEach( function( key )
+        {
+            scanProgressState[ key ] = patch[ key ];
+        } );
+
+        var snapshot = calculateScanProgressSnapshot( scanProgressState );
+        var now = Date.now();
+
+        snapshot.etaSeconds = calculateScanEtaSeconds( scanProgressState, snapshot, now );
+        recordScanProgressSample( scanProgressState, snapshot, now );
+
+        if( force !== true && scanProgressState.lastUiUpdateAt && ( now - scanProgressState.lastUiUpdateAt ) < 100 && snapshot.percent <= scanProgressState.lastUiPercent )
+        {
+            return;
+        }
+
+        scanProgressState.lastUiUpdateAt = now;
+        scanProgressState.lastUiPercent = snapshot.percent;
+        applyScanProgressUi( scanProgressState, snapshot );
+    }
+
+    function startScanProgress( generation, roots )
+    {
+        var completionPromiseResolve;
+
+        scanProgressState = {
+            generation: generation,
+            startedAt: Date.now(),
+            rootCount: roots.length,
+            rootsCompleted: 0,
+            currentRoot: roots.length > 0 ? roots[ 0 ] : undefined,
+            currentFile: undefined,
+            filesQueued: 0,
+            filesCompleted: 0,
+            currentRootQueued: 0,
+            currentRootCompleted: 0,
+            completedRootQueuedTotal: 0,
+            finalizationTotal: 0,
+            finalizationCompleted: 0,
+            phase: 'searching',
+            progressSamples: [],
+            lastUiUpdateAt: 0,
+            lastUiPercent: 0
+        };
+
+        scanProgressSession = {
+            generation: generation,
+            lastReportedPercent: 0,
+            lastReportedMessage: '',
+            resolve: undefined,
+            progress: undefined
+        };
+
+        var completionPromise = new Promise( function( resolve )
+        {
+            completionPromiseResolve = resolve;
+        } );
+
+        scanProgressSession.resolve = completionPromiseResolve;
+
+        vscode.window.withProgress( {
+            location: vscode.ProgressLocation.Notification,
+            title: identity.DISPLAY_NAME + ': Scanning',
+            cancellable: true
+        }, function( progress, token )
+        {
+            scanProgressSession.progress = progress;
+            token.onCancellationRequested( interruptActiveScan );
+            updateScanProgress( generation, {}, true );
+            return completionPromise;
+        } );
+    }
+
+    function finishScanProgress( generation, wasCancelled )
+    {
+        if( !scanProgressState || scanProgressState.generation !== generation )
+        {
+            return;
+        }
+
+        scanProgressState.phase = 'completed';
+        scanProgressState.currentFile = undefined;
+        scanProgressState.finalizationCompleted = Math.max( scanProgressState.finalizationCompleted, scanProgressState.finalizationTotal );
+        updateScanProgress( generation, {}, true );
+
+        if( scanProgressSession && scanProgressSession.generation === generation && scanProgressSession.resolve )
+        {
+            scanProgressSession.resolve();
+        }
+
+        if( wasCancelled === true )
+        {
+            todoTreeView.message = 'Scan cancelled.';
+        }
+        else
+        {
+            todoTreeView.message = '';
+        }
+
+        scanProgressSession = undefined;
+        scanProgressState = undefined;
+    }
+
+    function beginScanRoot( generation, rootPath )
+    {
+        updateScanProgress( generation, {
+            phase: 'searching',
+            currentRoot: rootPath,
+            currentFile: undefined,
+            currentRootQueued: 0,
+            currentRootCompleted: 0
+        }, true );
+    }
+
+    function queueScanFileProgress( generation, filePath )
+    {
+        if( !scanProgressState || scanProgressState.generation !== generation )
+        {
+            return;
+        }
+
+        updateScanProgress( generation, {
+            currentFile: filePath,
+            filesQueued: scanProgressState.filesQueued + 1,
+            currentRootQueued: scanProgressState.currentRootQueued + 1
+        }, false );
+    }
+
+    function completeScanFileProgress( generation, filePath )
+    {
+        if( !scanProgressState || scanProgressState.generation !== generation )
+        {
+            return;
+        }
+
+        updateScanProgress( generation, {
+            currentFile: filePath,
+            filesCompleted: scanProgressState.filesCompleted + 1,
+            currentRootCompleted: scanProgressState.currentRootCompleted + 1
+        }, false );
+    }
+
+    function completeScanRoot( generation, nextRootPath )
+    {
+        if( !scanProgressState || scanProgressState.generation !== generation )
+        {
+            return;
+        }
+
+        updateScanProgress( generation, {
+            rootsCompleted: scanProgressState.rootsCompleted + 1,
+            completedRootQueuedTotal: scanProgressState.completedRootQueuedTotal + scanProgressState.currentRootQueued,
+            currentRoot: nextRootPath,
+            currentFile: undefined,
+            currentRootQueued: 0,
+            currentRootCompleted: 0
+        }, true );
+    }
+
+    function beginScanFinalization( generation, totalTargets )
+    {
+        updateScanProgress( generation, {
+            phase: 'finalizing',
+            currentFile: undefined,
+            finalizationTotal: Math.max( totalTargets, 1 ),
+            finalizationCompleted: 0
+        }, true );
+    }
+
+    function completeScanFinalizationTarget( generation, target )
+    {
+        if( !scanProgressState || scanProgressState.generation !== generation )
+        {
+            return;
+        }
+
+        updateScanProgress( generation, {
+            currentFile: target && target.uri && target.uri.fsPath ? target.uri.fsPath : undefined,
+            finalizationCompleted: Math.min( scanProgressState.finalizationCompleted + 1, Math.max( scanProgressState.finalizationTotal, 1 ) )
+        }, false );
+    }
+
+    function queueTreeStateMutation( operationName, busyContextKey, mutation )
+    {
+        treeBusyStateCounts[ busyContextKey ] = ( treeBusyStateCounts[ busyContextKey ] || 0 ) + 1;
+        updateTreeBusyContexts();
+
+        var scheduled = treeStateMutationQueue.then( mutation );
+
+        treeStateMutationQueue = scheduled.catch( function( error )
+        {
+            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to update " + operationName + " (" + error.message + ")" );
+        } ).finally( function()
+        {
+            treeBusyStateCounts[ busyContextKey ] = Math.max( ( treeBusyStateCounts[ busyContextKey ] || 0 ) - 1, 0 );
+            updateTreeBusyContexts();
+        } );
+
+        return scheduled;
+    }
+
+    function queueWorkspaceStateRefresh( operationName, busyContextKey, values, refresher, options )
+    {
+        options = options || {};
+        var stateEntries = normalizeWorkspaceStateEntries( values );
+        var refreshOperation = refresher || function()
+        {
+            return refresh( { immediateRefresh: true, forceFullRefresh: true } );
+        };
+
+        if( workspaceStateEntriesChanged( stateEntries ) !== true )
+        {
+            if( options.forceRefreshWhenUnchanged === true )
+            {
+                applyTreeStateOverrides( stateEntries );
+                setButtonsAndContext();
+
+                if( ( treeBusyStateCounts[ busyContextKey ] || 0 ) > 0 )
+                {
+                    return treeStateMutationQueue;
+                }
+
+                return queueTreeStateMutation( operationName, busyContextKey, refreshOperation );
+            }
+
+            return Promise.resolve();
+        }
+
+        if( ( treeBusyStateCounts[ busyContextKey ] || 0 ) > 0 )
+        {
+            return treeStateMutationQueue;
+        }
+
+        var previousEntries = captureWorkspaceStateEntries( stateEntries );
+        applyTreeStateOverrides( stateEntries );
+
+        var scheduled = queueTreeStateMutation( operationName, busyContextKey, function()
+        {
+            return updateWorkspaceState( stateEntries ).then( refreshOperation ).catch( function( error )
+            {
+                applyTreeStateOverrides( previousEntries );
+                setButtonsAndContext();
+                throw error;
+            } );
+        } );
+
+        setButtonsAndContext();
+
+        return scheduled;
+    }
+
+    function prepareStreamingTreeApply( generation, store )
+    {
+        if( streamingTreePreparedGeneration === generation )
+        {
+            return;
+        }
+
+        if( store )
+        {
+            store.markAsNotAdded();
+        }
+        provider.clear( vscode.workspace.workspaceFolders );
+        provider.rebuild();
+        streamingTreePreparedGeneration = generation;
+    }
+
+    function flushStreamingTreeApply( generation, store, options )
+    {
+        if( streamingTreeApplyTimer )
+        {
+            clearTimeout( streamingTreeApplyTimer );
+            streamingTreeApplyTimer = undefined;
+        }
+
+        if( isGenerationActive( generation ) !== true || nextSearchResults !== store )
+        {
+            return;
+        }
+
+        prepareStreamingTreeApply( generation, store );
+        applyDirtyResultsToTree( options, store );
+    }
+
+    function scheduleStreamingTreeApply( generation, store )
+    {
+        if( nextSearchResults !== store )
+        {
+            return;
+        }
+
+        streamingTreeApplyGeneration = generation;
+
+        if( streamingTreeApplyTimer )
+        {
+            return;
+        }
+
+        streamingTreeApplyTimer = setTimeout( function()
+        {
+            streamingTreeApplyTimer = undefined;
+
+            if( isGenerationActive( streamingTreeApplyGeneration ) !== true || nextSearchResults !== store )
+            {
+                return;
+            }
+
+            prepareStreamingTreeApply( generation, store );
+            applyDirtyResultsToTree( undefined, store );
         }, 200 );
     }
 
@@ -272,6 +938,12 @@ function activate( context )
                 title += " (" + total + ")";
             }
             todoTreeView.title = title;
+        }
+
+        if( scanInFlight === true && scanProgressState )
+        {
+            applyScanProgressUi( scanProgressState, calculateScanProgressSnapshot( scanProgressState ) );
+            return;
         }
 
         if( statusBar === STATUS_BAR_TOTAL )
@@ -421,7 +1093,17 @@ function activate( context )
         }
     }
 
-    function beginScan()
+    function interruptActiveScan()
+    {
+        pendingRescan = false;
+        cancelScan();
+        statusBarIndicator.text = identity.DISPLAY_NAME + ": Scanning interrupted.";
+        statusBarIndicator.tooltip = "Click to restart";
+        statusBarIndicator.command = identity.COMMANDS.refresh;
+        interrupted = true;
+    }
+
+    function beginScan( roots )
     {
         scanGeneration += 1;
         activeScanGeneration = scanGeneration;
@@ -434,6 +1116,8 @@ function activate( context )
         statusBarIndicator.show();
         statusBarIndicator.command = identity.COMMANDS.stopScan;
         statusBarIndicator.tooltip = "Click to interrupt scan";
+        setExtensionContext( 'scan-busy', true );
+        startScanProgress( activeScanGeneration, roots || [] );
 
         return activeScanGeneration;
     }
@@ -448,6 +1132,15 @@ function activate( context )
             scanInFlight = false;
         }
 
+        setExtensionContext( 'scan-busy', scanInFlight === true );
+        finishScanProgress( generation, false );
+
+        if( scanInFlight !== true && interrupted !== true )
+        {
+            updateInformation();
+            setButtonsAndContext();
+        }
+
         if( scanInFlight !== true && pendingRescan === true )
         {
             pendingRescan = false;
@@ -457,6 +1150,8 @@ function activate( context )
 
     function cancelScan()
     {
+        var cancelledGeneration = activeScanGeneration;
+
         if( activeScanGeneration !== 0 )
         {
             cancelledScanGenerations.add( activeScanGeneration );
@@ -464,6 +1159,11 @@ function activate( context )
 
         activeScanGeneration = 0;
         scanInFlight = false;
+        setExtensionContext( 'scan-busy', false );
+        if( cancelledGeneration !== 0 )
+        {
+            finishScanProgress( cancelledGeneration, true );
+        }
 
         ripgrep.kill();
     }
@@ -563,7 +1263,24 @@ function activate( context )
         return ripgrep.decodeJsonValue( value );
     }
 
-    function toWorkspaceMatch( data )
+    function resolveWorkspaceFilePath( rootPath, value )
+    {
+        var filePath = decodeRipgrepValue( value );
+
+        if( !filePath )
+        {
+            return filePath;
+        }
+
+        if( path.isAbsolute( filePath ) )
+        {
+            return filePath;
+        }
+
+        return rootPath ? path.resolve( rootPath, filePath ) : filePath;
+    }
+
+    function toWorkspaceMatch( rootPath, data )
     {
         var submatches = Array.isArray( data.submatches ) ? data.submatches.map( function( submatch )
         {
@@ -576,7 +1293,7 @@ function activate( context )
         var firstSubmatch = submatches[ 0 ] || { start: 0, match: decodeRipgrepValue( data.lines ) || "" };
 
         return {
-            fsPath: decodeRipgrepValue( data.path ),
+            fsPath: resolveWorkspaceFilePath( rootPath, data.path ),
             line: data.line_number,
             column: firstSubmatch.start + 1,
             match: firstSubmatch.match,
@@ -608,9 +1325,61 @@ function activate( context )
             {
                 message += " (" + error.stderr + ")";
             }
+            error.reportedToUser = true;
             vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": " + message );
             throw error;
         } );
+    }
+
+    function resetWorkspaceScanIssues()
+    {
+        workspaceScanIssues = [];
+    }
+
+    function recordWorkspaceScanIssue( stage, filePath, error )
+    {
+        var message = error && error.message ? error.message : String( error );
+        workspaceScanIssues.push( {
+            stage: stage,
+            filePath: filePath,
+            message: message
+        } );
+        debug( "Skipping workspace file during " + stage + ": " + filePath + " (" + message + ")" );
+    }
+
+    function handleWorkspaceScanIssue( stage, filePath, error )
+    {
+        if( isCancelledError( error ) )
+        {
+            throw error;
+        }
+
+        recordWorkspaceScanIssue( stage, filePath, error );
+    }
+
+    function flushWorkspaceScanIssues()
+    {
+        if( workspaceScanIssues.length === 0 )
+        {
+            return;
+        }
+
+        var firstIssue = workspaceScanIssues[ 0 ];
+        var signature = workspaceScanIssues.map( function( issue )
+        {
+            return [ issue.stage, issue.filePath, issue.message ].join( '\u0000' );
+        } ).join( '\u0001' );
+
+        if( signature !== lastWorkspaceScanIssueSignature )
+        {
+            vscode.window.showWarningMessage(
+                identity.DISPLAY_NAME + ": skipped " + workspaceScanIssues.length +
+                " workspace file(s) while scanning. Results may be incomplete. First failure: " +
+                firstIssue.filePath + " (" + firstIssue.message + ")" );
+            lastWorkspaceScanIssueSignature = signature;
+        }
+
+        workspaceScanIssues = [];
     }
 
     function addGlobs( source, target, exclude )
@@ -751,6 +1520,21 @@ function activate( context )
         }
 
         return roots;
+    }
+
+    function isDocumentCoveredByWorkspaceSearch( document )
+    {
+        if( !document || !document.fileName )
+        {
+            return false;
+        }
+
+        if( config.scanMode() !== SCAN_MODE_WORKSPACE_AND_OPEN_FILES && config.scanMode() !== SCAN_MODE_WORKSPACE_ONLY )
+        {
+            return false;
+        }
+
+        return isFileInSearchRoots( document.fileName, getWorkspaceSearchRoots() );
     }
 
     function rememberNotebookDocument( notebook )
@@ -1028,6 +1812,11 @@ function activate( context )
         return store || activeSearchResults;
     }
 
+    function getDisplayedSearchResultsStore()
+    {
+        return nextSearchResults || activeSearchResults;
+    }
+
     function getSearchResultsCount( store )
     {
         return getSearchResultsStore( store ).count();
@@ -1164,11 +1953,12 @@ function activate( context )
 
         provider.finalizePendingChanges( currentFilter, {
             refilterAll: options.refilterAll === true,
-            fullSort: options.fullSort === true
+            fullSort: options.fullSort === true,
+            forceFullRefresh: options.forceFullRefresh === true || scanInFlight === true
         } );
 
         updateInformation();
-        refreshTree();
+        refreshTree( options.immediateRefresh === true );
         setButtonsAndContext();
     }
 
@@ -1189,16 +1979,20 @@ function activate( context )
         applyDirtyResultsToTree( undefined, activeSearchResults );
     }
 
-    function refreshOpenFiles( workspaceRoots, store )
+    function getRefreshTargets( workspaceRoots )
     {
-        getOpenDocumentsForScan( workspaceRoots ).forEach( function( document )
-        {
-            refreshScanTarget( document, store );
-        } );
+        return getOpenDocumentsForScan( workspaceRoots ).concat( getNotebookDocumentsForScan( workspaceRoots ) );
+    }
 
-        getNotebookDocumentsForScan( workspaceRoots ).forEach( function( notebook )
+    function refreshOpenFiles( workspaceRoots, store, onTargetRefreshed )
+    {
+        getRefreshTargets( workspaceRoots ).forEach( function( target )
         {
-            refreshScanTarget( notebook, store );
+            refreshScanTarget( target, store );
+            if( typeof ( onTargetRefreshed ) === 'function' )
+            {
+                onTargetRefreshed( target );
+            }
         } );
     }
 
@@ -1209,9 +2003,44 @@ function activate( context )
 
     function scanWorkspaceCandidates( rootPath, generation, store )
     {
-        var seenFiles = new Set();
+        var matchedFiles = new Set();
+        var scheduledFiles = new Set();
         var scheduler = createTaskScheduler( currentSettingsSnapshot.readFileConcurrency );
         var submoduleExcludeGlobs = config.shouldIgnoreGitSubmodules() ? utils.getSubmoduleExcludeGlobs( rootPath ) : [];
+
+        function scheduleFileScan( filePath )
+        {
+            if( !filePath || scheduledFiles.has( filePath ) )
+            {
+                return;
+            }
+
+            scheduledFiles.add( filePath );
+
+            scheduler.schedule( function()
+            {
+                assertGenerationActive( generation );
+
+                var uri = vscode.Uri.file( filePath );
+                if( isIncluded( uri ) !== true )
+                {
+                    return;
+                }
+
+                queueScanFileProgress( generation, filePath );
+                return readWorkspaceFile( filePath ).then( function( text )
+                {
+                    assertGenerationActive( generation );
+                    replaceSearchResults( uri, detection.scanTextWithContext( detection.createScanContext( uri, text, currentSettingsSnapshot ) ), store );
+                    completeScanFileProgress( generation, filePath );
+                    scheduleStreamingTreeApply( generation, store );
+                } ).catch( function( error )
+                {
+                    completeScanFileProgress( generation, filePath );
+                    handleWorkspaceScanIssue( 'candidate scan', filePath, error );
+                } );
+            } );
+        }
 
         return ensureStorageDirectory().then( function()
         {
@@ -1219,29 +2048,23 @@ function activate( context )
             {
                 if( message.type === 'match' )
                 {
-                    seenFiles.add( decodeRipgrepValue( message.data.path ) );
+                    matchedFiles.add( resolveWorkspaceFilePath( rootPath, message.data.path ) );
+                }
+                else if( message.type === 'end' )
+                {
+                    var filePath = resolveWorkspaceFilePath( rootPath, message.data.path );
+                    if( matchedFiles.has( filePath ) === true )
+                    {
+                        matchedFiles.delete( filePath );
+                        scheduleFileScan( filePath );
+                    }
                 }
             } );
         } ).then( function()
         {
-            Array.from( seenFiles ).forEach( function( filePath )
+            Array.from( matchedFiles ).forEach( function( filePath )
             {
-                scheduler.schedule( function()
-                {
-                    assertGenerationActive( generation );
-
-                    var uri = vscode.Uri.file( filePath );
-                    if( isIncluded( uri ) !== true )
-                    {
-                        return;
-                    }
-
-                    return readWorkspaceFile( filePath ).then( function( text )
-                    {
-                        assertGenerationActive( generation );
-                        replaceSearchResults( uri, detection.scanTextWithContext( detection.createScanContext( uri, text, currentSettingsSnapshot ) ), store );
-                    } );
-                } );
+                scheduleFileScan( filePath );
             } );
 
             return scheduler.wait();
@@ -1281,6 +2104,7 @@ function activate( context )
                     return;
                 }
 
+                queueScanFileProgress( generation, filePath );
                 return readWorkspaceFile( filePath ).then( function( text )
                 {
                     assertGenerationActive( generation );
@@ -1295,6 +2119,12 @@ function activate( context )
                     } );
 
                     replaceSearchResults( uri, normalized, store );
+                    completeScanFileProgress( generation, filePath );
+                    scheduleStreamingTreeApply( generation, store );
+                } ).catch( function( error )
+                {
+                    completeScanFileProgress( generation, filePath );
+                    handleWorkspaceScanIssue( 'regex normalization', filePath, error );
                 } );
             } );
         }
@@ -1307,12 +2137,12 @@ function activate( context )
 
                 if( message.type === 'match' )
                 {
-                    var workspaceMatch = toWorkspaceMatch( message.data );
+                    var workspaceMatch = toWorkspaceMatch( rootPath, message.data );
                     getFileMatches( workspaceMatch.fsPath ).push( workspaceMatch );
                 }
                 else if( message.type === 'end' )
                 {
-                    var filePath = decodeRipgrepValue( message.data.path );
+                    var filePath = resolveWorkspaceFilePath( rootPath, message.data.path );
                     var fileMatches = matchesByFile.get( filePath );
                     matchesByFile.delete( filePath );
                     scheduleFileNormalization( filePath, fileMatches );
@@ -1355,11 +2185,12 @@ function activate( context )
     {
         var workspaceConfig = currentSettingsSnapshot.getResourceConfig();
 
-        return searchList.reduce( function( promise, entry )
+        return searchList.reduce( function( promise, entry, index )
         {
             return promise.then( function()
             {
                 assertGenerationActive( generation );
+                beginScanRoot( generation, entry );
 
                 var scanPromise = workspaceConfig.isDefaultRegex === true ?
                     scanWorkspaceCandidates( entry, generation, store ) :
@@ -1368,6 +2199,7 @@ function activate( context )
                 return scanPromise.then( function()
                 {
                     assertGenerationActive( generation );
+                    completeScanRoot( generation, searchList[ index + 1 ] );
                 } );
             } );
         }, Promise.resolve() ).then( function()
@@ -1429,23 +2261,33 @@ function activate( context )
 
     function executeRebuild()
     {
-        var generation = beginScan();
+        searchList = getWorkspaceSearchRoots();
+        var generation = beginScan( searchList );
         var needsFullFilter = currentFilter !== undefined && currentFilter !== "";
 
-        todoTreeView.message = "";
+        resetWorkspaceScanIssues();
+        streamingTreePreparedGeneration = 0;
+        streamingTreeApplyGeneration = generation;
+        if( streamingTreeApplyTimer )
+        {
+            clearTimeout( streamingTreeApplyTimer );
+            streamingTreeApplyTimer = undefined;
+        }
 
-        searchList = [];
         nextSearchResults = searchResults.createStore();
-
-        searchList = getWorkspaceSearchRoots();
 
         return iterateSearchList( generation, nextSearchResults ).then( function()
         {
             assertGenerationActive( generation );
-            refreshOpenFiles( searchList, nextSearchResults );
+            var refreshTargets = getRefreshTargets( searchList );
+            beginScanFinalization( generation, refreshTargets.length );
+            refreshOpenFiles( searchList, nextSearchResults, function( target )
+            {
+                completeScanFinalizationTarget( generation, target );
+            } );
             assertGenerationActive( generation );
-            provider.clear( vscode.workspace.workspaceFolders );
-            provider.rebuild();
+            flushStreamingTreeApply( generation, nextSearchResults, undefined );
+            prepareStreamingTreeApply( generation, nextSearchResults );
             activeSearchResults = nextSearchResults;
             nextSearchResults = undefined;
             applyDirtyResultsToTree( { fullSort: true, refilterAll: needsFullFilter }, activeSearchResults );
@@ -1455,10 +2297,31 @@ function activate( context )
 
             if( isCancelledError( error ) !== true )
             {
+                if( streamingTreePreparedGeneration === generation )
+                {
+                    provider.clear( vscode.workspace.workspaceFolders );
+                    provider.rebuild();
+                    activeSearchResults.markAsNotAdded();
+                }
+
+                if( error.reportedToUser !== true )
+                {
+                    vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": scan failed (" + error.message + ")" );
+                }
                 applyDirtyResultsToTree( { fullSort: false, refilterAll: false }, activeSearchResults );
             }
         } ).finally( function()
         {
+            if( streamingTreeApplyTimer )
+            {
+                clearTimeout( streamingTreeApplyTimer );
+                streamingTreeApplyTimer = undefined;
+            }
+            if( streamingTreePreparedGeneration === generation )
+            {
+                streamingTreePreparedGeneration = 0;
+            }
+            flushWorkspaceScanIssues();
             finishScan( generation );
             flushPendingDocumentRefreshes();
         } );
@@ -1569,9 +2432,10 @@ function activate( context )
 
     function setButtonsAndContext()
     {
-        var isTagsOnly = context.workspaceState.get( 'tagsOnly', getSetting( 'tree.tagsOnly', false ) );
-        var isGroupedByTag = context.workspaceState.get( 'groupedByTag', getSetting( 'tree.groupedByTag', false ) );
-        var isGroupedBySubTag = context.workspaceState.get( 'groupedBySubTag', getSetting( 'tree.groupedBySubTag', false ) );
+        var isFlat = config.shouldFlatten();
+        var isTagsOnly = config.shouldShowTagsOnly();
+        var isGroupedByTag = config.shouldGroupByTag();
+        var isGroupedBySubTag = config.shouldGroupBySubTag();
         var isCollapsible = !isTagsOnly || isGroupedByTag || isGroupedBySubTag;
         var includeGlobs = context.workspaceState.get( 'includeGlobs' ) || [];
         var excludeGlobs = context.workspaceState.get( 'excludeGlobs' ) || [];
@@ -1587,33 +2451,42 @@ function activate( context )
         var showRefreshButton = treeButtons.refresh === true;
         var showExpandButton = treeButtons.expand === true;
         var showExportButton = treeButtons.export === true;
-
-        setExtensionContext( 'show-reveal-button', showRevealButton && !getSetting( 'tree.trackFile', false ) );
-        setExtensionContext( 'show-scan-mode-button', showScanModeButton );
-        setExtensionContext( 'show-view-style-button', showViewStyleButton );
-        setExtensionContext( 'show-group-by-tag-button', showGroupByTagButton );
-        setExtensionContext( 'show-group-by-sub-tag-button', showGroupBySubTagButton );
-        setExtensionContext( 'show-filter-button', showFilterButton );
-        setExtensionContext( 'show-refresh-button', showRefreshButton );
-        setExtensionContext( 'show-expand-button', showExpandButton );
-        setExtensionContext( 'show-export-button', showExportButton );
-
-        setExtensionContext( 'expanded', context.workspaceState.get( 'expanded', getSetting( 'tree.expanded', false ) ) );
-        setExtensionContext( 'flat', context.workspaceState.get( 'flat', getSetting( 'tree.flat', false ) ) );
-        setExtensionContext( 'tags-only', isTagsOnly );
-        setExtensionContext( 'grouped-by-tag', isGroupedByTag );
-        setExtensionContext( 'grouped-by-sub-tag', isGroupedBySubTag );
-        setExtensionContext( 'filtered', context.workspaceState.get( 'filtered', false ) );
-        setExtensionContext( 'collapsible', isCollapsible );
-        setExtensionContext( 'folder-filter-active', includeGlobs.length + excludeGlobs.length > 0 );
-        setExtensionContext( 'global-filter-active', currentFilter );
-        setExtensionContext( 'can-toggle-compact-folders', vscode.workspace.getConfiguration( 'explorer' ).compactFolders === true );
-        setExtensionContext( 'has-sub-tags', hasSubTags );
-
-        setExtensionContext( 'scan-mode', config.scanMode() );
+        var totalBusyCount = Object.keys( treeBusyStateCounts ).reduce( function( total, key )
+        {
+            return total + treeBusyStateCounts[ key ];
+        }, 0 );
 
         clearTimeout( hideTimeout );
         hideTimeout = setTimeout( hideTreeIfEmpty, 1000 );
+
+        return queueExtensionContextUpdates( [
+            { suffix: 'show-reveal-button', value: showRevealButton && !getSetting( 'tree.trackFile', false ) },
+            { suffix: 'show-scan-mode-button', value: showScanModeButton },
+            { suffix: 'show-view-style-button', value: showViewStyleButton },
+            { suffix: 'show-group-by-tag-button', value: showGroupByTagButton },
+            { suffix: 'show-group-by-sub-tag-button', value: showGroupBySubTagButton },
+            { suffix: 'show-filter-button', value: showFilterButton },
+            { suffix: 'show-refresh-button', value: showRefreshButton },
+            { suffix: 'show-expand-button', value: showExpandButton },
+            { suffix: 'show-export-button', value: showExportButton },
+            { suffix: 'expanded', value: config.shouldExpand() },
+            { suffix: 'flat', value: isFlat },
+            { suffix: 'tags-only', value: isTagsOnly },
+            { suffix: 'grouped-by-tag', value: isGroupedByTag },
+            { suffix: 'grouped-by-sub-tag', value: isGroupedBySubTag },
+            { suffix: 'filtered', value: context.workspaceState.get( 'filtered', false ) },
+            { suffix: 'collapsible', value: isCollapsible },
+            { suffix: 'folder-filter-active', value: includeGlobs.length + excludeGlobs.length > 0 },
+            { suffix: 'global-filter-active', value: currentFilter },
+            { suffix: 'can-toggle-compact-folders', value: vscode.workspace.getConfiguration( 'explorer' ).compactFolders === true },
+            { suffix: 'has-sub-tags', value: hasSubTags },
+            { suffix: 'scan-mode', value: config.scanMode() },
+            { suffix: 'tree-state-busy', value: totalBusyCount > 0 },
+            { suffix: 'view-style-busy', value: treeBusyStateCounts[ 'view-style-busy' ] > 0 },
+            { suffix: 'expansion-busy', value: treeBusyStateCounts[ 'expansion-busy' ] > 0 },
+            { suffix: 'grouping-busy', value: treeBusyStateCounts[ 'grouping-busy' ] > 0 },
+            { suffix: 'scan-busy', value: scanInFlight === true }
+        ] );
     }
 
     function hideTreeIfEmpty()
@@ -1741,6 +2614,11 @@ function activate( context )
             return;
         }
 
+        if( reason !== 'change' && isDocumentCoveredByWorkspaceSearch( document ) === true )
+        {
+            return;
+        }
+
         var key = document.uri.toString();
 
         openDocuments[ key ] = document;
@@ -1755,45 +2633,146 @@ function activate( context )
         );
     }
 
-    function refresh()
+    function refresh( options )
     {
-        activeSearchResults.markAsNotAdded();
+        options = options || {};
+        var resultsStore = getDisplayedSearchResultsStore();
+
+        resultsStore.markAsNotAdded();
 
         provider.clear( vscode.workspace.workspaceFolders );
         provider.rebuild();
-        applyDirtyResultsToTree( { fullSort: true, refilterAll: currentFilter !== undefined && currentFilter !== "" }, activeSearchResults );
+        if( scanInFlight === true && nextSearchResults === resultsStore )
+        {
+            streamingTreePreparedGeneration = activeScanGeneration;
+        }
+        applyDirtyResultsToTree( {
+            fullSort: true,
+            refilterAll: currentFilter !== undefined && currentFilter !== "",
+            immediateRefresh: options.immediateRefresh === true,
+            forceFullRefresh: options.forceFullRefresh === true
+        }, resultsStore );
     }
 
-    function clearExpansionStateAndRefresh()
+    function waitForTreeUiTurn()
+    {
+        return new Promise( function( resolve )
+        {
+            setImmediate( resolve );
+        } );
+    }
+
+    function getVisibleTreeChildren( node )
+    {
+        var children = provider.getChildren( node );
+        return Array.isArray( children ) ? children : [];
+    }
+
+    function getVisibleExpansionDepth( node )
+    {
+        var children = getVisibleTreeChildren( node );
+        if( children.length === 0 )
+        {
+            return 0;
+        }
+
+        return 1 + children.reduce( function( maxDepth, child )
+        {
+            return Math.max( maxDepth, getVisibleExpansionDepth( child ) );
+        }, 0 );
+    }
+
+    function syncRenderedTreeExpansion( expanded )
+    {
+        if( expanded === true )
+        {
+            return getVisibleTreeChildren().reduce( function( promise, root )
+            {
+                var depth = getVisibleExpansionDepth( root );
+                if( depth === 0 )
+                {
+                    return promise;
+                }
+
+                return promise.then( function()
+                {
+                    return todoTreeView.reveal( root, {
+                        focus: false,
+                        select: false,
+                        expand: depth
+                    } );
+                } );
+            }, Promise.resolve() );
+        }
+
+        return vscode.commands.executeCommand( 'workbench.actions.treeView.' + identity.VIEW_ID + '.collapseAll' );
+    }
+
+    function clearExpansionStateAndRefresh( expanded )
     {
         provider.clearExpansionState();
-        refresh();
+        return Promise.resolve( refresh( { immediateRefresh: true, forceFullRefresh: true } ) )
+            .then( waitForTreeUiTurn )
+            .then( function()
+            {
+                return syncRenderedTreeExpansion( expanded );
+            } );
     }
 
     function showFlatView()
     {
-        context.workspaceState.update( 'tagsOnly', false );
-        context.workspaceState.update( 'flat', true ).then( refresh );
+        return queueWorkspaceStateRefresh( 'tree view style', 'view-style-busy', [
+            { key: 'tagsOnly', value: false },
+            { key: 'flat', value: true }
+        ], undefined, { forceRefreshWhenUnchanged: true } );
     }
 
     function showTagsOnlyView()
     {
-        context.workspaceState.update( 'flat', false );
-        context.workspaceState.update( 'tagsOnly', true ).then( refresh );
+        return queueWorkspaceStateRefresh( 'tree view style', 'view-style-busy', [
+            { key: 'flat', value: false },
+            { key: 'tagsOnly', value: true }
+        ], undefined, { forceRefreshWhenUnchanged: true } );
     }
 
     function showTreeView()
     {
-        context.workspaceState.update( 'tagsOnly', false );
-        context.workspaceState.update( 'flat', false ).then( refresh );
+        return queueWorkspaceStateRefresh( 'tree view style', 'view-style-busy', [
+            { key: 'tagsOnly', value: false },
+            { key: 'flat', value: false }
+        ], undefined, { forceRefreshWhenUnchanged: true } );
     }
 
-    function collapse() { context.workspaceState.update( 'expanded', false ).then( clearExpansionStateAndRefresh ); }
-    function expand() { context.workspaceState.update( 'expanded', true ).then( clearExpansionStateAndRefresh ); }
-    function groupByTag() { context.workspaceState.update( 'groupedByTag', true ).then( refresh ); }
-    function ungroupByTag() { context.workspaceState.update( 'groupedByTag', false ).then( refresh ); }
-    function groupBySubTag() { context.workspaceState.update( 'groupedBySubTag', true ).then( refresh ); }
-    function ungroupBySubTag() { context.workspaceState.update( 'groupedBySubTag', false ).then( refresh ); }
+    function cycleViewStyle()
+    {
+        var isFlat = config.shouldFlatten();
+        var isTagsOnly = config.shouldShowTagsOnly();
+
+        if( isFlat === false && isTagsOnly === false )
+        {
+            return showFlatView();
+        }
+
+        if( isFlat === true && isTagsOnly === false )
+        {
+            return showTagsOnlyView();
+        }
+
+        return showTreeView();
+    }
+
+    function toggleTreeExpansion()
+    {
+        var isExpanded = config.shouldExpand();
+        return isExpanded === true ? collapse() : expand();
+    }
+
+    function collapse() { return queueWorkspaceStateRefresh( 'tree expansion', 'expansion-busy', { key: 'expanded', value: false }, function() { return clearExpansionStateAndRefresh( false ); }, { forceRefreshWhenUnchanged: true } ); }
+    function expand() { return queueWorkspaceStateRefresh( 'tree expansion', 'expansion-busy', { key: 'expanded', value: true }, function() { return clearExpansionStateAndRefresh( true ); }, { forceRefreshWhenUnchanged: true } ); }
+    function groupByTag() { return queueWorkspaceStateRefresh( 'tree grouping', 'grouping-busy', { key: 'groupedByTag', value: true }, undefined, { forceRefreshWhenUnchanged: true } ); }
+    function ungroupByTag() { return queueWorkspaceStateRefresh( 'tree grouping', 'grouping-busy', { key: 'groupedByTag', value: false }, undefined, { forceRefreshWhenUnchanged: true } ); }
+    function groupBySubTag() { return queueWorkspaceStateRefresh( 'tree grouping', 'grouping-busy', { key: 'groupedBySubTag', value: true }, undefined, { forceRefreshWhenUnchanged: true } ); }
+    function ungroupBySubTag() { return queueWorkspaceStateRefresh( 'tree grouping', 'grouping-busy', { key: 'groupedBySubTag', value: false }, undefined, { forceRefreshWhenUnchanged: true } ); }
 
     function clearTreeFilter()
     {
@@ -1844,22 +2823,22 @@ function activate( context )
 
     function scanWorkspaceAndOpenFiles()
     {
-        updateSetting( 'tree.scanMode', SCAN_MODE_WORKSPACE_AND_OPEN_FILES, vscode.ConfigurationTarget.Workspace );
+        return updateSetting( 'tree.scanMode', SCAN_MODE_WORKSPACE_AND_OPEN_FILES, vscode.ConfigurationTarget.Workspace );
     }
 
     function scanOpenFilesOnly()
     {
-        updateSetting( 'tree.scanMode', SCAN_MODE_OPEN_FILES, vscode.ConfigurationTarget.Workspace );
+        return updateSetting( 'tree.scanMode', SCAN_MODE_OPEN_FILES, vscode.ConfigurationTarget.Workspace );
     }
 
     function scanCurrentFileOnly()
     {
-        updateSetting( 'tree.scanMode', SCAN_MODE_CURRENT_FILE, vscode.ConfigurationTarget.Workspace );
+        return updateSetting( 'tree.scanMode', SCAN_MODE_CURRENT_FILE, vscode.ConfigurationTarget.Workspace );
     }
 
     function scanWorkspaceOnly()
     {
-        updateSetting( 'tree.scanMode', SCAN_MODE_WORKSPACE_ONLY, vscode.ConfigurationTarget.Workspace );
+        return updateSetting( 'tree.scanMode', SCAN_MODE_WORKSPACE_ONLY, vscode.ConfigurationTarget.Workspace );
     }
 
     function dumpFolderFilter()
@@ -2135,7 +3114,7 @@ function activate( context )
             } );
         }
 
-        function documentChanged( document )
+        function triggerHighlightsForDocument( document )
         {
             if( document )
             {
@@ -2149,7 +3128,27 @@ function activate( context )
                         }
                     }
                 } );
+            }
+            else
+            {
+                vscode.window.visibleTextEditors.map( editor =>
+                {
+                    if( config.isValidScheme( editor.document.uri ) )
+                    {
+                        if( isIncluded( editor.document.uri ) )
+                        {
+                            highlights.triggerHighlight( editor );
+                        }
+                    }
+                } );
+            }
+        }
 
+        function documentChanged( document )
+        {
+            if( document )
+            {
+                triggerHighlightsForDocument( document );
                 if( config.isValidScheme( document.uri ) && path.basename( document.fileName ) !== "settings.json" )
                 {
                     if( notebooks.isNotebookCellDocument( document ) === true )
@@ -2165,16 +3164,58 @@ function activate( context )
             }
             else
             {
-                vscode.window.visibleTextEditors.map( editor =>
+                triggerHighlightsForDocument();
+            }
+        }
+
+        function activeEditorChanged( editor )
+        {
+            if( !editor || !editor.document )
+            {
+                return;
+            }
+
+            var document = editor.document;
+            var activeDocumentIsNotebookCell = notebooks.isNotebookCellDocument( document ) === true;
+            var activeNotebook = activeDocumentIsNotebookCell === true ? getNotebookForDocument( document ) : undefined;
+            var ownerUri = activeNotebook ? activeNotebook.uri : getOwnerUriForDocument( document );
+            var ownerFileFilter = ownerUri && ownerUri.fsPath !== undefined ? ownerUri.fsPath : document.fileName;
+
+            triggerHighlightsForDocument( document );
+
+            if( activeDocumentIsNotebookCell !== true )
+            {
+                openDocuments[ document.uri.toString() ] = document;
+            }
+
+            if( config.scanMode() === SCAN_MODE_CURRENT_FILE )
+            {
+                rebuild();
+            }
+
+            if( getSetting( 'tree.autoRefresh', true ) === true && getSetting( 'tree.trackFile', true ) === true )
+            {
+                if( ownerUri && config.isValidScheme( ownerUri ) )
                 {
-                    if( config.isValidScheme( editor.document.uri ) )
+                    if( selectedDocument !== ownerFileFilter )
                     {
-                        if( isIncluded( editor.document.uri ) )
+                        setTimeout( function()
                         {
-                            highlights.triggerHighlight( editor );
-                        }
+                            showInTree( ownerUri, { select: false } );
+                        }, 500 );
                     }
-                } );
+                    selectedDocument = undefined;
+                }
+            }
+
+            if( ownerUri && ( document.fileName === undefined || isIncluded( ownerUri ) ) )
+            {
+                updateInformation();
+            }
+
+            if( config.scanMode() !== SCAN_MODE_CURRENT_FILE && activeNotebook && shouldRefreshFile() )
+            {
+                queueNotebookRefresh( activeNotebook, 'open' );
             }
         }
 
@@ -2243,12 +3284,7 @@ function activate( context )
 
         registerCommandPair( 'stopScan', function()
         {
-            pendingRescan = false;
-            cancelScan();
-            statusBarIndicator.text = identity.DISPLAY_NAME + ": Scanning interrupted.";
-            statusBarIndicator.tooltip = "Click to restart";
-            statusBarIndicator.command = identity.COMMANDS.refresh;
-            interrupted = true;
+            interruptActiveScan();
         } );
 
         registerCommandPair( 'exportTree', function()
@@ -2510,19 +3546,19 @@ function activate( context )
         registerCommandPair( 'toggleItemCounts', function()
         {
             var current = getSetting( 'tree.showCountsInTree', false );
-            updateSetting( 'tree.showCountsInTree', !current, vscode.ConfigurationTarget.Workspace );
+            return updateSetting( 'tree.showCountsInTree', !current, vscode.ConfigurationTarget.Workspace );
         } );
 
         registerCommandPair( 'toggleBadges', function()
         {
             var current = getSetting( 'tree.showBadges', false );
-            updateSetting( 'tree.showBadges', !current, vscode.ConfigurationTarget.Workspace );
+            return updateSetting( 'tree.showBadges', !current, vscode.ConfigurationTarget.Workspace );
         } );
 
         registerCommandPair( 'toggleCompactFolders', function()
         {
             var current = getSetting( 'tree.disableCompactFolders', false );
-            updateSetting( 'tree.disableCompactFolders', !current, vscode.ConfigurationTarget.Workspace );
+            return updateSetting( 'tree.disableCompactFolders', !current, vscode.ConfigurationTarget.Workspace );
         } );
 
         registerCommandPair( 'goToNext', function()
@@ -2658,11 +3694,15 @@ function activate( context )
 
         registerCommandPair( 'filterClear', clearTreeFilter );
         registerCommandPair( 'refresh', rebuild );
+        registerCommandPair( 'cycleViewStyle', cycleViewStyle );
         registerCommandPair( 'showFlatView', showFlatView );
         registerCommandPair( 'showTagsOnlyView', showTagsOnlyView );
         registerCommandPair( 'showTreeView', showTreeView );
+        registerCommandPair( 'toggleTreeExpansion', toggleTreeExpansion );
         registerCommandPair( 'expand', expand );
         registerCommandPair( 'collapse', collapse );
+        registerCommandPair( 'treeStateBusy', function() {} );
+        registerCommandPair( 'scanBusy', function() {} );
         registerCommandPair( 'groupByTag', groupByTag );
         registerCommandPair( 'ungroupByTag', ungroupByTag );
         registerCommandPair( 'groupBySubTag', groupBySubTag );
@@ -2688,56 +3728,7 @@ function activate( context )
             } );
         } ) );
 
-        context.subscriptions.push( vscode.window.onDidChangeActiveTextEditor( function( e )
-        {
-            if( e && e.document )
-            {
-                var activeDocumentIsNotebookCell = notebooks.isNotebookCellDocument( e.document ) === true;
-                var activeNotebook = activeDocumentIsNotebookCell === true ? getNotebookForDocument( e.document ) : undefined;
-                var ownerUri = activeNotebook ? activeNotebook.uri : getOwnerUriForDocument( e.document );
-                var ownerFileFilter = ownerUri && ownerUri.fsPath !== undefined ? ownerUri.fsPath : e.document.fileName;
-
-                if( activeDocumentIsNotebookCell !== true )
-                {
-                    openDocuments[ e.document.uri.toString() ] = e.document;
-                }
-
-                if( config.scanMode() === SCAN_MODE_CURRENT_FILE )
-                {
-                    rebuild();
-                }
-
-                if( getSetting( 'tree.autoRefresh', true ) === true && getSetting( 'tree.trackFile', true ) === true )
-                {
-                    if( ownerUri && config.isValidScheme( ownerUri ) )
-                    {
-                        if( selectedDocument !== ownerFileFilter )
-                        {
-                            setTimeout( function()
-                            {
-                                showInTree( ownerUri, { select: false } );
-                            }, 500 );
-                        }
-                        selectedDocument = undefined;
-                    }
-                }
-
-                if( ownerUri && ( e.document.fileName === undefined || isIncluded( ownerUri ) ) )
-                {
-                    updateInformation();
-                }
-
-                if( config.scanMode() !== SCAN_MODE_CURRENT_FILE )
-                {
-                    if( activeNotebook && shouldRefreshFile() )
-                    {
-                        queueNotebookRefresh( activeNotebook, 'open' );
-                    }
-
-                    documentChanged( e.document );
-                }
-            }
-        } ) );
+        context.subscriptions.push( vscode.window.onDidChangeActiveTextEditor( activeEditorChanged ) );
 
         context.subscriptions.push( vscode.workspace.onDidSaveTextDocument( document =>
         {
