@@ -2015,7 +2015,7 @@
         "webpack": "^5.106.1",
         "webpack-cli": "^7.0.2",
         "@vscode/vsce": "^3.7.1",
-        "ovsx": "^0.10.10"
+        "ovsx": "^0.10.11"
     },
     "overrides": {
         "lodash": "^4.18.1"
