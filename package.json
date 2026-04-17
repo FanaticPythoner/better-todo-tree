@@ -2012,7 +2012,7 @@
     "devDependencies": {
         "parse-code-context": "^1.0.0",
         "qunit": "^2.25.0",
-        "webpack": "^5.106.1",
+        "webpack": "^5.106.2",
         "webpack-cli": "^7.0.2",
         "@vscode/vsce": "^3.9.0",
         "ovsx": "^0.10.11"
