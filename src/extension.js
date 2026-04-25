@@ -22,6 +22,7 @@ var detection = require( './detection.js' );
 var identity = require( './extensionIdentity.js' );
 var settingsSnapshotModule = require( './runtime/settingsSnapshot.js' );
 var documentScanCacheModule = require( './runtime/documentScanCache.js' );
+var streamScanner = require( './runtime/streamScanner.js' );
 var packageJson = require( '../package.json' );
 
 var searchList = [];
@@ -1220,21 +1221,14 @@ function activate( context )
         };
     }
 
-    function readWorkspaceFile( filePath )
+    function scanWorkspaceFileWithText( filePath, scanFn )
     {
-        return new Promise( function( resolve, reject )
-        {
-            fs.readFile( filePath, 'utf8', function( error, text )
-            {
-                if( error )
-                {
-                    reject( error );
-                    return;
-                }
+        return streamScanner.scanWorkspaceFileWithText( filePath, scanFn, { fs: fs } );
+    }
 
-                resolve( text );
-            } );
-        } );
+    function inspectWorkspaceFile( filePath )
+    {
+        return streamScanner.inspectWorkspaceFile( filePath, { fs: fs } );
     }
 
     function ensureStorageDirectory()
@@ -2028,10 +2022,14 @@ function activate( context )
                 }
 
                 queueScanFileProgress( generation, filePath );
-                return readWorkspaceFile( filePath ).then( function( text )
+                return scanWorkspaceFileWithText( filePath, function( text )
                 {
                     assertGenerationActive( generation );
-                    replaceSearchResults( uri, detection.scanTextWithContext( detection.createScanContext( uri, text, currentSettingsSnapshot ) ), store );
+                    return detection.scanTextWithStreamingContext( detection.createScanContext( uri, text, currentSettingsSnapshot ) );
+                } ).then( function( results )
+                {
+                    assertGenerationActive( generation );
+                    replaceSearchResults( uri, results, store );
                     completeScanFileProgress( generation, filePath );
                     scheduleStreamingTreeApply( generation, store );
                 } ).catch( function( error )
@@ -2087,6 +2085,17 @@ function activate( context )
             return matchesByFile.get( filePath );
         }
 
+        function normalizeWorkspaceRegexMatches( uri, fileMatches )
+        {
+            return fileMatches.map( function( match )
+            {
+                return detection.normalizeWorkspaceRegexMatch( uri, match, currentSettingsSnapshot );
+            } ).filter( function( result )
+            {
+                return result !== undefined;
+            } );
+        }
+
         function scheduleFileNormalization( filePath, fileMatches )
         {
             if( !filePath || !fileMatches || fileMatches.length === 0 )
@@ -2105,20 +2114,38 @@ function activate( context )
                 }
 
                 queueScanFileProgress( generation, filePath );
-                return readWorkspaceFile( filePath ).then( function( text )
+                return inspectWorkspaceFile( filePath ).then( function( scanInfo )
                 {
                     assertGenerationActive( generation );
 
-                    var scanContext = detection.createScanContext( uri, text, currentSettingsSnapshot );
-                    var normalized = fileMatches.map( function( match )
+                    if( scanInfo.useStreaming === true )
                     {
-                        return detection.normalizeRegexMatchWithContext( scanContext, match );
-                    } ).filter( function( result )
-                    {
-                        return result !== undefined;
-                    } );
+                        return normalizeWorkspaceRegexMatches( uri, fileMatches );
+                    }
 
-                    replaceSearchResults( uri, normalized, store );
+                    return scanWorkspaceFileWithText( filePath, function( text, info )
+                    {
+                        assertGenerationActive( generation );
+
+                        var scanContext = detection.createScanContext( uri, text, currentSettingsSnapshot );
+
+                        if( info && info.isFirst === true && info.isLast === true )
+                        {
+                            return fileMatches.map( function( match )
+                            {
+                                return detection.normalizeRegexMatchWithContext( scanContext, match );
+                            } ).filter( function( result )
+                            {
+                                return result !== undefined;
+                            } );
+                        }
+
+                        return detection.scanTextWithContext( scanContext );
+                    } );
+                } ).then( function( results )
+                {
+                    assertGenerationActive( generation );
+                    replaceSearchResults( uri, results, store );
                     completeScanFileProgress( generation, filePath );
                     scheduleStreamingTreeApply( generation, store );
                 } ).catch( function( error )

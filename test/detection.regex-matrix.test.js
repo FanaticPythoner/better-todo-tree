@@ -329,6 +329,43 @@ QUnit.module( "detection regex matrix", function()
         assert.equal( normalized.matchEndOffset, text.length );
     } );
 
+    QUnit.test( "raw workspace regex normalization matches the editor path for multiline ripgrep payloads", function( assert )
+    {
+        var config = matrixHelpers.createConfig( {
+            tagList: [ 'TODO' ],
+            regexSource: '($TAGS):[\\s\\S]*?END',
+            enableMultiLineFlag: true,
+            subTagRegexString: '^:\\s*'
+        } );
+        var uri = matrixHelpers.createUri( '/tmp/workspace-raw.js' );
+        var text = 'TODO: first\nsecond\nEND\n';
+
+        utils.init( config );
+
+        var scanned = detection.scanText( uri, text )[ 0 ];
+        var normalized = detection.normalizeWorkspaceRegexMatch( uri, {
+            fsPath: uri.fsPath,
+            line: 1,
+            column: 1,
+            match: 'TODO: first\nsecond\nEND\n',
+            lines: 'TODO: first\nsecond\nEND\n',
+            absoluteOffset: 0,
+            submatches: [ {
+                match: 'TODO: first\nsecond\nEND\n',
+                start: 0,
+                end: text.length
+            } ]
+        } );
+
+        assert.equal( normalized.actualTag, scanned.actualTag );
+        assert.equal( normalized.displayText, scanned.displayText );
+        assert.deepEqual( normalized.continuationText, scanned.continuationText );
+        assert.equal( normalized.line, scanned.line );
+        assert.equal( normalized.endLine, scanned.endLine );
+        assert.equal( normalized.matchStartOffset, scanned.matchStartOffset );
+        assert.equal( normalized.matchEndOffset, scanned.matchEndOffset );
+    } );
+
     QUnit.test( "issue #888 multiline banner regex anchors the star tag to the content line", function( assert )
     {
         var uri = matrixHelpers.createUri( '/tmp/issue-888.js' );

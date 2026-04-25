@@ -1117,6 +1117,75 @@ function normalizeRipgrepMatch( uri, text, match )
     } );
 }
 
+function shiftNormalizedResult( result, charOffset, lineOffset )
+{
+    [ 'commentStartOffset', 'commentEndOffset', 'matchStartOffset', 'matchEndOffset', 'tagStartOffset', 'tagEndOffset', 'subTagStartOffset', 'subTagEndOffset' ].forEach( function( field )
+    {
+        if( typeof result[ field ] === 'number' )
+        {
+            result[ field ] += charOffset;
+        }
+    } );
+
+    if( Array.isArray( result.captureGroupOffsets ) )
+    {
+        result.captureGroupOffsets = result.captureGroupOffsets.map( function( range )
+        {
+            if( !range )
+            {
+                return undefined;
+            }
+
+            return [ range[ 0 ] + charOffset, range[ 1 ] + charOffset ];
+        } );
+    }
+
+    if( typeof result.line === 'number' )
+    {
+        result.line += lineOffset;
+    }
+    if( typeof result.endLine === 'number' )
+    {
+        result.endLine += lineOffset;
+    }
+
+    return result;
+}
+
+function normalizeWorkspaceRegexMatch( uri, match, snapshot )
+{
+    if( !match )
+    {
+        return undefined;
+    }
+
+    var contextText = typeof match.lines === 'string' && match.lines.length > 0 ? match.lines : ( match.match || "" );
+    var localMatchText = typeof match.match === 'string' && match.match.length > 0 ? match.match : contextText;
+    var localMatchStart = match.submatches && match.submatches.length > 0 && typeof match.submatches[ 0 ].start === 'number' ?
+        match.submatches[ 0 ].start :
+        Math.max( ( match.column || 1 ) - 1, 0 );
+    var context = createScanContext( uri, contextText, snapshot );
+    var exactMatch = findExactRegexExecMatch( context, localMatchStart );
+    var normalized = normalizeRegexExecMatchWithContext(
+        context,
+        exactMatch || {
+            0: localMatchText,
+            index: localMatchStart
+        }
+    );
+
+    if( !normalized )
+    {
+        return undefined;
+    }
+
+    return shiftNormalizedResult(
+        normalized,
+        typeof match.absoluteOffset === 'number' ? match.absoluteOffset : 0,
+        Math.max( ( match.line || 1 ) - 1, 0 )
+    );
+}
+
 function resolveResourceConfig( uri )
 {
     return utils.getResourceConfig( uri );
@@ -1197,6 +1266,148 @@ function runRegexScan( context )
     return results;
 }
 
+function getTrailingTextContentEnd( text )
+{
+    var end = text.length;
+
+    while( end > 0 && ( text[ end - 1 ] === '\n' || text[ end - 1 ] === '\r' ) )
+    {
+        end--;
+    }
+
+    return end;
+}
+
+function getStreamingResultStartOffset( result )
+{
+    var startOffset;
+
+    [ 'commentStartOffset', 'matchStartOffset', 'tagStartOffset', 'subTagStartOffset' ].forEach( function( field )
+    {
+        if( typeof result[ field ] === 'number' && ( startOffset === undefined || result[ field ] < startOffset ) )
+        {
+            startOffset = result[ field ];
+        }
+    } );
+
+    return startOffset;
+}
+
+function getStreamingResultEndOffset( result )
+{
+    var endOffset;
+
+    [ 'commentEndOffset', 'matchEndOffset', 'tagEndOffset', 'subTagEndOffset' ].forEach( function( field )
+    {
+        if( typeof result[ field ] === 'number' && ( endOffset === undefined || result[ field ] > endOffset ) )
+        {
+            endOffset = result[ field ];
+        }
+    } );
+
+    if( Array.isArray( result.captureGroupOffsets ) )
+    {
+        result.captureGroupOffsets.forEach( function( range )
+        {
+            if( range && typeof range[ 1 ] === 'number' && ( endOffset === undefined || range[ 1 ] > endOffset ) )
+            {
+                endOffset = range[ 1 ];
+            }
+        } );
+    }
+
+    return endOffset;
+}
+
+function findTrailingUnclosedMultiLineCommentStart( text, pattern )
+{
+    if( !pattern || !Array.isArray( pattern.multiLineComment ) )
+    {
+        return undefined;
+    }
+
+    var openStartOffset;
+
+    pattern.multiLineComment.forEach( function( entry )
+    {
+        if( !entry || entry.start === undefined || typeof entry.end !== 'string' || entry.end.length === 0 )
+        {
+            return;
+        }
+
+        var cursor = 0;
+
+        while( cursor < text.length )
+        {
+            var start = findTokenStart( text, entry.start, cursor );
+
+            if( start === undefined )
+            {
+                return;
+            }
+
+            var endIndex = text.indexOf( entry.end, start.index + start.length );
+
+            if( endIndex === -1 )
+            {
+                if( openStartOffset === undefined || start.index < openStartOffset )
+                {
+                    openStartOffset = start.index;
+                }
+                return;
+            }
+
+            cursor = endIndex + entry.end.length;
+        }
+    } );
+
+    return openStartOffset;
+}
+
+function resolveStreamingRetainOffset( context, results )
+{
+    if( !context || !context.resourceConfig || context.resourceConfig.isDefaultRegex !== true )
+    {
+        return undefined;
+    }
+
+    var retainOffset;
+    var patternLookupName = context.patternFileName || getUriFsPath( context.uri );
+    var pattern = utils.getCommentPattern( patternLookupName );
+    var trailingTextEnd = getTrailingTextContentEnd( context.text || "" );
+
+    if( pattern !== undefined )
+    {
+        var openCommentOffset = findTrailingUnclosedMultiLineCommentStart( context.text || "", pattern );
+
+        if( typeof openCommentOffset === 'number' )
+        {
+            retainOffset = openCommentOffset;
+        }
+    }
+
+    ( results || [] ).forEach( function( result )
+    {
+        var resultStart = getStreamingResultStartOffset( result );
+        var resultEnd = getStreamingResultEndOffset( result );
+
+        if( typeof resultStart !== 'number' || typeof resultEnd !== 'number' )
+        {
+            return;
+        }
+
+        if( resultEnd >= trailingTextEnd )
+        {
+            if( retainOffset === undefined || resultStart < retainOffset )
+            {
+                retainOffset = resultStart;
+            }
+        }
+    } );
+
+    return retainOffset;
+}
+
 function scanTextWithContext( context )
 {
     if( context.resourceConfig.isDefaultRegex === true )
@@ -1205,6 +1416,16 @@ function scanTextWithContext( context )
     }
 
     return runRegexScan( context );
+}
+
+function scanTextWithStreamingContext( context )
+{
+    var results = scanTextWithContext( context );
+
+    return {
+        results: results,
+        retainOffset: resolveStreamingRetainOffset( context, results )
+    };
 }
 
 function scanDocumentWithContext( context )
@@ -1228,5 +1449,7 @@ module.exports.scanDocument = scanDocument;
 module.exports.scanDocumentWithContext = scanDocumentWithContext;
 module.exports.scanText = scanText;
 module.exports.scanTextWithContext = scanTextWithContext;
+module.exports.scanTextWithStreamingContext = scanTextWithStreamingContext;
 module.exports.normalizeRegexMatch = normalizeRegexMatch;
 module.exports.normalizeRegexMatchWithContext = normalizeRegexMatchWithContext;
+module.exports.normalizeWorkspaceRegexMatch = normalizeWorkspaceRegexMatch;

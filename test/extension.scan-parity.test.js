@@ -2,6 +2,7 @@ var fs = require( 'fs' );
 var path = require( 'path' );
 var Module = require( 'module' );
 var vm = require( 'vm' );
+var Readable = require( 'stream' ).Readable;
 var helpers = require( './moduleHelpers.js' );
 var issue888Helpers = require( './issue888Helpers.js' );
 var matrixHelpers = require( './matrixHelpers.js' );
@@ -9,6 +10,7 @@ var languageMatrix = require( './languageMatrix.js' );
 var actualUtils = require( '../src/utils.js' );
 var actualDetection = require( '../src/detection.js' );
 var actualNotebooks = require( '../src/notebooks.js' );
+var actualStreamScanner = require( '../src/runtime/streamScanner.js' );
 
 var DEFAULT_INCLUDE_GLOBS = languageMatrix.findConfigurationProperty( 'better-todo-tree.filtering.includeGlobs' ).default.slice();
 var DEFAULT_EXCLUDE_GLOBS = languageMatrix.findConfigurationProperty( 'better-todo-tree.filtering.excludeGlobs' ).default.slice();
@@ -62,6 +64,31 @@ function loadWithStubsAndTimers( modulePath, stubs, timerStubs )
         Module._load = originalLoad;
         global.__betterTodoTreeTestTimers = previousTimers;
     }
+}
+
+function createMockReadStream( content, requestedChunkSize )
+{
+    var chunkSize = typeof ( requestedChunkSize ) === 'number' && requestedChunkSize > 0 ?
+        requestedChunkSize :
+        Math.max( 1, content.length );
+    var offset = 0;
+    var stream = new Readable( {
+        read: function()
+        {
+            var emitter = this;
+            if( offset >= content.length )
+            {
+                emitter.push( null );
+                return;
+            }
+            var nextOffset = Math.min( content.length, offset + chunkSize );
+            var slice = content.slice( offset, nextOffset );
+            offset = nextOffset;
+            emitter.push( slice );
+        }
+    } );
+    stream.setEncoding( 'utf8' );
+    return stream;
 }
 
 function createConfigurationSection( values, explicitTarget, updateLog )
@@ -682,6 +709,7 @@ function createExtensionHarness( options )
     var scanDocumentCalls = [];
     var scanTextCalls = [];
     var normalizeCalls = [];
+    var normalizeWorkspaceCalls = [];
     var readFileCalls = [];
     var ripgrepMatchLookup = new Map();
     var validSchemes = options.validSchemes || [ 'file', 'vscode-notebook-cell' ];
@@ -903,9 +931,29 @@ function createExtensionHarness( options )
             }
         };
 
+    var streamScannerOverrides = options.streamScannerOverrides;
+    var streamScannerStub = streamScannerOverrides ?
+        Object.assign( {}, actualStreamScanner, {
+            inspectWorkspaceFile: function( filePath, callerOptions )
+            {
+                return actualStreamScanner.inspectWorkspaceFile(
+                    filePath,
+                    Object.assign( {}, callerOptions, streamScannerOverrides ) );
+            },
+            scanWorkspaceFileWithText: function( filePath, scanFn, callerOptions )
+            {
+                return actualStreamScanner.scanWorkspaceFileWithText(
+                    filePath,
+                    scanFn,
+                    Object.assign( {}, callerOptions, streamScannerOverrides ) );
+            }
+        } ) :
+        actualStreamScanner;
+
     var extensionStubs = {
         vscode: vscodeStub,
         './extensionIdentity.js': extensionIdentity,
+        './runtime/streamScanner.js': streamScannerStub,
         './ripgrep': {
             search: function( root, searchOptions, onEvent )
             {
@@ -942,6 +990,19 @@ function createExtensionHarness( options )
                         var line = match.line || 1;
                         var column = match.column || 1;
                         var matchText = match.match || '';
+                        var linesText = match.lines || matchText;
+                        var submatches = Array.isArray( match.submatches ) ? match.submatches.map( function( submatch )
+                        {
+                            return {
+                                match: { text: submatch.match || matchText },
+                                start: submatch.start,
+                                end: submatch.end
+                            };
+                        } ) : [ {
+                            match: { text: matchText },
+                            start: Math.max( column - 1, 0 ),
+                            end: Math.max( column - 1, 0 ) + matchText.length
+                        } ];
 
                         if( typeof ( onEvent ) === 'function' )
                         {
@@ -949,14 +1010,10 @@ function createExtensionHarness( options )
                                 type: 'match',
                                 data: {
                                     path: { text: filePath },
-                                    lines: { text: matchText },
+                                    lines: { text: linesText },
                                     line_number: line,
                                     absolute_offset: match.absoluteOffset || 0,
-                                    submatches: [ {
-                                        match: { text: matchText },
-                                        start: Math.max( column - 1, 0 ),
-                                        end: Math.max( column - 1, 0 ) + matchText.length
-                                    } ]
+                                    submatches: submatches
                                 }
                             } );
                         }
@@ -1052,6 +1109,18 @@ function createExtensionHarness( options )
             {
                 return this.scanText( context.uri, context.text );
             },
+            scanTextWithStreamingContext: function( context )
+            {
+                if( typeof ( options.scanTextWithStreamingImpl ) === 'function' )
+                {
+                    return options.scanTextWithStreamingImpl( context );
+                }
+
+                return {
+                    results: this.scanText( context.uri, context.text ),
+                    retainOffset: options.streamingRetainOffset
+                };
+            },
             normalizeRegexMatchWithContext: function( context, match )
             {
                 var lookupKey = [ match.fsPath, match.line || 1, match.column || 1, match.match || '' ].join( '\u0000' );
@@ -1059,11 +1128,52 @@ function createExtensionHarness( options )
 
                 normalizeCalls.push( { uri: context.uri, text: context.text, match: originalMatch } );
                 return options.normalizeResult ? options.normalizeResult( originalMatch ) : originalMatch;
+            },
+            normalizeWorkspaceRegexMatch: function( uri, match, snapshot )
+            {
+                var lookupKey = [ match.fsPath, match.line || 1, match.column || 1, match.match || '' ].join( '\u0000' );
+                var originalMatch = ripgrepMatchLookup.get( lookupKey ) || match;
+
+                normalizeWorkspaceCalls.push( { uri: uri, match: originalMatch, snapshot: snapshot } );
+                return options.normalizeWorkspaceResult ? options.normalizeWorkspaceResult( originalMatch, uri, snapshot ) : originalMatch;
             }
         },
         fs: {
             existsSync: function() { return true; },
             mkdirSync: function() {},
+            stat: function( filePath, callback )
+            {
+                if( typeof ( options.statImpl ) === 'function' )
+                {
+                    return options.statImpl( filePath, callback );
+                }
+                if( options.statErrors && options.statErrors[ filePath ] )
+                {
+                    callback( options.statErrors[ filePath ] );
+                    return;
+                }
+                if( options.fileStats && Object.prototype.hasOwnProperty.call( options.fileStats, filePath ) )
+                {
+                    callback( null, options.fileStats[ filePath ] );
+                    return;
+                }
+                var content = options.fileContents ? options.fileContents[ filePath ] : undefined;
+                var size = typeof ( content ) === 'string' ? Buffer.byteLength( content, 'utf8' ) : 0;
+                callback( null, { size: size } );
+            },
+            createReadStream: function( filePath, streamOptions )
+            {
+                if( typeof ( options.createReadStreamImpl ) === 'function' )
+                {
+                    return options.createReadStreamImpl( filePath, streamOptions );
+                }
+                var content = options.fileContents ? options.fileContents[ filePath ] : undefined;
+                if( typeof ( content ) !== 'string' )
+                {
+                    content = "";
+                }
+                return createMockReadStream( content, ( options.streamChunkSizes && options.streamChunkSizes[ filePath ] ) || options.streamChunkSize );
+            },
             readFile: function( filePath, encoding, callback )
             {
                 readFileCalls.push( filePath );
@@ -1120,6 +1230,7 @@ function createExtensionHarness( options )
         scanDocumentCalls: scanDocumentCalls,
         scanTextCalls: scanTextCalls,
         normalizeCalls: normalizeCalls,
+        normalizeWorkspaceCalls: normalizeWorkspaceCalls,
         readFileCalls: readFileCalls,
         notebookMetrics: notebookMetrics,
         vscode: vscodeStub,
@@ -3442,6 +3553,215 @@ QUnit.test( "workspace scan keeps successful results when one workspace file rea
     } );
 } );
 
+QUnit.test( "workspace scan streams oversized files through chunked detection instead of skipping them", function( assert )
+{
+    var oversizedPath = '/workspace/huge.js';
+    var oversizedContent = [
+        '// TODO alpha',
+        '// TODO beta',
+        '// TODO gamma',
+        '// TODO delta'
+    ].join( '\n' ) + '\n';
+    var fakeOversizedSize = 9999999;
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        scanTextImpl: function( uri, text )
+        {
+            var indices = [];
+            var index = 0;
+            while( ( index = text.indexOf( 'TODO', index ) ) !== -1 )
+            {
+                indices.push( {
+                    uri: uri,
+                    actualTag: 'TODO',
+                    displayText: text.slice( index, index + 4 ),
+                    continuationText: [],
+                    line: 1,
+                    matchStartOffset: index,
+                    matchEndOffset: index + 4,
+                    tagStartOffset: index,
+                    tagEndOffset: index + 4
+                } );
+                index += 4;
+            }
+            return indices;
+        },
+        ripgrepMatches: [ { fsPath: oversizedPath } ],
+        fileContents: {
+            '/workspace/huge.js': oversizedContent
+        },
+        fileStats: {
+            '/workspace/huge.js': { size: fakeOversizedSize }
+        },
+        streamChunkSizes: {
+            '/workspace/huge.js': 16
+        },
+        streamScannerOverrides: {
+            chunkBytes: 24,
+            overlapBytes: 8,
+            maxInMemoryBytes: 64
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.errorMessages.length, 0, "no error reported for oversized file" );
+        assert.equal( harness.warningMessages.length, 0, "no warning reported for oversized file" );
+
+        assert.equal( harness.readFileCalls.indexOf( oversizedPath ), -1,
+            "fs.readFile was bypassed for oversized files" );
+        assert.ok( harness.scanTextCalls.length >= 2,
+            "streaming scanText was invoked multiple times for the oversized file (got " + harness.scanTextCalls.length + ")" );
+
+        var replaceForOversized = harness.provider.replaceCalls.filter( function( call )
+        {
+            return call.uri.fsPath === oversizedPath;
+        } );
+        assert.equal( replaceForOversized.length, 1, "results were applied exactly once for the oversized file" );
+
+        var emittedTags = replaceForOversized[ 0 ].results.map( function( result )
+        {
+            return result.actualTag;
+        } );
+        assert.equal( emittedTags.length, 4, "every TODO in the oversized file is reported (got " + emittedTags.length + ")" );
+        emittedTags.forEach( function( tag )
+        {
+            assert.equal( tag, 'TODO' );
+        } );
+
+        var globalOffsets = replaceForOversized[ 0 ].results.map( function( r ) { return r.matchStartOffset; } );
+        var sortedOffsets = globalOffsets.slice().sort( function( a, b ) { return a - b; } );
+        var uniqueOffsets = sortedOffsets.filter( function( value, index )
+        {
+            return index === 0 || value !== sortedOffsets[ index - 1 ];
+        } );
+        assert.equal( uniqueOffsets.length, globalOffsets.length, "global offsets are unique after deduplication" );
+    } );
+} );
+
+QUnit.test( "workspace scan custom-regex path normalizes oversized ripgrep matches without reparsing the file", function( assert )
+{
+    var oversizedPath = '/workspace/huge-custom.txt';
+    var oversizedContent = [
+        'XXX one',
+        'XXX two',
+        'XXX three'
+    ].join( '\n' ) + '\n';
+    var fakeOversizedSize = 9999999;
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        regexSource: '(XXX)',
+        resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        normalizeWorkspaceResult: function( match, uri )
+        {
+            return {
+                uri: uri,
+                actualTag: 'XXX',
+                tag: 'XXX',
+                displayText: match.lines.trim().split( /\s+/ ).slice( 1 ).join( ' ' ),
+                continuationText: [],
+                line: match.line,
+                endLine: match.line,
+                matchStartOffset: match.absoluteOffset,
+                matchEndOffset: match.absoluteOffset + 3,
+                tagStartOffset: match.absoluteOffset,
+                tagEndOffset: match.absoluteOffset + 3
+            };
+        },
+        ripgrepMatches: [
+            { fsPath: oversizedPath, line: 1, column: 1, match: 'XXX', lines: 'XXX one\n', absoluteOffset: 0 },
+            { fsPath: oversizedPath, line: 2, column: 1, match: 'XXX', lines: 'XXX two\n', absoluteOffset: 8 },
+            { fsPath: oversizedPath, line: 3, column: 1, match: 'XXX', lines: 'XXX three\n', absoluteOffset: 16 }
+        ],
+        fileContents: {
+            '/workspace/huge-custom.txt': oversizedContent
+        },
+        fileStats: {
+            '/workspace/huge-custom.txt': { size: fakeOversizedSize }
+        },
+        streamChunkSizes: {
+            '/workspace/huge-custom.txt': 8
+        },
+        streamScannerOverrides: {
+            maxInMemoryBytes: 16,
+            chunkBytes: 12,
+            overlapBytes: 4
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.errorMessages.length, 0, "no error reported for oversized custom-regex file" );
+        assert.equal( harness.warningMessages.length, 0, "no warning reported for oversized custom-regex file" );
+
+        assert.equal( harness.normalizeCalls.length, 0,
+            "full-text normalization is bypassed for oversized custom-regex files" );
+        assert.equal( harness.normalizeWorkspaceCalls.length, 3,
+            "raw workspace matches are normalized directly for oversized custom-regex files" );
+        assert.equal( harness.scanTextCalls.length, 0,
+            "workspace regex scans do not reparse oversized files chunk-by-chunk" );
+        assert.equal( harness.readFileCalls.indexOf( oversizedPath ), -1,
+            "fs.readFile stays bypassed for oversized custom-regex files" );
+
+        var replaceForOversized = harness.provider.replaceCalls.filter( function( call )
+        {
+            return call.uri.fsPath === oversizedPath;
+        } );
+        assert.equal( replaceForOversized.length, 1 );
+        assert.deepEqual( replaceForOversized[ 0 ].results.map( function( result ) { return result.displayText; } ),
+            [ 'one', 'two', 'three' ],
+            "raw ripgrep normalization preserves display text for every oversized match" );
+    } );
+} );
+
+QUnit.test( "workspace scan reports oversized stat errors as workspace scan issues without crashing", function( assert )
+{
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        scanTextImpl: function( uri )
+        {
+            return [ {
+                uri: uri,
+                actualTag: 'TODO',
+                displayText: path.basename( uri.fsPath ),
+                continuationText: []
+            } ];
+        },
+        ripgrepMatches: [
+            { fsPath: './ok.js' },
+            { fsPath: './unstattable.js' }
+        ],
+        statErrors: {
+            '/workspace/unstattable.js': new Error( 'EACCES: permission denied' )
+        },
+        fileContents: {
+            '/workspace/ok.js': '# TODO ok'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        var replacedPaths = harness.provider.replaceCalls.map( function( call ) { return call.uri.fsPath; } );
+        assert.deepEqual( replacedPaths, [ '/workspace/ok.js' ],
+            "successful files still produce results when a sibling stat fails" );
+        assert.equal( harness.warningMessages.length, 1,
+            "exactly one summarized warning surfaces stat-failed files" );
+        assert.ok( harness.warningMessages[ 0 ].indexOf( '/workspace/unstattable.js' ) !== -1 );
+        assert.equal( harness.errorMessages.length, 0 );
+    } );
+} );
+
 QUnit.test( "issue #820 workspace mode uses tag-only candidate search before reparsing Python files", function( assert )
 {
     var pythonText = [
@@ -3687,7 +4007,7 @@ QUnit.test( "workspace mode custom regex scanning resolves root-relative ripgrep
     } );
 } );
 
-QUnit.test( "workspace mode forwards multiline remote-path regex matches through normalization", function( assert )
+QUnit.test( "workspace mode forwards multiline remote-path regex matches through raw workspace normalization", function( assert )
 {
     var remotePath = '/home/azureuser/localfiles/my-project/pipeline-deploy-api-policies.yaml';
     var canonicalFixture = [
@@ -3703,8 +4023,14 @@ QUnit.test( "workspace mode forwards multiline remote-path regex matches through
             fsPath: remotePath,
             line: 1,
             column: 1,
-            match: 'TODO: first custom item',
-            extraLines: [ { match: 'second line' }, { match: 'END' } ]
+            match: 'TODO: first custom item\nsecond line\nEND\n',
+            lines: 'TODO: first custom item\nsecond line\nEND\n',
+            absoluteOffset: 0,
+            submatches: [ {
+                match: 'TODO: first custom item\nsecond line\nEND\n',
+                start: 0,
+                end: 39
+            } ]
         }
     ];
     var harness = createExtensionHarness( {
@@ -3713,21 +4039,29 @@ QUnit.test( "workspace mode forwards multiline remote-path regex matches through
         resourceConfig: { isDefaultRegex: false, enableMultiLine: true, regexCaseSensitive: true },
         workspaceFolders: [ { uri: matrixHelpers.createUri( '/home/azureuser/localfiles/my-project' ), name: 'my-project' } ],
         ripgrepMatches: ripgrepMatches,
-        normalizeResult: function( match )
+        normalizeWorkspaceResult: function( match )
         {
             return canonicalFixture[ ripgrepMatches.indexOf( match ) ];
         },
-        fileContents: {}
+        fileContents: {},
+        fileStats: {
+            '/home/azureuser/localfiles/my-project/pipeline-deploy-api-policies.yaml': { size: 9999999 }
+        },
+        streamScannerOverrides: {
+            maxInMemoryBytes: 16,
+            chunkBytes: 12,
+            overlapBytes: 4
+        }
     } );
 
     harness.extension.activate( harness.context );
 
     return matrixHelpers.flushAsyncWork().then( function()
     {
-        assert.equal( harness.normalizeCalls.length, 1 );
-        assert.equal( harness.normalizeCalls[ 0 ].uri.fsPath, remotePath );
-        assert.equal( harness.normalizeCalls[ 0 ].match.extraLines.length, 2 );
-        assert.deepEqual( harness.normalizeCalls[ 0 ].match.extraLines.map( function( line ) { return line.match; } ), [ 'second line', 'END' ] );
+        assert.equal( harness.normalizeCalls.length, 0 );
+        assert.equal( harness.normalizeWorkspaceCalls.length, 1 );
+        assert.equal( harness.normalizeWorkspaceCalls[ 0 ].uri.fsPath, remotePath );
+        assert.deepEqual( harness.normalizeWorkspaceCalls[ 0 ].match.lines.split( '\n' ).slice( 0, 3 ), [ 'TODO: first custom item', 'second line', 'END' ] );
         assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, canonicalFixture );
     } );
 } );
