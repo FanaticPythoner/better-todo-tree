@@ -438,6 +438,18 @@ function resolveTagCaptureRange( context, match, rawStartOffset )
         return indexedMatch.indices[ tagCaptureGroupIndex ];
     }
 
+    if( typeof ( match[ tagCaptureGroupIndex ] ) === 'string' && match[ tagCaptureGroupIndex ].length > 0 )
+    {
+        var capturedTagOffset = match[ 0 ].indexOf( match[ tagCaptureGroupIndex ] );
+        if( capturedTagOffset >= 0 )
+        {
+            return [
+                rawStartOffset + capturedTagOffset,
+                rawStartOffset + capturedTagOffset + match[ tagCaptureGroupIndex ].length
+            ];
+        }
+    }
+
     return undefined;
 }
 
@@ -931,11 +943,7 @@ function scanCommentPatternText( uri, text, resourceConfig, patternFileName )
 
     if( pattern === undefined )
     {
-        var genericLines = createPassThroughLines( text );
-        return collectLogicalCommentMatches( uri, genericLines, lineOffsets, resourceConfig, {
-            context: context,
-            patternFileName: patternFileName
-        } );
+        return runRegexScan( context );
     }
 
     if( pattern.commentsOnly === true )
@@ -982,6 +990,12 @@ function normalizeRegexExecMatchWithContext( context, match )
 
             var lastRenderedOffset = Math.max( rawEndOffset - 1, tagEndOffset - 1 );
             logicalEndOffset = getLineBoundsForOffset( context.text, context.lineOffsets, lastRenderedOffset ).endOffset;
+            matchText = context.text.slice( logicalStartOffset, logicalEndOffset );
+            preferredTagOffset = tagStartOffset - logicalStartOffset;
+        }
+        else if( context.resourceConfig.isDefaultRegex === true && tagLineBounds.endOffset > rawEndOffset )
+        {
+            logicalEndOffset = tagLineBounds.endOffset;
             matchText = context.text.slice( logicalStartOffset, logicalEndOffset );
             preferredTagOffset = tagStartOffset - logicalStartOffset;
         }
@@ -1142,21 +1156,34 @@ function normalizeRegexMatch( uri, text, match )
     return normalizeRegexExecMatchWithContext( context, match );
 }
 
-function scanTextWithContext( context )
+function ensureExactRegex( context )
 {
-    if( context.resourceConfig.isDefaultRegex === true )
+    if( context.exactRegex )
     {
-        return scanCommentPatternText( context.uri, context.text, context.resourceConfig, context.patternFileName );
+        return context.exactRegex;
     }
 
+    context.exactRegex = utils.getRegexForEditorSearch( true, context.uri, {
+        includeIndices: true,
+        resourceConfig: context.resourceConfig
+    } );
+
+    return context.exactRegex;
+}
+
+function runRegexScan( context )
+{
+    var regex = ensureExactRegex( context );
     var results = [];
     var match;
 
-    while( ( match = context.exactRegex.exec( context.text ) ) !== null )
+    regex.lastIndex = 0;
+
+    while( ( match = regex.exec( context.text ) ) !== null )
     {
         if( match[ 0 ].length === 0 )
         {
-            context.exactRegex.lastIndex++;
+            regex.lastIndex++;
             continue;
         }
 
@@ -1168,6 +1195,16 @@ function scanTextWithContext( context )
     }
 
     return results;
+}
+
+function scanTextWithContext( context )
+{
+    if( context.resourceConfig.isDefaultRegex === true )
+    {
+        return scanCommentPatternText( context.uri, context.text, context.resourceConfig, context.patternFileName );
+    }
+
+    return runRegexScan( context );
 }
 
 function scanDocumentWithContext( context )

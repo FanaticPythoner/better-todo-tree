@@ -147,3 +147,105 @@ QUnit.test( 'justfile exposes GitHub Actions verification recipes', function( as
     assert.ok( releaseWorkflow.indexOf( 'actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0' ) !== -1 );
     assert.ok( latestWorkflow.indexOf( 'actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0' ) !== -1 );
 } );
+
+QUnit.test( 'parity harness source files are present in the repository tree', function( assert )
+{
+    var parityRoot = path.join( __dirname, 'parity' );
+    var requiredFiles = [
+        'compare.js',
+        'corpus.js',
+        'improvementsRegistry.js',
+        'parity.robustness.test.js',
+        'parity.test.js',
+        'scanHarness.js',
+        'upstreamDetector.js',
+        'upstreamExtensionHarness.js',
+        'upstreamGitLoader.js',
+        'README.md'
+    ];
+
+    requiredFiles.forEach( function( relativePath )
+    {
+        var absolutePath = path.join( parityRoot, relativePath );
+        assert.ok( fs.existsSync( absolutePath ), relativePath + ' exists under test/parity/' );
+    } );
+
+    assert.ok(
+        !fs.existsSync( path.join( parityRoot, 'upstream-src' ) ),
+        'no static upstream-src/ directory: upstream is cloned at runtime into .tools/upstream-todo-tree/'
+    );
+} );
+
+QUnit.test( 'parity harness pins to the canonical upstream Gruntfuggly/todo-tree remote and a 40-char commit', function( assert )
+{
+    var upstreamGitLoader = require( './parity/upstreamGitLoader.js' );
+
+    assert.equal(
+        upstreamGitLoader.UPSTREAM_REPO_URL,
+        'https://github.com/Gruntfuggly/todo-tree.git',
+        'pinned remote is the canonical upstream repository'
+    );
+    assert.ok(
+        /^[0-9a-f]{40}$/.test( upstreamGitLoader.UPSTREAM_COMMIT ),
+        'pinned commit is a 40-char lowercase hex SHA-1: ' + upstreamGitLoader.UPSTREAM_COMMIT
+    );
+} );
+
+QUnit.test( '.vscodeignore excludes the upstream clone, test fixtures, build tooling, and editor backups so they never ship in the published VSIX', function( assert )
+{
+    var contents = fs.readFileSync( path.join( __dirname, '..', '.vscodeignore' ), 'utf8' );
+    var lines = contents.split( /\r?\n/ ).map( function( line ) { return line.trim(); } );
+
+    assert.ok( lines.indexOf( 'test/' ) !== -1, '.vscodeignore lists `test/`' );
+    assert.ok( lines.indexOf( 'src/' ) !== -1, '.vscodeignore lists `src/` (bundle ships from dist/)' );
+    assert.ok( lines.indexOf( 'TODOS_LISTS/' ) !== -1, '.vscodeignore lists `TODOS_LISTS/`' );
+    assert.ok( lines.indexOf( '.github/' ) !== -1, '.vscodeignore lists `.github/`' );
+    assert.ok( lines.indexOf( '.tools/' ) !== -1, '.vscodeignore lists `.tools/` (upstream clone cache)' );
+    assert.ok( lines.indexOf( 'buildCodiconNames.js' ) !== -1, '.vscodeignore lists `buildCodiconNames.js` (build-time tool, not needed at runtime)' );
+    assert.ok( lines.indexOf( 'old-*.js' ) !== -1, '.vscodeignore lists `old-*.js` (pre-refactor scratch files never ship)' );
+    assert.ok( lines.indexOf( '*.bak' ) !== -1, '.vscodeignore lists `*.bak` (editor backups never ship)' );
+    assert.ok( lines.indexOf( '*~' ) !== -1, '.vscodeignore lists `*~` (editor backups never ship)' );
+} );
+
+QUnit.test( '.gitignore excludes the upstream clone cache so cloned upstream sources are never committed', function( assert )
+{
+    var contents = fs.readFileSync( path.join( __dirname, '..', '.gitignore' ), 'utf8' );
+    var lines = contents.split( /\r?\n/ ).map( function( line ) { return line.trim(); } );
+
+    assert.ok( lines.indexOf( '.tools/' ) !== -1, '.gitignore lists `.tools/`' );
+} );
+
+QUnit.test( 'repository root is free of pre-refactor scratch files and stray agent context files', function( assert )
+{
+    var repoRoot = path.join( __dirname, '..' );
+    var bannedFiles = [ 'old-extension-pre-refactor.js', '.codex' ];
+
+    bannedFiles.forEach( function( banned )
+    {
+        assert.ok(
+            !fs.existsSync( path.join( repoRoot, banned ) ),
+            'repo root does not contain pre-refactor scratch / stray agent file: ' + banned
+        );
+    } );
+
+    var rootEntries = fs.readdirSync( repoRoot );
+    var oldJsFiles = rootEntries.filter( function( entry )
+    {
+        return /^old-.*\.js$/.test( entry );
+    } );
+    assert.equal(
+        oldJsFiles.length,
+        0,
+        'repo root has no `old-*.js` scratch files: ' + JSON.stringify( oldJsFiles )
+    );
+
+    var bakFiles = rootEntries.filter( function( entry )
+    {
+        return /\.bak$/.test( entry ) || /~$/.test( entry );
+    } );
+    assert.equal(
+        bakFiles.length,
+        0,
+        'repo root has no editor backup files: ' + JSON.stringify( bakFiles )
+    );
+} );

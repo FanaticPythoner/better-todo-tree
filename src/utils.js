@@ -11,6 +11,7 @@ var themeColourNames = require( './themeColourNames.js' );
 var config;
 var tagRegexSourceCache = new Map();
 var submoduleExcludeGlobCache = new Map();
+var regExpIndicesSupported;
 
 var DEFAULT_REGEX_SOURCE = '(^|//|#|<!--|;|/\\*|^[ \\t]*(-|\\d+.))\\s*(?=\\[x\\]|\\[ \\]|[A-Za-z0-9_])($TAGS)(?![A-Za-z0-9_])';
 var COMMENT_PATTERN_FILE_ALIASES = Object.freeze( {
@@ -28,6 +29,18 @@ function init( configuration )
     config = configuration;
     tagRegexSourceCache = new Map();
     submoduleExcludeGlobCache = new Map();
+}
+
+function supportsRegExpIndices()
+{
+    if( regExpIndicesSupported !== undefined )
+    {
+        return regExpIndicesSupported;
+    }
+
+    regExpIndicesSupported = Object.prototype.hasOwnProperty.call( RegExp.prototype, 'hasIndices' );
+
+    return regExpIndicesSupported;
 }
 
 function isHexColour( colour )
@@ -452,7 +465,7 @@ function getRegexForEditorSearch( global, uri, options )
     {
         flags += 's';
     }
-    if( options.includeIndices === true )
+    if( options.includeIndices === true && supportsRegExpIndices() === true )
     {
         flags += 'd';
     }
@@ -722,6 +735,7 @@ module.exports.getCommentPattern = getCommentPattern;
 module.exports.getCommentPatternRegex = getCommentPatternRegex;
 module.exports.getResourceConfig = getResourceConfig;
 module.exports.getTagRegexSource = getTagRegexSource;
+module.exports.supportsRegExpIndices = supportsRegExpIndices;
 module.exports.DEFAULT_REGEX_SOURCE = DEFAULT_REGEX_SOURCE;
 module.exports.extractTag = extractTag;
 module.exports.updateBeforeAndAfter = updateBeforeAndAfter;

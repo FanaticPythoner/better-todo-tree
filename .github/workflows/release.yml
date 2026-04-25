@@ -40,6 +40,12 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Cache upstream parity clone
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          path: .tools/upstream-todo-tree
+          key: upstream-todo-tree-7761bd02406a5c5f5bc8da944a561eb3c12a48df
+
       - name: Install dependencies
         run: npm ci
 

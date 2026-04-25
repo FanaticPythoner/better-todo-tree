@@ -350,6 +350,18 @@ QUnit.test( "utils.getRegexForEditorSearch applies uri specific flags", function
     assert.equal( utils.getRegexForEditorSearch( true, uri ).flags, "gms" );
 } );
 
+QUnit.test( "utils.getRegexForEditorSearch requests indices only when the host supports them", function( assert )
+{
+    var testConfig = stubs.getTestConfig();
+    var uri = { toString: function() { return "/tmp/indices.js"; } };
+
+    utils.init( testConfig );
+
+    var regex = utils.getRegexForEditorSearch( true, uri, { includeIndices: true } );
+
+    assert.equal( regex.flags.indexOf( 'd' ) !== -1, utils.supportsRegExpIndices() );
+} );
+
 QUnit.test( "utils.isIncluded returns true when no includes or excludes are specified", function( assert )
 {
     assert.ok( utils.isIncluded( "filename.js", [], [] ) === true );

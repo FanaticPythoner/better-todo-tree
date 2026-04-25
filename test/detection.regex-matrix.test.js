@@ -303,6 +303,32 @@ QUnit.module( "detection regex matrix", function()
         assert.equal( normalized.endLine, scanned.endLine );
     } );
 
+    QUnit.test( "default regex normalization extends index-free matches to the full todo line", function( assert )
+    {
+        var config = matrixHelpers.createConfig( {
+            tagList: [ 'TODO' ],
+            regexSource: utils.DEFAULT_REGEX_SOURCE,
+            subTagRegexString: '^:\\s*'
+        } );
+        var uri = matrixHelpers.createUri( '/tmp/index-free.rs' );
+        var text = '// TODO restore detection';
+
+        utils.init( config );
+
+        var match = utils.getRegexForEditorSearch( false, uri ).exec( text );
+        var context = detection.createScanContext( uri, text );
+        var normalized = detection.normalizeRegexMatchWithContext( context, match );
+
+        assert.equal( match.indices, undefined );
+        assert.equal( normalized.actualTag, 'TODO' );
+        assert.equal( normalized.line, 1 );
+        assert.equal( normalized.column, 4 );
+        assert.equal( normalized.displayText, 'restore detection' );
+        assert.equal( normalized.match, text );
+        assert.equal( normalized.commentEndOffset, text.length );
+        assert.equal( normalized.matchEndOffset, text.length );
+    } );
+
     QUnit.test( "issue #888 multiline banner regex anchors the star tag to the content line", function( assert )
     {
         var uri = matrixHelpers.createUri( '/tmp/issue-888.js' );

@@ -4,18 +4,22 @@
 
 Todo Tree is THE visual map I rely on to track every scattered issue across projects. When upstream stopped being maintained, new and existing bugs 🐛 took root and started choking the extension. Before it became firewood 🪵, I took over to modernize the core, clear the rot, and make it lightning fast ⚡.
 
-**Optimized the regex scan by 12,000ms (so you don't have time to feel guilty for not fixing them... 🥀)**
+<!-- README_BENCHMARK_SUMMARY:START -->
+**Made TODO rescans 52.8X faster (so you don't have time to feel guilty for not fixing them... 🥀)**
 
-| Target | Before | After | Latency | What changed |
-| --- | ---: | ---: | --- | --- |
-| **Custom Regex Scans** | 12,304.66 ms | 8.99 ms | **-99.9%** 🚀 | Reused file contexts |
-| **Highlight Lookups** *(per 1,000 attributes)* | 58.89 ms | 0.05 ms | **-99.9%** 🚀 | Crushed lookup overhead |
-| **Editor Latency** | 25 renders | 1 render | **-96%** 🚀 | Collapsed redundant decorations |
-| **Tree Rendering** | 6.98 ms | 3.41 ms | **-51.1%** 🔥 | Cached subtree counts |
-| **Workspace Scans** | 173.18 ms | 105.75 ms | **-38.9%** 🔥 | `ripgrep` JSON streaming |
-| **Peak Memory (RSS)** | 197.30 MiB | 120.48 MiB | **-38.9%** 🔥 | Cut peak memory pressure |
+| Target | Before | After | Speed/Efficiency Gain |
+| --- | ---: | ---: | --- |
+| **Custom Regex Rescans** | 77.54 ms | 2.48 ms | **31.3X** 🚀 |
+| **Visible Editor Highlights** | 15.79 ms | 1.46 ms | **10.8X** 🚀 |
+| **Custom Highlight Configs** | 1,171.33 ms | 2.42 ms | **484.0X** 🚀 |
+| **Editor Highlight Refreshes** | 14.40 ms | 1.50 ms | **9.6X** 🚀 |
+| **Custom Regex Workspace Refreshes** | 39.39 ms | 14.69 ms | **2.7X** 🔥 |
+| **Visible File Rescans** | 86.66 ms | 1.64 ms | **52.8X** 🚀 |
+| **Workspace Refresh RSS Burst (Peak Gain)** | 74.32 MiB | 43.70 MiB | **41.2% less** 🔥 |
+| **Workspace Refresh Peak RSS** | 132.36 MiB | 101.64 MiB | **23.2% less** 🔥 |
 
 ... And it's just getting warmed up!
+<!-- README_BENCHMARK_SUMMARY:END -->
 
 **Why this fork exists**
 
@@ -29,6 +33,33 @@ Todo Tree is THE visual map I rely on to track every scattered issue across proj
   * **Website:** [https://bettertodotree.com](https://bettertodotree.com)
   * **Marketplace:** [https://marketplace.visualstudio.com/items?itemName=FanaticPythoner.better-todo-tree](https://marketplace.visualstudio.com/items?itemName=FanaticPythoner.better-todo-tree)
   * **GitHub:** [https://github.com/FanaticPythoner/better-todo-tree](https://github.com/FanaticPythoner/better-todo-tree)
+
+## Performance Benchmarks
+
+The repo-native runtime benchmarks live in `scripts/perf/run-all.js` and write their artifacts to `artifacts/perf/`.
+The hero benchmark summary near the top of this README is regenerated automatically from actual user-flow scenarios whenever the full benchmark suite is run.
+By default, the generated benchmark artifacts cover the `user-flow` suite only.
+Use `--suite all` when you explicitly want the mixed `user-flow` + `microbenchmark` report.
+
+From the repository root:
+
+```bash
+just perf
+```
+
+Useful variants:
+
+```bash
+just perf --list-scenarios
+just perf --scenario open-file-default-save-rescan-visible-tree --scenario open-file-custom-save-rescan-visible-tree --scenario workspace-custom-relative-rebuild-visible-tree --scenario visible-editor-highlight-open-file --scenario visible-editor-custom-highlight-config-open-file
+just perf --suite all
+just perf --baseline-ref HEAD
+just perf --allow-unstable-machine
+```
+
+By default, `just perf` compares the working tree against the original upstream Todo Tree merge-base. `--baseline-ref` overrides that default when you want a different comparison target. The generated JSON and Markdown reports include the exact baseline ref that was used.
+The runtime artifacts also include a `Machine Profile` section for the local hardware and OS used for the run, a `Scenario Model` section for the flow behind each row, and a `Metric Model` section for measurement semantics. Latency rows are warm wall-clock summaries measured from fresh current/baseline harness pairs after warmup, `Profiled RSS Burst` rows are exact start-to-peak RSS growth for isolated scenario workers, and `Profiled Peak RSS` rows are exact isolated worker-process high-water marks from `process.resourceUsage().maxRSS`.
+The benchmark runner now refuses to rewrite the runtime artifacts when local load average or available memory indicate an unstable machine state. `--allow-unstable-machine` bypasses that guard when raw local measurements are still wanted.
 
 ### Overview
 

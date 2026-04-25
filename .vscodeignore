@@ -20,3 +20,7 @@ TODOS_LISTS/**
 MIGRATION.md
 OPEN_VSX_CERTIFICATE_REPORT.md
 CHANGELOG.upstream.md
+buildCodiconNames.js
+old-*.js
+*.bak
+*~

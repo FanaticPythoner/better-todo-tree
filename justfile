@@ -3,6 +3,16 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 node_bootstrap := '''
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 
+# Under sudo, $HOME is root's home and the user's nvm is invisible.
+# Re-anchor NVM_DIR onto $SUDO_USER's real home directory whenever the
+# default location does not contain an nvm install.
+if [[ -n "${SUDO_USER:-}" ]] && [[ ! -s "$NVM_DIR/nvm.sh" ]]; then
+  sudo_user_home="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)"
+  if [[ -n "$sudo_user_home" ]] && [[ -s "$sudo_user_home/.nvm/nvm.sh" ]]; then
+    export NVM_DIR="$sudo_user_home/.nvm"
+  fi
+fi
+
 if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1 || ! command -v npx >/dev/null 2>&1; then
   if [[ -s "$NVM_DIR/nvm.sh" ]]; then
     . "$NVM_DIR/nvm.sh"
@@ -15,6 +25,12 @@ if ! command -v node >/dev/null 2>&1; then
   if [[ -n "$latest_nvm_node" ]]; then
     export PATH="$latest_nvm_node/bin:$PATH"
   fi
+fi
+
+# Linuxbrew installs Node at a deterministic system-wide path; surface it
+# whenever PATH is otherwise stripped (e.g. sudo's secure_path).
+if ! command -v node >/dev/null 2>&1 && [[ -x /home/linuxbrew/.linuxbrew/bin/node ]]; then
+  export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
 fi
 
 command -v node >/dev/null 2>&1 || { echo "error: Node.js was not found in PATH or $NVM_DIR." >&2; exit 1; }
@@ -65,11 +81,11 @@ test:
   {{node_bootstrap}}
   npm test
 
-perf:
+perf *args:
   #!/usr/bin/env bash
   set -euo pipefail
   {{node_bootstrap}}
-  node --expose-gc scripts/perf/run-all.js
+  node --expose-gc scripts/perf/run-all.js {{args}}
 
 bootstrap-release-env:
   #!/usr/bin/env bash
@@ -111,9 +127,9 @@ test-actions-release-build:
 
   temp_repo="$temp_root/repo"
 
-  mkdir -p "$temp_repo"
+  git clone --quiet --no-local --shared --branch master "$PWD" "$temp_repo"
 
-  rsync -a --delete \
+  rsync -a \
     --exclude '.git' \
     --exclude 'node_modules' \
     --exclude 'dist' \
@@ -127,13 +143,17 @@ test-actions-release-build:
     temp_remote="$temp_repo/.act-origin.git"
     release_version="$(node -p "require('./package.json').version")"
     expected_count="$(node -e "console.log(require('./scripts/release/targets.json').length)")"
-    git init -b master >/dev/null
     git config user.name Codex
     git config user.email codex@example.invalid
-    git add .
-    git commit -m 'test release workflow' >/dev/null
+    if [[ -n "$(git status --porcelain)" ]]; then
+      git add .
+      git commit -m 'test release workflow' >/dev/null
+    fi
+    git tag -d "v$release_version" >/dev/null 2>&1 || true
     git tag -a "v$release_version" -m "release"
     git init --bare "$temp_remote" >/dev/null
+    git remote remove origin >/dev/null 2>&1 || true
+    git remote remove github >/dev/null 2>&1 || true
     git remote add origin "$temp_remote"
     git remote add github https://github.com/FanaticPythoner/better-todo-tree
     git push -u origin master >/dev/null
