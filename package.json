@@ -2018,7 +2018,8 @@
         "ovsx": "^0.10.11"
     },
     "overrides": {
-        "lodash": "^4.18.1"
+        "lodash": "^4.18.1",
+        "uuid": "^14.0.0"
     },
     "author": "FanaticPythoner",
     "homepage": "https://bettertodotree.com"
