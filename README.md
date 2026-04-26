@@ -31,7 +31,8 @@ Todo Tree is THE visual map I rely on to track every scattered issue across proj
 **Links:**
 
   * **Website:** [https://bettertodotree.com](https://bettertodotree.com)
-  * **Marketplace:** [https://marketplace.visualstudio.com/items?itemName=FanaticPythoner.better-todo-tree](https://marketplace.visualstudio.com/items?itemName=FanaticPythoner.better-todo-tree)
+  * **Open VSX Marketplace:** [https://open-vsx.org/extension/FanaticPythoner/better-todo-tree](https://open-vsx.org/extension/FanaticPythoner/better-todo-tree)
+  * **VS Code Marketplace:** [https://marketplace.visualstudio.com/items?itemName=FanaticPythoner.better-todo-tree](https://marketplace.visualstudio.com/items?itemName=FanaticPythoner.better-todo-tree)
   * **GitHub:** [https://github.com/FanaticPythoner/better-todo-tree](https://github.com/FanaticPythoner/better-todo-tree)
 
 ## Performance Benchmarks
