@@ -2041,7 +2041,7 @@
         "webpack": "^5.107.1",
         "webpack-cli": "^7.0.2",
         "@vscode/vsce": "^3.9.1",
-        "ovsx": "^0.10.11"
+        "ovsx": "^0.10.12"
     },
     "overrides": {
         "lodash": "^4.18.1",
