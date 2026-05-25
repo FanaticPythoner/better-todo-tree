@@ -2027,7 +2027,7 @@
         ]
     },
     "dependencies": {
-        "@primer/octicons": "^19.25.0",
+        "@primer/octicons": "^19.27.0",
         "comment-patterns": "^0.10.1",
         "fast-strftime": "^1.1.1",
         "find": "^0.3.0",
@@ -2038,10 +2038,10 @@
     "devDependencies": {
         "parse-code-context": "^1.0.0",
         "qunit": "^2.25.0",
-        "webpack": "^5.106.2",
+        "webpack": "^5.107.1",
         "webpack-cli": "^7.0.2",
         "@vscode/vsce": "^3.9.1",
-        "ovsx": "^0.10.11"
+        "ovsx": "^0.10.12"
     },
     "overrides": {
         "lodash": "^4.18.1",
