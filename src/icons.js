@@ -148,8 +148,7 @@ function getFileBackedIcon( context, tag, debug )
     }
     else if( iconName && utils.isCodicon( iconName ) )
     {
-        var codiconName = iconName.trim().substr( 2, iconName.trim().length - 3 );
-        darkIconPath = createCodiconFile( context, codiconName, colour );
+        darkIconPath = createCodiconFile( context, utils.getCodiconName( iconName ), colour );
         lightIconPath = darkIconPath;
     }
     else if( iconName )
@@ -179,12 +178,13 @@ function getTreeIcon( context, tag, debug )
 
     if( iconName && utils.isCodicon( iconName ) )
     {
+        var codiconName = utils.getCodiconName( iconName );
         var themeColour;
         if( themeColourNames.indexOf( colour ) > -1 )
         {
             themeColour = new vscode.ThemeColor( colour );
         }
-        return new vscode.ThemeIcon( iconName.trim().substr( 2, iconName.trim().length - 3 ), themeColour );
+        return new vscode.ThemeIcon( codiconName, themeColour );
     }
 
     return getFileBackedIcon( context, tag, debug );
@@ -204,7 +204,7 @@ function validateIcons( workspace )
         {
             if( utils.isCodicon( icon ) )
             {
-                var codicon = icon.substr( 2, icon.length - 3 );
+                var codicon = utils.getCodiconName( icon );
                 if( codiconNames.indexOf( codicon ) === -1 && productIconNames.indexOf( codicon ) === -1 )
                 {
                     invalidIcons.push( setting + '.icon(' + icon + ')' );

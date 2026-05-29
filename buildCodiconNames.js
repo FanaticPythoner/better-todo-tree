@@ -14,7 +14,31 @@ if( !mappings || Array.isArray( mappings ) || typeof mappings !== "object" )
     throw new Error( "codicon mapping: object required" );
 }
 
-var output = "module.exports = " + JSON.stringify( Object.keys( mappings ), null, 2 ) + ";\n";
+var names = [];
+
+Object.keys( mappings ).forEach( function( codepoint )
+{
+    var aliases = mappings[ codepoint ];
+
+    if( Array.isArray( aliases ) !== true )
+    {
+        throw new Error( "codicon mapping " + codepoint + ": alias array required" );
+    }
+
+    aliases.forEach( function( alias )
+    {
+        if( typeof alias !== "string" || alias.length === 0 )
+        {
+            throw new Error( "codicon mapping " + codepoint + ": non-empty alias required" );
+        }
+
+        names.push( alias );
+    } );
+} );
+
+names = Array.from( new Set( names ) ).sort();
+
+var output = "module.exports = " + JSON.stringify( names, null, 2 ) + ";\n";
 
 if( fs.existsSync( outputPath ) && fs.readFileSync( outputPath, "utf8" ) === output )
 {

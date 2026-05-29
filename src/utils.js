@@ -705,9 +705,20 @@ function setRgbAlpha( rgb, alpha )
     return rgb;
 }
 
+function getCodiconName( icon )
+{
+    if( typeof icon !== 'string' )
+    {
+        return undefined;
+    }
+
+    var match = icon.trim().match( /^\$\(([a-z0-9-]+)\)$/i );
+    return match ? match[ 1 ] : undefined;
+}
+
 function isCodicon( icon )
 {
-    return icon.trim().indexOf( "$(" ) === 0;
+    return getCodiconName( icon ) !== undefined;
 }
 
 function toGlobArray( globs )
@@ -754,5 +765,6 @@ module.exports.formatExportPath = formatExportPath;
 module.exports.complementaryColour = complementaryColour;
 module.exports.isValidColour = isValidColour;
 module.exports.setRgbAlpha = setRgbAlpha;
+module.exports.getCodiconName = getCodiconName;
 module.exports.isCodicon = isCodicon;
 module.exports.toGlobArray = toGlobArray;

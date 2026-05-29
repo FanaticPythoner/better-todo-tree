@@ -759,7 +759,13 @@ QUnit.test( "utils.isCodicon", function( assert )
 {
     assert.equal( utils.isCodicon( "$(beaker)" ), true );
     assert.equal( utils.isCodicon( "  $(beaker)" ), true );
+    assert.equal( utils.isCodicon( "$(bug) " ), true );
     assert.equal( utils.isCodicon( "beaker" ), false );
+    assert.equal( utils.isCodicon( "$(beaker" ), false );
+    assert.equal( utils.isCodicon( "$()" ), false );
+    assert.equal( utils.isCodicon( undefined ), false );
+    assert.equal( utils.getCodiconName( "$(bug)" ), "bug" );
+    assert.equal( utils.getCodiconName( " $(debug-breakpoint) " ), "debug-breakpoint" );
 } );
 
 QUnit.test( "searchResults can be added and removed", function( assert )

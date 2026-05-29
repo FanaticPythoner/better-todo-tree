@@ -52,6 +52,16 @@ QUnit.test( 'prepublish builds are deterministic and codicon updates are explici
     assert.equal( scripts[ 'vscode:prepublish' ].indexOf( 'buildCodiconNames' ), -1 );
 } );
 
+QUnit.test( 'generated codicon table stores aliases instead of codepoints', function( assert )
+{
+    var codiconNames = require( '../src/codiconNames.js' );
+
+    assert.ok( codiconNames.indexOf( 'bug' ) !== -1 );
+    assert.ok( codiconNames.indexOf( 'flame' ) !== -1 );
+    assert.ok( codiconNames.indexOf( 'pulse' ) !== -1 );
+    assert.notOk( codiconNames.some( function( name ) { return /^\d+$/.test( name ); } ) );
+} );
+
 QUnit.test( 'release packaging has the ripgrep-universal build dependency', function( assert )
 {
     var packageJson = readPackageJson();

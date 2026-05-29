@@ -1,0 +1,489 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+remote_name='origin'
+base_branch='master'
+source_branch='master'
+branch_name=''
+no_wait=0
+pr_mode='prompt'
+issue_urls=()
+parsed_owner=''
+parsed_repo=''
+parsed_number=''
+
+usage()
+{
+  cat <<'EOF'
+Usage:
+  issue-branch.sh name [options] ISSUE_URL...
+  issue-branch.sh create [options] ISSUE_URL...
+  issue-branch.sh stage [options] ISSUE_URL...
+  issue-branch.sh push [options] ISSUE_URL...
+  issue-branch.sh pr [options] ISSUE_URL...
+  issue-branch.sh flow [options] ISSUE_URL...
+
+Options:
+  --branch NAME        Override derived branch name.
+  --remote NAME        Git remote for base fetch and branch push. Default: origin.
+  --base NAME          Remote base branch. Default: master.
+  --source NAME        Local source branch carrying pending changes. Default: master.
+  --no-wait           Push without interactive Enter prompt.
+  --pr                Create PR without prompt after push.
+  --no-pr             Skip PR creation after push.
+  -h, --help          Show usage.
+
+Default branch:
+  fix/issue-N-title-slug
+  fix/issues-N-N-title-slugs
+EOF
+}
+
+fail()
+{
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command()
+{
+  command -v "$1" >/dev/null 2>&1 || fail "required command '$1' is not available."
+}
+
+repo_root()
+{
+  git rev-parse --show-toplevel 2>/dev/null
+}
+
+current_branch()
+{
+  git symbolic-ref --quiet --short HEAD
+}
+
+parse_args()
+{
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --branch)
+        [[ $# -ge 2 ]] || fail '--branch requires a value.'
+        branch_name="$2"
+        shift 2
+        ;;
+      --remote)
+        [[ $# -ge 2 ]] || fail '--remote requires a value.'
+        remote_name="$2"
+        shift 2
+        ;;
+      --base)
+        [[ $# -ge 2 ]] || fail '--base requires a value.'
+        base_branch="$2"
+        shift 2
+        ;;
+      --source)
+        [[ $# -ge 2 ]] || fail '--source requires a value.'
+        source_branch="$2"
+        shift 2
+        ;;
+      --no-wait)
+        no_wait=1
+        shift
+        ;;
+      --pr)
+        pr_mode='yes'
+        shift
+        ;;
+      --no-pr)
+        pr_mode='no'
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --)
+        shift
+        while [[ $# -gt 0 ]]; do
+          issue_urls+=( "$1" )
+          shift
+        done
+        ;;
+      -*)
+        fail "unknown option '$1'."
+        ;;
+      *)
+        issue_urls+=( "$1" )
+        shift
+        ;;
+    esac
+  done
+}
+
+parse_issue_url()
+{
+  local url="$1"
+
+  if [[ ! "$url" =~ ^https://github\.com/([^/]+)/([^/]+)/issues/([0-9]+)([/?#].*)?$ ]]; then
+    fail "unsupported issue URL '$url'. Expected https://github.com/OWNER/REPO/issues/NUMBER."
+  fi
+
+  parsed_owner="${BASH_REMATCH[1]}"
+  parsed_repo="${BASH_REMATCH[2]}"
+  parsed_number="${BASH_REMATCH[3]}"
+}
+
+slugify_title()
+{
+  local title="$1"
+
+  printf '%s' "$title" \
+    | LC_ALL=C tr '[:upper:]' '[:lower:]' \
+    | LC_ALL=C sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g'
+}
+
+read_issue_title()
+{
+  local url="$1"
+  local metadata=''
+  local title=''
+  local viewed_number=''
+
+  require_command gh
+  metadata="$(env -u DEBUG -u GH_DEBUG GH_PROMPT_DISABLED=1 gh issue view "$url" --json number,title --jq '[.number, .title] | @tsv' 2>&1)" \
+    || fail "could not read issue metadata for '$url': $metadata"
+
+  viewed_number="${metadata%%$'\t'*}"
+  title="${metadata#*$'\t'}"
+
+  [[ "$viewed_number" == "$parsed_number" ]] || fail "metadata number mismatch for '$url'."
+  [[ -n "$title" ]] || fail "issue '$url' has an empty title."
+
+  printf '%s\n' "$title"
+}
+
+issue_records()
+{
+  local url=''
+  local title=''
+  local first_owner=''
+  local first_repo=''
+
+  [[ ${#issue_urls[@]} -gt 0 ]] || fail 'at least one GitHub issue URL is required.'
+
+  for url in "${issue_urls[@]}"; do
+    parse_issue_url "$url"
+
+    if [[ -z "$first_owner" ]]; then
+      first_owner="$parsed_owner"
+      first_repo="$parsed_repo"
+    elif [[ "$parsed_owner/$parsed_repo" != "$first_owner/$first_repo" ]]; then
+      fail 'issue URLs must belong to one GitHub repository.'
+    fi
+
+    title="$(read_issue_title "$url")"
+    printf '%s\t%s\n' "$parsed_number" "$title"
+  done | sort -n -k1,1
+}
+
+derive_branch_name()
+{
+  local records=()
+  local record=''
+  local number=''
+  local title=''
+  local slug=''
+  local joined_numbers=''
+  local joined_slugs=''
+  local records_output=''
+
+  records_output="$(issue_records)"
+  mapfile -t records <<< "$records_output"
+
+  for record in "${records[@]}"; do
+    number="${record%%$'\t'*}"
+    title="${record#*$'\t'}"
+    slug="$(slugify_title "$title")"
+    [[ -n "$slug" ]] || fail "issue '$number' title cannot form a branch slug."
+
+    if [[ -z "$joined_numbers" ]]; then
+      joined_numbers="$number"
+      joined_slugs="$slug"
+    else
+      joined_numbers="${joined_numbers}-${number}"
+      joined_slugs="${joined_slugs}-${slug}"
+    fi
+  done
+
+  if [[ ${#records[@]} -eq 1 ]]; then
+    printf 'fix/issue-%s-%s\n' "$joined_numbers" "$joined_slugs"
+  else
+    printf 'fix/issues-%s-%s\n' "$joined_numbers" "$joined_slugs"
+  fi
+}
+
+resolve_branch_name()
+{
+  if [[ -z "$branch_name" ]]; then
+    branch_name="$(derive_branch_name)"
+  fi
+
+  git check-ref-format --branch "$branch_name" >/dev/null 2>&1 || fail "invalid branch name '$branch_name'."
+
+  case "$branch_name" in
+    "$base_branch"|"$source_branch"|master|main)
+      fail "branch '$branch_name' is protected."
+      ;;
+  esac
+
+  printf '%s\n' "$branch_name"
+}
+
+require_git_repo()
+{
+  local root=''
+
+  require_command git
+  root="$(repo_root)" || fail 'current directory is not inside a Git repository.'
+  cd "$root"
+}
+
+require_remote()
+{
+  git remote get-url "$remote_name" >/dev/null 2>&1 || fail "remote '$remote_name' was not found."
+}
+
+fetch_base()
+{
+  require_remote
+  git fetch --no-tags --force "$remote_name" "+refs/heads/$base_branch:refs/remotes/$remote_name/$base_branch"
+  git rev-parse --verify "refs/remotes/$remote_name/$base_branch^{commit}" >/dev/null
+}
+
+fetch_branch()
+{
+  require_remote
+  git fetch --no-tags --force "$remote_name" "+refs/heads/$branch_name:refs/remotes/$remote_name/$branch_name"
+  git rev-parse --verify "refs/remotes/$remote_name/$branch_name^{commit}" >/dev/null
+}
+
+remote_branch_exists()
+{
+  local status=0
+
+  set +e
+  git ls-remote --exit-code --heads "$remote_name" "$branch_name" >/dev/null 2>&1
+  status="$?"
+  set -e
+
+  case "$status" in
+    0)
+      return 0
+      ;;
+    2)
+      return 1
+      ;;
+    *)
+      fail "could not inspect remote branch '$remote_name/$branch_name'."
+      ;;
+  esac
+}
+
+require_no_branch_collision()
+{
+  if git rev-parse --verify "refs/heads/$branch_name" >/dev/null 2>&1; then
+    fail "local branch '$branch_name' already exists."
+  fi
+
+  if remote_branch_exists; then
+    fail "remote branch '$remote_name/$branch_name' already exists."
+  fi
+}
+
+create_branch()
+{
+  local base_ref="refs/remotes/$remote_name/$base_branch"
+
+  require_git_repo
+  resolve_branch_name >/dev/null
+  fetch_base
+  require_no_branch_collision
+
+  git branch "$branch_name" "$base_ref"
+  git push "$remote_name" "refs/heads/$branch_name:refs/heads/$branch_name"
+  git branch --set-upstream-to="$remote_name/$branch_name" "$branch_name" >/dev/null
+
+  printf 'created branch %s from %s/%s\n' "$branch_name" "$remote_name" "$base_branch"
+}
+
+require_clean_merge_state()
+{
+  local unmerged=''
+
+  unmerged="$(git diff --name-only --diff-filter=U)"
+  [[ -z "$unmerged" ]] || fail "unmerged paths block branch preparation: $unmerged"
+}
+
+stash_source_changes()
+{
+  local status_output=''
+
+  status_output="$(git status --porcelain=v1)"
+  if [[ -z "$status_output" ]]; then
+    printf '\n'
+    return 0
+  fi
+
+  git stash push --include-untracked --message "issue-branch:$branch_name:$(date -u +%Y%m%dT%H%M%SZ)" >/dev/null
+  printf 'stash@{0}\n'
+}
+
+stage_branch_changes()
+{
+  local active_branch=''
+  local stash_ref=''
+
+  require_git_repo
+  branch_name="$(resolve_branch_name)"
+  require_clean_merge_state
+
+  active_branch="$(current_branch)" || fail 'detached HEAD cannot supply source changes.'
+  [[ "$active_branch" == "$source_branch" ]] || fail "current branch '$active_branch' does not match source '$source_branch'."
+  git rev-parse --verify "refs/heads/$branch_name" >/dev/null 2>&1 || fail "local branch '$branch_name' was not found."
+
+  stash_ref="$(stash_source_changes)"
+  git switch "$branch_name" >/dev/null
+
+  if [[ -n "$stash_ref" ]]; then
+    if git stash apply --index "$stash_ref"; then
+      git stash drop "$stash_ref" >/dev/null
+    else
+      fail "stash apply failed on '$branch_name'. Retained stash: $stash_ref"
+    fi
+  fi
+
+  git add -A
+  printf 'staged changes on %s\n' "$branch_name"
+}
+
+commits_ahead()
+{
+  git rev-list --count "$remote_name/$branch_name"..HEAD
+}
+
+push_after_commit()
+{
+  local active_branch=''
+  local ahead_count='0'
+
+  require_git_repo
+  branch_name="$(resolve_branch_name)"
+  git rev-parse --verify "refs/remotes/$remote_name/$branch_name" >/dev/null 2>&1 || fetch_branch >/dev/null
+  git rev-parse --verify "refs/remotes/$remote_name/$branch_name" >/dev/null 2>&1 || fail "remote branch '$remote_name/$branch_name' was not found."
+
+  while true; do
+    active_branch="$(current_branch)" || fail 'detached HEAD cannot be pushed.'
+    [[ "$active_branch" == "$branch_name" ]] || fail "current branch '$active_branch' does not match target '$branch_name'."
+
+    ahead_count="$(commits_ahead)"
+    if [[ "$ahead_count" != '0' ]]; then
+      git push "$remote_name" "HEAD:refs/heads/$branch_name"
+      printf 'pushed %s commit(s) to %s/%s\n' "$ahead_count" "$remote_name" "$branch_name"
+      return 0
+    fi
+
+    [[ "$no_wait" -eq 0 ]] || fail "branch '$branch_name' has no local commits ahead of '$remote_name/$branch_name'."
+
+    printf "Commit staged changes on '%s' in another terminal. Press Enter to push '%s/%s' after commit." "$branch_name" "$remote_name" "$branch_name"
+    read -r _
+  done
+}
+
+create_pr()
+{
+  require_git_repo
+  require_command gh
+  branch_name="$(resolve_branch_name)"
+  gh pr create --base "$base_branch" --head "$branch_name" --fill
+}
+
+prompt_pr()
+{
+  local answer=''
+
+  case "$pr_mode" in
+    yes)
+      create_pr
+      ;;
+    no)
+      printf 'pull request creation skipped\n'
+      ;;
+    prompt)
+      [[ -t 0 ]] || fail 'TTY required for PR prompt. Use --pr or --no-pr.'
+      printf 'Create pull request for %s? [Y/n] ' "$branch_name"
+      read -r answer
+      case "$answer" in
+        ''|y|Y|yes|YES)
+          create_pr
+          ;;
+        n|N|no|NO)
+          printf 'pull request creation skipped\n'
+          ;;
+        *)
+          fail "unsupported answer '$answer'."
+          ;;
+      esac
+      ;;
+    *)
+      fail "unsupported PR mode '$pr_mode'."
+      ;;
+  esac
+}
+
+flow()
+{
+  branch_name="$(resolve_branch_name)"
+  create_branch
+  stage_branch_changes
+  push_after_commit
+  prompt_pr
+}
+
+main()
+{
+  local command_name="${1:-flow}"
+
+  if [[ $# -gt 0 ]]; then
+    shift
+  fi
+
+  parse_args "$@"
+
+  case "$command_name" in
+    name)
+      require_command git
+      resolve_branch_name
+      ;;
+    create)
+      create_branch
+      ;;
+    stage)
+      stage_branch_changes
+      ;;
+    push)
+      push_after_commit
+      ;;
+    pr)
+      create_pr
+      ;;
+    flow)
+      flow
+      ;;
+    -h|--help|help)
+      usage
+      ;;
+    *)
+      fail "unknown command '$command_name'."
+      ;;
+  esac
+}
+
+main "$@"

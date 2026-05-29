@@ -162,6 +162,52 @@ QUnit.module( "behavioral detection", function( hooks )
         assert.equal( results[ 1 ].displayText, "pending task" );
     } );
 
+    QUnit.test( "issue #28 legacy prefix regex keeps rendered text after tag", function( assert )
+    {
+        utils.init( createConfig( {
+            tagList: [ "TODO", "FIXME", "BUG", "HACK", "[ ]", "[x]" ],
+            regexSource: "(?:(?://|#|<!--|;|/\\*\\*?|\\*)\\s*($TAGS)|^\\s*- \\[ \\])"
+        } ) );
+
+        var results = detection.scanText( createUri( "/tmp/sample.js" ), [
+            "// TODO first",
+            "# FIXME second",
+            "- [ ] task",
+            "/* HACK third",
+            " * BUG fourth"
+        ].join( "\n" ) );
+
+        assert.deepEqual( results.map( function( result ) { return result.actualTag; } ), [ "TODO", "FIXME", "[ ]", "HACK", "BUG" ] );
+        assert.deepEqual( results.map( function( result ) { return result.displayText; } ), [ "first", "second", "task", "third", "fourth" ] );
+    } );
+
+    QUnit.test( "issue #28 workspace regex normalization keeps rendered text after tag", function( assert )
+    {
+        utils.init( createConfig( {
+            tagList: [ "TODO", "FIXME", "BUG", "HACK", "[ ]", "[x]" ],
+            regexSource: "(?:(?://|#|<!--|;|/\\*\\*?|\\*)\\s*($TAGS)|^\\s*- \\[ \\])"
+        } ) );
+
+        var result = detection.normalizeWorkspaceRegexMatch( createUri( "/tmp/sample.js" ), {
+            line: 12,
+            column: 1,
+            lines: "// TODO persisted workspace text",
+            match: "// TODO",
+            submatches: [
+                {
+                    start: 0,
+                    end: 7
+                }
+            ],
+            absoluteOffset: 0
+        } );
+
+        assert.equal( result.actualTag, "TODO" );
+        assert.equal( result.displayText, "persisted workspace text" );
+        assert.equal( result.line, 12 );
+        assert.equal( result.column, 4 );
+    } );
+
     QUnit.test( "markdown headings are ignored while html comments and task list items are detected", function( assert )
     {
         utils.init( createConfig( {
