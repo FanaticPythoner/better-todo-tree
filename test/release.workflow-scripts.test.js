@@ -221,6 +221,96 @@ QUnit.test( 'publish-open-vsx publishes every VSIX with duplicate-safe flags', f
     assert.ok( callLog.indexOf( '@vscode/vsce publish' ) === -1 );
 } );
 
+QUnit.test( 'publish-open-vsx waits on read-only registry and retries the same VSIX', function( assert )
+{
+    var workspace = createWorkspace();
+    var callLogPath = path.join( workspace.root, 'npx.log' );
+    var sleepLogPath = path.join( workspace.root, 'sleep.log' );
+    var counterPath = path.join( workspace.root, 'counter' );
+    var firstPackage = path.join( 'artifacts', 'release', 'better-todo-tree-0.0.225-linux-x64.vsix' );
+    var secondPackage = path.join( 'artifacts', 'release', 'better-todo-tree-0.0.225-web.vsix' );
+    var env = Object.assign( {}, process.env, {
+        PATH: workspace.bin + path.delimiter + process.env.PATH,
+        OVSX_PAT: 'ovsx-test-token',
+        OPEN_VSX_READONLY_RETRY_INTERVAL_SECONDS: '300'
+    } );
+
+    fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-linux-x64.vsix' ), 'linux' );
+    fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-web.vsix' ), 'web' );
+    fs.writeFileSync( counterPath, '0\n' );
+
+    makeExecutable(
+        path.join( workspace.bin, 'npx' ),
+        '#!/usr/bin/env bash\n' +
+        'count="$(cat "' + counterPath + '")"\n' +
+        'count="$((count + 1))"\n' +
+        'printf "%s\\n" "$count" > "' + counterPath + '"\n' +
+        'printf "%s\\n" "$*" >> "' + callLogPath + '"\n' +
+        'if [[ "$count" -le 2 ]]; then\n' +
+        '  printf "Registry is in read-only mode.\\n"\n' +
+        '  exit 1\n' +
+        'fi\n' +
+        'printf "published %s\\n" "$*"\n'
+    );
+    makeExecutable(
+        path.join( workspace.bin, 'sleep' ),
+        '#!/usr/bin/env bash\n' +
+        'printf "%s\\n" "$*" >> "' + sleepLogPath + '"\n'
+    );
+
+    var result = runScript( path.join( __dirname, '..', 'scripts', 'release', 'publish-open-vsx.sh' ), {
+        cwd: workspace.root,
+        env: env
+    } );
+    var callLog = fs.readFileSync( callLogPath, 'utf8' );
+    var sleepLog = fs.readFileSync( sleepLogPath, 'utf8' );
+
+    assert.strictEqual( result.status, 0, result.stderr );
+    assert.strictEqual( callLog.split( firstPackage ).length - 1, 3 );
+    assert.strictEqual( callLog.split( secondPackage ).length - 1, 1 );
+    assert.deepEqual( sleepLog.trim().split( /\r?\n/ ), [ '300', '300' ] );
+    assert.ok( result.stdout.indexOf( 'Open VSX registry read-only: package=' + firstPackage ) !== -1 );
+    assert.ok( result.stdout.indexOf( 'Open VSX publish succeeded: package=' + firstPackage + ' attempts=3' ) !== -1 );
+} );
+
+QUnit.test( 'publish-open-vsx fails non-read-only registry errors without retrying', function( assert )
+{
+    var workspace = createWorkspace();
+    var callLogPath = path.join( workspace.root, 'npx.log' );
+    var sleepLogPath = path.join( workspace.root, 'sleep.log' );
+    var env = Object.assign( {}, process.env, {
+        PATH: workspace.bin + path.delimiter + process.env.PATH,
+        OVSX_PAT: 'ovsx-test-token'
+    } );
+
+    fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-linux-x64.vsix' ), 'linux' );
+
+    makeExecutable(
+        path.join( workspace.bin, 'npx' ),
+        '#!/usr/bin/env bash\n' +
+        'printf "%s\\n" "$*" >> "' + callLogPath + '"\n' +
+        'printf "invalid token\\n"\n' +
+        'exit 2\n'
+    );
+    makeExecutable(
+        path.join( workspace.bin, 'sleep' ),
+        '#!/usr/bin/env bash\n' +
+        'printf "%s\\n" "$*" >> "' + sleepLogPath + '"\n'
+    );
+
+    var result = runScript( path.join( __dirname, '..', 'scripts', 'release', 'publish-open-vsx.sh' ), {
+        cwd: workspace.root,
+        env: env
+    } );
+    var callLog = fs.readFileSync( callLogPath, 'utf8' );
+    var sleepLog = fs.existsSync( sleepLogPath ) ? fs.readFileSync( sleepLogPath, 'utf8' ) : '';
+
+    assert.strictEqual( result.status, 2 );
+    assert.strictEqual( callLog.trim().split( /\r?\n/ ).length, 1 );
+    assert.strictEqual( sleepLog, '' );
+    assert.ok( result.stderr.indexOf( 'Open VSX publish failed: package=artifacts/release/better-todo-tree-0.0.225-linux-x64.vsix exit_code=2' ) !== -1 );
+} );
+
 QUnit.test( 'bootstrap-release-environment creates the release environment and marketplace secret', function( assert )
 {
     var workspace = createWorkspace();
