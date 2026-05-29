@@ -43,6 +43,15 @@ QUnit.test( 'public commands use the better-todo-tree namespace', function( asse
     assert.ok( commands.indexOf( 'todo-tree.showTreeView' ) === -1 );
 } );
 
+QUnit.test( 'prepublish builds are deterministic and codicon updates are explicit', function( assert )
+{
+    var scripts = readPackageJson().scripts;
+
+    assert.equal( scripts[ 'vscode:prepublish' ], 'webpack --mode production' );
+    assert.equal( scripts[ 'codicons:update' ], 'node ./buildCodiconNames.js' );
+    assert.equal( scripts[ 'vscode:prepublish' ].indexOf( 'buildCodiconNames' ), -1 );
+} );
+
 QUnit.test( 'legacy settings remain present and deprecated', function( assert )
 {
     var currentSetting = getConfigurationProperty( 'better-todo-tree.general.tags' );

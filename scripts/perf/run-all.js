@@ -278,6 +278,160 @@ function createLatencyMeasurementFromSamples( name, latencySamplesMs, lastValue 
     };
 }
 
+function ripgrepExecutableName()
+{
+    return /^win/.test( process.platform ) ? 'rg.exe' : 'rg';
+}
+
+function ripgrepPlatformArch()
+{
+    return process.platform + '-' + ( process.env.npm_config_arch || process.arch );
+}
+
+function createRipgrepConfigStubs( state )
+{
+    return {
+        vscode: {
+            env: state.env,
+            workspace: {
+                getConfiguration: function()
+                {
+                    return {
+                        compactFolders: false,
+                        get: function( key, defaultValue )
+                        {
+                            return defaultValue;
+                        }
+                    };
+                }
+            }
+        },
+        fs: {
+            existsSync: function( fsPath )
+            {
+                return state.existingPaths.has( fsPath );
+            }
+        },
+        './attributes.js': {
+            getAttribute: function( tag, attribute, defaultValue )
+            {
+                return defaultValue;
+            }
+        },
+        './extensionIdentity.js': {
+            getSetting: function( setting, defaultValue )
+            {
+                return setting === 'ripgrep.ripgrep' ? state.configuredPath : defaultValue;
+            }
+        }
+    };
+}
+
+function ripgrepPathForLayout( appRoot, layout )
+{
+    var exeName = ripgrepExecutableName();
+
+    if( layout === 'universal-unpacked' )
+    {
+        return path.join(
+            appRoot,
+            'node_modules.asar.unpacked/@vscode/ripgrep-universal/bin',
+            ripgrepPlatformArch(),
+            exeName
+        );
+    }
+
+    if( layout === 'legacy-module' )
+    {
+        return path.join( appRoot, 'node_modules/vscode-ripgrep/bin', exeName );
+    }
+
+    throw new Error( 'Unknown ripgrep package layout: ' + layout );
+}
+
+function createRipgrepPathBatch( configModule, state, layout, batchSize )
+{
+    return function()
+    {
+        var matched = 0;
+        var index;
+
+        for( index = 0; index < batchSize; ++index )
+        {
+            var appRoot = path.join( '/tmp/better-todo-tree-rg-bench', layout, String( index ) );
+            var existingPath = ripgrepPathForLayout( appRoot, layout );
+
+            state.env.appRoot = appRoot;
+            state.configuredPath = path.join( appRoot, 'missing', ripgrepExecutableName() );
+            state.existingPaths = new Set( [ existingPath ] );
+
+            if( configModule.ripgrepPath() === existingPath )
+            {
+                matched += 1;
+            }
+        }
+
+        if( matched !== batchSize )
+        {
+            throw new Error( 'ripgrep path benchmark mismatch: expected ' + batchSize + ', got ' + matched );
+        }
+
+        return matched;
+    };
+}
+
+function attachThroughput( measurement, operations )
+{
+    measurement.operationsPerIteration = operations;
+    measurement.throughputOpsPerSecond = measurement.p50Ms === 0 ? 0 : round( operations * 1000 / measurement.p50Ms );
+    return measurement;
+}
+
+function readPositiveIntegerEnv( name, defaultValue )
+{
+    var rawValue = process.env[ name ];
+    var value = rawValue === undefined ? defaultValue : Number( rawValue );
+
+    if( Number.isInteger( value ) !== true || value <= 0 )
+    {
+        throw new Error( name + ' must be a positive integer.' );
+    }
+
+    return value;
+}
+
+async function benchmarkRipgrepPathResolution( baselineLoader )
+{
+    var batchSize = readPositiveIntegerEnv( 'RIPGREP_PATH_BENCH_BATCH', 2048 );
+    var iterations = readPositiveIntegerEnv( 'RIPGREP_PATH_BENCH_ITERATIONS', 25 );
+    var currentState = {
+        env: { appRoot: '' },
+        configuredPath: '',
+        existingPaths: new Set()
+    };
+    var baselineState = {
+        env: { appRoot: '' },
+        configuredPath: '',
+        existingPaths: new Set()
+    };
+    var currentConfig = loadCurrentModule( 'src/config.js', createRipgrepConfigStubs( currentState ) );
+    var baselineConfig = baselineLoader( 'src/config.js', createRipgrepConfigStubs( baselineState ) );
+    var currentBatch = createRipgrepPathBatch( currentConfig, currentState, 'universal-unpacked', batchSize );
+    var baselineBatch = createRipgrepPathBatch( baselineConfig, baselineState, 'legacy-module', batchSize );
+
+    return {
+        name: 'config-ripgrep-path-resolution',
+        current: attachThroughput(
+            await createMeasurement( 'config-ripgrep-path-resolution-current-universal', iterations, currentBatch ),
+            batchSize
+        ),
+        baseline: attachThroughput(
+            await createMeasurement( 'config-ripgrep-path-resolution-baseline-legacy', iterations, baselineBatch ),
+            batchSize
+        )
+    };
+}
+
 function createMemoryMeasurementFromSamples( name, burstSamplesBytes, peakRssSamplesBytes, lastValue )
 {
     var burstSummary = createSeriesSummary( burstSamplesBytes, bytesToMiB );
@@ -1849,6 +2003,15 @@ function buildScenarioDefinitions( baselineLoader )
             run: function()
             {
                 return benchmarkAttributes( baselineLoader );
+            }
+        },
+        {
+            name: 'config-ripgrep-path-resolution',
+            measurementScope: 'Cold config.ripgrepPath resolution with changing VS Code app roots.',
+            inputModel: 'One configured miss and one packaged ripgrep hit per operation.',
+            run: function()
+            {
+                return benchmarkRipgrepPathResolution( baselineLoader );
             }
         },
         {

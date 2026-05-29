@@ -55,6 +55,39 @@ function loadConfigModule( options )
     } );
 }
 
+function rgExecutableName()
+{
+    return /^win/.test( process.platform ) ? 'rg.exe' : 'rg';
+}
+
+function rgPlatformArch()
+{
+    return process.platform + '-' + ( process.env.npm_config_arch || process.arch );
+}
+
+function withNpmConfigArch( arch, callback )
+{
+    var previousArch = process.env.npm_config_arch;
+
+    process.env.npm_config_arch = arch;
+
+    try
+    {
+        callback();
+    }
+    finally
+    {
+        if( previousArch === undefined )
+        {
+            delete process.env.npm_config_arch;
+        }
+        else
+        {
+            process.env.npm_config_arch = previousArch;
+        }
+    }
+}
+
 QUnit.module( 'behavioral config' );
 
 QUnit.test( 'ripgrepPath prefers the configured executable even when the path contains spaces and parentheses', function( assert )
@@ -69,14 +102,67 @@ QUnit.test( 'ripgrepPath prefers the configured executable even when the path co
     assert.equal( config.ripgrepPath(), configuredPath );
 } );
 
-QUnit.test( 'ripgrepPath falls back to the bundled executable when the configured path does not exist', function( assert )
+QUnit.test( 'ripgrepPath resolves the packaged ripgrep-universal executable under the current platform directory', function( assert )
 {
     var configuredPath = '/Applications/Visual Studio Code (M1).app/Contents/Resources/custom ripgrep (missing)/rg';
-    var bundledPath = path.join( '/Applications/Visual Studio Code (M1).app/Contents/Resources/app', 'node_modules.asar.unpacked/@vscode/ripgrep/bin/', 'rg' );
+    var appRoot = '/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app';
+    var universalPath = path.join(
+        appRoot,
+        'node_modules.asar.unpacked/@vscode/ripgrep-universal/bin',
+        rgPlatformArch(),
+        rgExecutableName()
+    );
+    var olderScopedPath = path.join( appRoot, 'node_modules.asar.unpacked/@vscode/ripgrep/bin', rgExecutableName() );
     var config = loadConfigModule( {
+        appRoot: appRoot,
         configuredRipgrepPath: configuredPath,
-        existingPaths: [ bundledPath ]
+        existingPaths: [ universalPath, olderScopedPath ]
     } );
 
-    assert.equal( config.ripgrepPath(), bundledPath );
+    assert.equal( config.ripgrepPath(), universalPath );
+} );
+
+QUnit.test( 'ripgrepPath follows ripgrep-universal npm_config_arch platform directories', function( assert )
+{
+    var overrideArch = process.arch === 'arm64' ? 'x64' : 'arm64';
+
+    withNpmConfigArch( overrideArch, function()
+    {
+        var configuredPath = '/Applications/Visual Studio Code (M1).app/Contents/Resources/custom ripgrep (missing)/rg';
+        var appRoot = '/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app';
+        var universalPath = path.join(
+            appRoot,
+            'node_modules.asar.unpacked/@vscode/ripgrep-universal/bin',
+            rgPlatformArch(),
+            rgExecutableName()
+        );
+        var hostArchUniversalPath = path.join(
+            appRoot,
+            'node_modules.asar.unpacked/@vscode/ripgrep-universal/bin',
+            process.platform + '-' + process.arch,
+            rgExecutableName()
+        );
+        var config = loadConfigModule( {
+            appRoot: appRoot,
+            configuredRipgrepPath: configuredPath,
+            existingPaths: [ universalPath, hostArchUniversalPath ]
+        } );
+
+        assert.equal( config.ripgrepPath(), universalPath );
+    } );
+} );
+
+QUnit.test( 'ripgrepPath keeps older VS Code packaged ripgrep locations compatible', function( assert )
+{
+    var configuredPath = '/Applications/Visual Studio Code (M1).app/Contents/Resources/custom ripgrep (missing)/rg';
+    var appRoot = '/Applications/Visual Studio Code (M1).app/Contents/Resources/app';
+    var olderLegacyPath = path.join( appRoot, 'node_modules/vscode-ripgrep/bin', rgExecutableName() );
+    var olderScopedPath = path.join( appRoot, 'node_modules.asar.unpacked/@vscode/ripgrep/bin', rgExecutableName() );
+    var config = loadConfigModule( {
+        appRoot: appRoot,
+        configuredRipgrepPath: configuredPath,
+        existingPaths: [ olderLegacyPath, olderScopedPath ]
+    } );
+
+    assert.equal( config.ripgrepPath(), olderLegacyPath );
 } );

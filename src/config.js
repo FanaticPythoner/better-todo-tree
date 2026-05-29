@@ -12,6 +12,14 @@ var ripgrepPathCache = {
     signature: undefined,
     value: undefined
 };
+var RIPGREP_PACKAGE_LAYOUTS = Object.freeze( [
+    Object.freeze( { root: "node_modules/@vscode/ripgrep-universal/bin", platformArch: true } ),
+    Object.freeze( { root: "node_modules.asar.unpacked/@vscode/ripgrep-universal/bin", platformArch: true } ),
+    Object.freeze( { root: "node_modules/vscode-ripgrep/bin", platformArch: false } ),
+    Object.freeze( { root: "node_modules.asar.unpacked/vscode-ripgrep/bin", platformArch: false } ),
+    Object.freeze( { root: "node_modules/@vscode/ripgrep/bin", platformArch: false } ),
+    Object.freeze( { root: "node_modules.asar.unpacked/@vscode/ripgrep/bin", platformArch: false } )
+] );
 
 function init( c )
 {
@@ -114,67 +122,72 @@ function subTagRegex( uri )
     return identity.getSetting( 'regex.subTagRegex', '', uri );
 }
 
+function ripgrepExecutableName()
+{
+    var isWin = /^win/.test( process.platform );
+    return isWin ? "rg.exe" : "rg";
+}
+
+function ripgrepPlatformArch()
+{
+    return process.platform + "-" + ( process.env.npm_config_arch || process.arch );
+}
+
+function packagedRipgrepPath( layout, appRoot, exeName, platformArch )
+{
+    var parts = [ appRoot, layout.root ];
+
+    if( layout.platformArch === true )
+    {
+        parts.push( platformArch );
+    }
+
+    parts.push( exeName );
+    return path.join.apply( path, parts );
+}
+
+function firstExistingPath( configuredPath, appRoot, exeName, platformArch )
+{
+    if( configuredPath && fs.existsSync( configuredPath ) )
+    {
+        return configuredPath;
+    }
+
+    for( var index = 0; index < RIPGREP_PACKAGE_LAYOUTS.length; index++ )
+    {
+        var candidatePath = packagedRipgrepPath( RIPGREP_PACKAGE_LAYOUTS[ index ], appRoot, exeName, platformArch );
+
+        if( fs.existsSync( candidatePath ) )
+        {
+            return candidatePath;
+        }
+    }
+
+    return undefined;
+}
+
+function cacheRipgrepPath( signature, rgPath )
+{
+    ripgrepPathCache.signature = signature;
+    ripgrepPathCache.value = rgPath;
+    return rgPath;
+}
+
 function ripgrepPath()
 {
-    function exeName()
-    {
-        var isWin = /^win/.test( process.platform );
-        return isWin ? "rg.exe" : "rg";
-    }
-
-    function exePathIsDefined( rgExePath )
-    {
-        return fs.existsSync( rgExePath ) ? rgExePath : undefined;
-    }
-
     var configuredPath = identity.getSetting( 'ripgrep.ripgrep', "" );
-    var signature = configuredPath + "|" + vscode.env.appRoot;
+    var appRoot = vscode.env.appRoot;
+    var signature = configuredPath + "|" + appRoot;
 
     if( ripgrepPathCache.signature === signature )
     {
         return ripgrepPathCache.value;
     }
 
-    var rgPath = "";
-
-    rgPath = exePathIsDefined( configuredPath );
-    if( rgPath )
-    {
-        ripgrepPathCache.signature = signature;
-        ripgrepPathCache.value = rgPath;
-        return rgPath;
-    }
-
-    rgPath = exePathIsDefined( path.join( vscode.env.appRoot, "node_modules/vscode-ripgrep/bin/", exeName() ) );
-    if( rgPath )
-    {
-        ripgrepPathCache.signature = signature;
-        ripgrepPathCache.value = rgPath;
-        return rgPath;
-    }
-
-    rgPath = exePathIsDefined( path.join( vscode.env.appRoot, "node_modules.asar.unpacked/vscode-ripgrep/bin/", exeName() ) );
-    if( rgPath )
-    {
-        ripgrepPathCache.signature = signature;
-        ripgrepPathCache.value = rgPath;
-        return rgPath;
-    }
-
-    rgPath = exePathIsDefined( path.join( vscode.env.appRoot, "node_modules/@vscode/ripgrep/bin/", exeName() ) );
-    if( rgPath )
-    {
-        ripgrepPathCache.signature = signature;
-        ripgrepPathCache.value = rgPath;
-        return rgPath;
-    }
-
-    rgPath = exePathIsDefined( path.join( vscode.env.appRoot, "node_modules.asar.unpacked/@vscode/ripgrep/bin/", exeName() ) );
-    ripgrepPathCache.signature = signature;
-    ripgrepPathCache.value = rgPath;
-    if( rgPath ) return rgPath;
-
-    return rgPath;
+    return cacheRipgrepPath(
+        signature,
+        firstExistingPath( configuredPath, appRoot, ripgrepExecutableName(), ripgrepPlatformArch() )
+    );
 }
 
 function tags()
