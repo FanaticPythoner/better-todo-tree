@@ -183,7 +183,7 @@ QUnit.test( 'busy and composite tree commands have localization entries in both 
     assert.notOk( chinese[ 'better-todo-tree.command.treeStateBusy.title' ].indexOf( '$(' ) >= 0 );
 } );
 
-QUnit.test( 'busy placeholder commands use spinner icons with plain localized titles', function( assert )
+QUnit.test( 'busy placeholder commands use static product icons with plain localized titles', function( assert )
 {
     var packageJson = readPackageJson();
     var treeStateBusy = packageJson.contributes.commands.find( function( entry )
@@ -195,8 +195,21 @@ QUnit.test( 'busy placeholder commands use spinner icons with plain localized ti
         return entry.command === 'better-todo-tree.scanBusy';
     } );
 
-    assert.equal( treeStateBusy.icon, '$(loading~spin)' );
-    assert.equal( scanBusy.icon, '$(loading~spin)' );
+    assert.equal( treeStateBusy.icon, '$(loading)' );
+    assert.equal( scanBusy.icon, '$(loading)' );
+    assert.equal( treeStateBusy.icon.indexOf( '~spin' ), -1 );
+    assert.equal( scanBusy.icon.indexOf( '~spin' ), -1 );
     assert.equal( treeStateBusy.title, '%better-todo-tree.command.treeStateBusy.title%' );
     assert.equal( scanBusy.title, '%better-todo-tree.command.scanBusy.title%' );
+} );
+
+QUnit.test( 'showBadges metadata documents file icon theme coupling', function( assert )
+{
+    var english = readPackageNls( 'package.nls.json' );
+    var chinese = readPackageNls( 'package.nls.zh-cn.json' );
+
+    assert.ok( english[ 'better-todo-tree.configuration.tree.showBadges.markdownDescription' ].indexOf( 'file icon theme resources' ) >= 0 );
+    assert.ok( english[ 'todo-tree.configuration.tree.showBadges.markdownDescription' ].indexOf( 'file icon theme resources' ) >= 0 );
+    assert.ok( chinese[ 'better-todo-tree.configuration.tree.showBadges.markdownDescription' ].indexOf( '文件图标主题资源' ) >= 0 );
+    assert.ok( chinese[ 'todo-tree.configuration.tree.showBadges.markdownDescription' ].indexOf( '文件图标主题资源' ) >= 0 );
 } );

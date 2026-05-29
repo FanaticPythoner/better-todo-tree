@@ -139,6 +139,7 @@ function createWorkspaceRootNode( folder )
         label: folder.uri.scheme === 'file' ? folder.name : folder.uri.authority,
         nodes: [],
         fsPath: folder.uri.scheme === 'file' ? folder.uri.fsPath : ( folder.uri.authority + folder.uri.fsPath ),
+        resourceFsPath: folder.uri.scheme === 'file' ? folder.uri.fsPath : undefined,
         id: "workspace:" + ( folder.uri.scheme === 'file' ? folder.uri.fsPath : ( folder.uri.authority + folder.uri.fsPath ) ),
         visible: true,
         isFolder: true,
@@ -167,12 +168,14 @@ function createPathNode( folder, pathElements, isFolder, subTag, tag )
     return {
         type: PATH,
         fsPath: fsPath,
+        resourceFsPath: fsPath,
         pathElement: pathElements[ pathElements.length - 1 ],
         label: pathElements[ pathElements.length - 1 ],
         nodes: [],
         id: "path:" + folder + ":" + relativePath + ":" + ( tag || '' ) + ":" + ( subTag || '' ),
         visible: true,
         isFolder: isFolder,
+        resourceIsFolder: isFolder,
         subTag: subTag,
         tag: tag,
         parent: undefined,
@@ -181,7 +184,7 @@ function createPathNode( folder, pathElements, isFolder, subTag, tag )
     };
 }
 
-function createFlatNode( fsPath, rootNode, tag, subTag )
+function createFlatNode( fsPath, rootNode, tag, subTag, resourceFsPath )
 {
     var pathLabel = path.dirname( rootNode === undefined ? fsPath : path.relative( rootNode.fsPath, fsPath ) );
     var relativePath = rootNode === undefined ? fsPath : path.relative( rootNode.fsPath, fsPath );
@@ -189,6 +192,7 @@ function createFlatNode( fsPath, rootNode, tag, subTag )
     return {
         type: PATH,
         fsPath: fsPath,
+        resourceFsPath: resourceFsPath,
         label: path.basename( fsPath ),
         pathLabel: pathLabel === '.' ? '' : '(' + pathLabel + ')',
         nodes: [],
@@ -209,6 +213,7 @@ function createTagNode( tag )
         fsPath: tag,
         nodes: [],
         id: "path:::" + tag + ":",
+        isGroupNode: true,
         tag: tag,
         visible: true,
         parent: undefined,
@@ -227,6 +232,7 @@ function createSubTagNode( subTag )
         nodes: [],
         id: "path::::" + subTag,
         subTag: subTag,
+        isGroupNode: true,
         visible: true,
         isFolder: true,
         parent: undefined,
@@ -305,6 +311,7 @@ function locateFlatChildNode( rootNode, result, tag, subTag )
             parentNode = createPathNode( rootNode ? rootNode.fsPath : '', [ tagPath ], true, subTag, tagPath );
             parentNode.tag = tagPath;
             parentNode.isRootTagNode = true;
+            parentNode.isGroupNode = true;
             parentNode.parent = rootNode;
             parentNodes.push( parentNode );
         }
@@ -318,6 +325,7 @@ function locateFlatChildNode( rootNode, result, tag, subTag )
         {
             parentNode = createPathNode( rootNode ? rootNode.fsPath : '', [ subTagPath ], true, subTagPath );
             parentNode.subTag = subTagPath;
+            parentNode.isGroupNode = true;
             parentNode.parent = rootNode;
             parentNodes.push( parentNode );
         }
@@ -329,7 +337,7 @@ function locateFlatChildNode( rootNode, result, tag, subTag )
     var childNode = parentNodes.find( findExactPath, nodePath );
     if( childNode === undefined )
     {
-        childNode = createFlatNode( nodePath, rootNode, tag, subTag );
+        childNode = createFlatNode( nodePath, rootNode, tag, subTag, subTag ? undefined : fullPath );
         childNode.parent = parentNode ? parentNode : rootNode;
         parentNodes.push( childNode );
     }
@@ -357,6 +365,7 @@ function locateTreeChildNode( rootNode, pathElements, tag, subTag )
             tagPathList.push( tag );
             parentNode = createPathNode( rootNode ? rootNode.fsPath : '', tagPathList, true, subTag, tag );
             parentNode.isRootTagNode = true;
+            parentNode.isGroupNode = true;
             parentNode.tag = tag;
             parentNode.parent = rootNode;
             parentNodes.push( parentNode );
@@ -372,6 +381,7 @@ function locateTreeChildNode( rootNode, pathElements, tag, subTag )
             subTagPathList.push( subTag );
             parentNode = createPathNode( rootNode ? rootNode.fsPath : '', subTagPathList, true, subTag );
             parentNode.subTag = subTag;
+            parentNode.isGroupNode = true;
             parentNode.parent = rootNode;
             parentNodes.push( parentNode );
         }
@@ -384,6 +394,15 @@ function locateTreeChildNode( rootNode, pathElements, tag, subTag )
         if( childNode === undefined )
         {
             childNode = createPathNode( rootNode.fsPath, pathElements.slice( 0, level + 1 ), level < pathElements.length - 1, subTag, tag );
+            if( subTag && config.shouldGroupBySubTag() !== true && level === pathElements.length - 2 && pathElements[ pathElements.length - 1 ] === subTag )
+            {
+                childNode.resourceIsFolder = false;
+            }
+            if( subTag && config.shouldGroupBySubTag() !== true && level === pathElements.length - 1 && element === subTag )
+            {
+                childNode.isGroupNode = true;
+                childNode.resourceFsPath = undefined;
+            }
             childNode.parent = parentNode ? parentNode : rootNode;
             parentNodes.push( childNode );
             parentNodes = childNode.nodes;
@@ -440,6 +459,50 @@ function addWorkspaceFolders()
             nodes.push( createWorkspaceRootNode( folder ) );
         } );
     }
+}
+
+function isTagGroupPathNode( node )
+{
+    return isPathNode( node ) && node.isRootTagNode === true && node.tag !== undefined;
+}
+
+function isFileIconThemePathNode( node )
+{
+    return isPathNode( node ) &&
+        node.isWorkspaceNode !== true &&
+        node.isGroupNode !== true &&
+        ( node.resourceFsPath || ( node.subTag === undefined && node.fsPath ) );
+}
+
+function setFileIconThemeResourceUri( treeItem, node )
+{
+    if( config.showBadges() === true )
+    {
+        treeItem.resourceUri = vscode.Uri.file( node.resourceFsPath || node.fsPath );
+    }
+}
+
+function setPathNodeIcon( treeItem, node, context, debug )
+{
+    if( isTagGroupPathNode( node ) )
+    {
+        treeItem.iconPath = icons.getTreeIcon( context, node.tag, debug );
+        return;
+    }
+
+    if( node.isWorkspaceNode )
+    {
+        treeItem.iconPath = new vscode.ThemeIcon( 'window' );
+        return;
+    }
+
+    if( isFileIconThemePathNode( node ) )
+    {
+        setFileIconThemeResourceUri( treeItem, node );
+    }
+
+    var useFolderIcon = node.resourceIsFolder === undefined ? node.isFolder : node.resourceIsFolder;
+    treeItem.iconPath = useFolderIcon ? vscode.ThemeIcon.Folder : vscode.ThemeIcon.File;
 }
 
 class TreeNodeProvider
@@ -600,10 +663,6 @@ class TreeNodeProvider
         if( node.fsPath )
         {
             treeItem.node = node;
-            if( config.showBadges() && !node.tag && !node.subTag )
-            {
-                treeItem.resourceUri = vscode.Uri.file( node.fsPath );
-            }
 
             if( isTodoNode( treeItem.node ) )
             {
@@ -642,22 +701,7 @@ class TreeNodeProvider
                     this.nodesToGet += node.nodes.filter( isVisible ).length;
                 }
 
-                if( node.tag )
-                {
-                    treeItem.iconPath = icons.getTreeIcon( this._context, node.tag ? node.tag : node.label, this._debug );
-                }
-                else if( node.isWorkspaceNode )
-                {
-                    treeItem.iconPath = new vscode.ThemeIcon( 'window' );
-                }
-                else if( node.isFolder )
-                {
-                    treeItem.iconPath = vscode.ThemeIcon.Folder;
-                }
-                else
-                {
-                    treeItem.iconPath = vscode.ThemeIcon.File;
-                }
+                setPathNodeIcon( treeItem, node, this._context, this._debug );
 
                 if( node.subTag !== undefined )
                 {
