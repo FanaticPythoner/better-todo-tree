@@ -161,7 +161,7 @@ QUnit.module( "behavioral tree", function()
         return loadTreeHarness( configStub ).tree;
     }
 
-    function loadTreeHarness( configStub )
+    function loadTreeHarness( configStub, iconsStub )
     {
         var vscodeStub = createVscodeStub();
         utils.init( Object.assign( createConfig(), {
@@ -181,7 +181,7 @@ QUnit.module( "behavioral tree", function()
                 vscode: vscodeStub,
                 './config.js': configStub,
                 './utils.js': utils,
-                './icons.js': {
+                './icons.js': iconsStub || {
                     getTreeIcon: function()
                     {
                         return { dark: '/tmp/icon.svg', light: '/tmp/icon.svg' };
@@ -443,5 +443,160 @@ QUnit.module( "behavioral tree", function()
 
         assert.deepEqual( harness.vscode.__eventFires, [ undefined ] );
         assert.equal( provider.getChildren()[ 0 ].label, 'TODO root change item' );
+    } );
+
+    QUnit.test( "issue #29 file containers keep file theme icons and tag icons stay on todos", function( assert )
+    {
+        var configStub = createConfig( {
+            showBadges: function() { return true; }
+        } );
+        var iconCalls = [];
+        var harness = loadTreeHarness( configStub, {
+            getTreeIcon: function( context, tag )
+            {
+                iconCalls.push( tag );
+                return { dark: '/tmp/tag-' + tag + '.svg', light: '/tmp/tag-' + tag + '.svg' };
+            }
+        } );
+        var provider = new harness.tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+        var workspaceFolder = {
+            name: 'workspace',
+            uri: {
+                scheme: 'file',
+                fsPath: '/workspace'
+            }
+        };
+        var result = createResult( '/workspace/src/app.js', 'TODO', 'restore file theme icon' );
+
+        provider.clear( [ workspaceFolder ] );
+        provider.replaceDocument( result.uri, [ result ] );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+
+        var workspaceRoot = provider.getChildren()[ 0 ];
+        var folderNode = provider.getChildren( workspaceRoot )[ 0 ];
+        var fileNode = provider.getChildren( folderNode )[ 0 ];
+        var todoNode = provider.getChildren( fileNode )[ 0 ];
+        var folderItem = provider.getTreeItem( folderNode );
+        var fileItem = provider.getTreeItem( fileNode );
+        var todoItem = provider.getTreeItem( todoNode );
+
+        assert.equal( folderItem.iconPath, harness.vscode.ThemeIcon.Folder );
+        assert.equal( folderItem.resourceUri.fsPath, '/workspace/src' );
+        assert.equal( fileItem.iconPath, harness.vscode.ThemeIcon.File );
+        assert.equal( fileItem.resourceUri.fsPath, '/workspace/src/app.js' );
+        assert.deepEqual( todoItem.iconPath, { dark: '/tmp/tag-TODO.svg', light: '/tmp/tag-TODO.svg' } );
+        assert.deepEqual( iconCalls, [ 'TODO' ] );
+    } );
+
+    QUnit.test( "issue #29 file theme resource is gated by badge setting without tag icon bleed", function( assert )
+    {
+        var configStub = createConfig( {
+            showBadges: function() { return false; }
+        } );
+        var iconCalls = [];
+        var harness = loadTreeHarness( configStub, {
+            getTreeIcon: function( context, tag )
+            {
+                iconCalls.push( tag );
+                return { dark: '/tmp/tag-' + tag + '.svg', light: '/tmp/tag-' + tag + '.svg' };
+            }
+        } );
+        var provider = new harness.tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+        var workspaceFolder = {
+            name: 'workspace',
+            uri: {
+                scheme: 'file',
+                fsPath: '/workspace'
+            }
+        };
+        var result = createResult( '/workspace/app.js', 'TODO', 'no resource decorations' );
+
+        provider.clear( [ workspaceFolder ] );
+        provider.replaceDocument( result.uri, [ result ] );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+
+        var fileNode = provider.getChildren( provider.getChildren()[ 0 ] )[ 0 ];
+        var fileItem = provider.getTreeItem( fileNode );
+
+        assert.equal( fileItem.iconPath, harness.vscode.ThemeIcon.File );
+        assert.equal( fileItem.resourceUri, undefined );
+        assert.deepEqual( iconCalls, [] );
+    } );
+
+    QUnit.test( "issue #29 grouped tag roots keep tag icons while file children keep file theme icons", function( assert )
+    {
+        var configStub = createConfig( {
+            shouldGroupByTag: function() { return true; },
+            showBadges: function() { return true; }
+        } );
+        var iconCalls = [];
+        var harness = loadTreeHarness( configStub, {
+            getTreeIcon: function( context, tag )
+            {
+                iconCalls.push( tag );
+                return { dark: '/tmp/tag-' + tag + '.svg', light: '/tmp/tag-' + tag + '.svg' };
+            }
+        } );
+        var provider = new harness.tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+        var workspaceFolder = {
+            name: 'workspace',
+            uri: {
+                scheme: 'file',
+                fsPath: '/workspace'
+            }
+        };
+        var result = createResult( '/workspace/src/app.js', 'TODO', 'grouped file theme icon' );
+
+        provider.clear( [ workspaceFolder ] );
+        provider.replaceDocument( result.uri, [ result ] );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+
+        var workspaceRoot = provider.getChildren()[ 0 ];
+        var tagNode = provider.getChildren( workspaceRoot )[ 0 ];
+        var folderNode = provider.getChildren( tagNode )[ 0 ];
+        var fileNode = provider.getChildren( folderNode )[ 0 ];
+        var tagItem = provider.getTreeItem( tagNode );
+        var folderItem = provider.getTreeItem( folderNode );
+        var fileItem = provider.getTreeItem( fileNode );
+
+        assert.deepEqual( tagItem.iconPath, { dark: '/tmp/tag-TODO.svg', light: '/tmp/tag-TODO.svg' } );
+        assert.equal( tagItem.resourceUri, undefined );
+        assert.equal( folderItem.iconPath, harness.vscode.ThemeIcon.Folder );
+        assert.equal( folderItem.resourceUri.fsPath, '/workspace/src' );
+        assert.equal( fileItem.iconPath, harness.vscode.ThemeIcon.File );
+        assert.equal( fileItem.resourceUri.fsPath, '/workspace/src/app.js' );
+        assert.deepEqual( iconCalls, [ 'TODO' ] );
+    } );
+
+    QUnit.test( "issue #29 subtag containers keep the source file icon theme resource", function( assert )
+    {
+        var configStub = createConfig( {
+            showBadges: function() { return true; }
+        } );
+        var harness = loadTreeHarness( configStub );
+        var provider = new harness.tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+        var workspaceFolder = {
+            name: 'workspace',
+            uri: {
+                scheme: 'file',
+                fsPath: '/workspace'
+            }
+        };
+        var result = createResult( '/workspace/app.js', 'TODO', 'subtag source icon' );
+        result.subTag = 'owner';
+
+        provider.clear( [ workspaceFolder ] );
+        provider.replaceDocument( result.uri, [ result ] );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+
+        var fileNode = provider.getChildren( provider.getChildren()[ 0 ] )[ 0 ];
+        var subTagNode = provider.getChildren( fileNode )[ 0 ];
+        var fileItem = provider.getTreeItem( fileNode );
+        var subTagItem = provider.getTreeItem( subTagNode );
+
+        assert.equal( fileItem.iconPath, harness.vscode.ThemeIcon.File );
+        assert.equal( fileItem.resourceUri.fsPath, '/workspace/app.js' );
+        assert.equal( subTagItem.iconPath, harness.vscode.ThemeIcon.File );
+        assert.equal( subTagItem.resourceUri, undefined );
     } );
 } );

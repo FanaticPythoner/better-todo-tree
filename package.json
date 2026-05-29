@@ -383,13 +383,13 @@
                 "command": "better-todo-tree.treeStateBusy",
                 "title": "%better-todo-tree.command.treeStateBusy.title%",
                 "category": "%better-todo-tree.command.category%",
-                "icon": "$(loading~spin)"
+                "icon": "$(loading)"
             },
             {
                 "command": "better-todo-tree.scanBusy",
                 "title": "%better-todo-tree.command.scanBusy.title%",
                 "category": "%better-todo-tree.command.category%",
-                "icon": "$(loading~spin)"
+                "icon": "$(loading)"
             },
             {
                 "command": "better-todo-tree.filter",
