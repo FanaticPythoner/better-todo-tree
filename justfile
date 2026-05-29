@@ -66,44 +66,63 @@ command -v curl >/dev/null 2>&1 || { echo "error: curl is required for workflow 
 command -v tar >/dev/null 2>&1 || { echo "error: tar is required for workflow verifier bootstrap." >&2; exit 1; }
 '''
 
+# Examples:
+#   just
+#   just default
 default:
   @just --list --unsorted
 
+# Examples:
+#   just setup
 setup:
   #!/usr/bin/env bash
   set -euo pipefail
   {{node_bootstrap}}
   npm ci
 
+# Examples:
+#   just test
 test:
   #!/usr/bin/env bash
   set -euo pipefail
   {{node_bootstrap}}
   npm test
 
+# Examples:
+#   just perf --list-scenarios
+#   just perf --scenario config-ripgrep-path-resolution --skip-readme-update --allow-unstable-machine
 perf *args:
   #!/usr/bin/env bash
   set -euo pipefail
   {{node_bootstrap}}
   node --expose-gc scripts/perf/run-all.js {{args}}
 
+# Examples:
+#   just bootstrap-release-env
 bootstrap-release-env:
   #!/usr/bin/env bash
   set -euo pipefail
   bash scripts/release/bootstrap-release-environment.sh
 
+# Examples:
+#   just next-release --bump patch
+#   just next-release --bump patch --push
 next-release *args:
   #!/usr/bin/env bash
   set -euo pipefail
   {{node_bootstrap}}
   bash scripts/release/create-next-release.sh {{args}}
 
+# Examples:
+#   just lint-actions
 lint-actions:
   #!/usr/bin/env bash
   set -euo pipefail
   {{actions_bootstrap}}
   actionlint .github/workflows/*.yml
 
+# Examples:
+#   just test-actions-ci
 test-actions-ci:
   #!/usr/bin/env bash
   set -euo pipefail
@@ -117,6 +136,8 @@ test-actions-ci:
     --container-architecture linux/amd64 \
     --artifact-server-path .act-artifacts
 
+# Examples:
+#   just test-actions-release-build
 test-actions-release-build:
   #!/usr/bin/env bash
   set -euo pipefail
@@ -178,12 +199,16 @@ test-actions-release-build:
     fi
   )
 
+# Examples:
+#   just test-actions-latest-build
 test-actions-latest-build:
   #!/usr/bin/env bash
   set -euo pipefail
   {{node_bootstrap}}
   npx qunit test/workflows.github.test.js test/release.workflow-scripts.test.js
 
+# Examples:
+#   just test-actions
 test-actions:
   #!/usr/bin/env bash
   set -euo pipefail
@@ -193,12 +218,20 @@ test-actions:
   just test-actions-release-build
   just test-actions-latest-build
 
+# Examples:
+#   just build-ext
+#   just build-ext linux-x64
+#   just build-ext linux-x64 darwin-arm64 win32-x64
 build-ext *platforms:
   #!/usr/bin/env bash
   set -euo pipefail
   {{node_bootstrap}}
   node scripts/release/build-vsix.mjs {{platforms}}
 
+# Examples:
+#   just clean
+#   just clean --force
+#   just clean force
 clean *flags:
   #!/usr/bin/env bash
   set -euo pipefail
