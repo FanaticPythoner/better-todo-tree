@@ -12,6 +12,10 @@ var ripgrepPathCache = {
     signature: undefined,
     value: undefined
 };
+var EXTENSION_RIPGREP_LAYOUTS = Object.freeze( [
+    Object.freeze( { root: "dist/ripgrep", platformArch: true } ),
+    Object.freeze( { root: "node_modules/@vscode/ripgrep-universal/bin", platformArch: true } )
+] );
 var RIPGREP_PACKAGE_LAYOUTS = Object.freeze( [
     Object.freeze( { root: "node_modules/@vscode/ripgrep-universal/bin", platformArch: true } ),
     Object.freeze( { root: "node_modules.asar.unpacked/@vscode/ripgrep-universal/bin", platformArch: true } ),
@@ -146,16 +150,16 @@ function packagedRipgrepPath( layout, appRoot, exeName, platformArch )
     return path.join.apply( path, parts );
 }
 
-function firstExistingPath( configuredPath, appRoot, exeName, platformArch )
+function firstExistingLayoutPath( layouts, root, exeName, platformArch )
 {
-    if( configuredPath && fs.existsSync( configuredPath ) )
+    if( !root )
     {
-        return configuredPath;
+        return undefined;
     }
 
-    for( var index = 0; index < RIPGREP_PACKAGE_LAYOUTS.length; index++ )
+    for( var index = 0; index < layouts.length; index++ )
     {
-        var candidatePath = packagedRipgrepPath( RIPGREP_PACKAGE_LAYOUTS[ index ], appRoot, exeName, platformArch );
+        var candidatePath = packagedRipgrepPath( layouts[ index ], root, exeName, platformArch );
 
         if( fs.existsSync( candidatePath ) )
         {
@@ -164,6 +168,72 @@ function firstExistingPath( configuredPath, appRoot, exeName, platformArch )
     }
 
     return undefined;
+}
+
+function nestedAppRoots( appRoot )
+{
+    if( !appRoot || !fs.existsSync( appRoot ) )
+    {
+        return [];
+    }
+
+    return fs.readdirSync( appRoot, { withFileTypes: true } )
+        .filter( function( entry )
+        {
+            return entry.isDirectory();
+        } )
+        .map( function( entry )
+        {
+            return path.join( appRoot, entry.name, 'resources', 'app' );
+        } )
+        .filter( function( nestedRoot )
+        {
+            return fs.existsSync( nestedRoot );
+        } );
+}
+
+function firstExistingNestedAppRootPath( appRoot, exeName, platformArch )
+{
+    var roots = nestedAppRoots( appRoot );
+
+    for( var index = 0; index < roots.length; index++ )
+    {
+        var candidatePath = firstExistingLayoutPath( RIPGREP_PACKAGE_LAYOUTS, roots[ index ], exeName, platformArch );
+
+        if( candidatePath )
+        {
+            return candidatePath;
+        }
+    }
+
+    return undefined;
+}
+
+function extensionRoot()
+{
+    if( context && context.extensionPath )
+    {
+        return context.extensionPath;
+    }
+
+    if( context && context.extensionUri && context.extensionUri.fsPath )
+    {
+        return context.extensionUri.fsPath;
+    }
+
+    return path.join( __dirname, '..' );
+}
+
+function firstExistingPath( configuredPath, extensionPath, appRoot, exeName, platformArch )
+{
+    if( configuredPath )
+    {
+        return fs.existsSync( configuredPath ) ? configuredPath : undefined;
+    }
+
+    return firstExistingLayoutPath( EXTENSION_RIPGREP_LAYOUTS, extensionPath, exeName, platformArch ) ||
+        firstExistingLayoutPath( RIPGREP_PACKAGE_LAYOUTS, appRoot, exeName, platformArch ) ||
+        firstExistingNestedAppRootPath( appRoot, exeName, platformArch );
 }
 
 function cacheRipgrepPath( signature, rgPath )
@@ -177,7 +247,9 @@ function ripgrepPath()
 {
     var configuredPath = identity.getSetting( 'ripgrep.ripgrep', "" );
     var appRoot = vscode.env.appRoot;
-    var signature = configuredPath + "|" + appRoot;
+    var extRoot = extensionRoot();
+    var platformArch = ripgrepPlatformArch();
+    var signature = configuredPath + "|" + extRoot + "|" + appRoot + "|" + platformArch;
 
     if( ripgrepPathCache.signature === signature )
     {
@@ -186,7 +258,7 @@ function ripgrepPath()
 
     return cacheRipgrepPath(
         signature,
-        firstExistingPath( configuredPath, appRoot, ripgrepExecutableName(), ripgrepPlatformArch() )
+        firstExistingPath( configuredPath, extRoot, appRoot, ripgrepExecutableName(), platformArch )
     );
 }
 

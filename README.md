@@ -5,18 +5,18 @@
 Todo Tree is THE visual map I rely on to track every scattered issue across projects. When upstream stopped being maintained, new and existing bugs 🐛 took root and started choking the extension. Before it became firewood 🪵, I took over to modernize the core, clear the rot, and make it lightning fast ⚡.
 
 <!-- README_BENCHMARK_SUMMARY:START -->
-**Made TODO rescans 52.8X faster (so you don't have time to feel guilty for not fixing them... 🥀)**
+**Made TODO rescans 51.4X faster (so you don't have time to feel guilty for not fixing them... 🥀)**
 
 | Target | Before | After | Speed/Efficiency Gain |
 | --- | ---: | ---: | --- |
-| **Custom Regex Rescans** | 77.54 ms | 2.48 ms | **31.3X** 🚀 |
-| **Visible Editor Highlights** | 15.79 ms | 1.46 ms | **10.8X** 🚀 |
-| **Custom Highlight Configs** | 1,171.33 ms | 2.42 ms | **484.0X** 🚀 |
-| **Editor Highlight Refreshes** | 14.40 ms | 1.50 ms | **9.6X** 🚀 |
-| **Custom Regex Workspace Refreshes** | 39.39 ms | 14.69 ms | **2.7X** 🔥 |
-| **Visible File Rescans** | 86.66 ms | 1.64 ms | **52.8X** 🚀 |
-| **Workspace Refresh RSS Burst (Peak Gain)** | 74.32 MiB | 43.70 MiB | **41.2% less** 🔥 |
-| **Workspace Refresh Peak RSS** | 132.36 MiB | 101.64 MiB | **23.2% less** 🔥 |
+| **Custom Regex Rescans** | 78.88 ms | 2.52 ms | **31.3X** 🚀 |
+| **Visible Editor Highlights** | 16.00 ms | 1.39 ms | **11.5X** 🚀 |
+| **Custom Highlight Configs** | 1,391.93 ms | 2.00 ms | **696.0X** 🚀 |
+| **Editor Highlight Refreshes** | 17.24 ms | 1.32 ms | **13.1X** 🚀 |
+| **Custom Regex Workspace Refreshes** | 36.72 ms | 3.76 ms | **9.8X** 🚀 |
+| **Visible File Rescans** | 77.03 ms | 1.50 ms | **51.4X** 🚀 |
+| **Workspace Refresh RSS Burst (Peak Gain)** | 78.13 MiB | 14.50 MiB | **81.4% less** 🚀 |
+| **Workspace Refresh Peak RSS** | 133.31 MiB | 70.02 MiB | **47.5% less** 🔥 |
 
 ... And it's just getting warmed up!
 <!-- README_BENCHMARK_SUMMARY:END -->
@@ -409,7 +409,7 @@ Examples:
 Set to false to allow tags to be matched regardless of case.
 
 **better-todo-tree.ripgrep.ripgrep** (`""`)</br>
-Normally, the extension will locate ripgrep itself as and when required. If you want to use an alternate version of ripgrep, set this to point to wherever it is installed.
+Empty value uses the packaged ripgrep binary. Set an absolute executable path to override it.
 
 **better-todo-tree.ripgrep.ripgrepArgs** (`"--max-columns=1000"`)</br>
 Use this to pass additional arguments to ripgrep. e.g. `"-i"` to make the search case insensitive. *Use with caution!*

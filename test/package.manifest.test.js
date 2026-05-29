@@ -52,6 +52,27 @@ QUnit.test( 'prepublish builds are deterministic and codicon updates are explici
     assert.equal( scripts[ 'vscode:prepublish' ].indexOf( 'buildCodiconNames' ), -1 );
 } );
 
+QUnit.test( 'release packaging has the ripgrep-universal build dependency', function( assert )
+{
+    var packageJson = readPackageJson();
+
+    assert.equal( packageJson.devDependencies[ '@vscode/ripgrep-universal' ], '^1.18.0' );
+} );
+
+QUnit.test( 'ripgrep executable setting documents packaged binary behavior', function( assert )
+{
+    var englishNls = readPackageNls( 'package.nls.json' );
+
+    assert.equal(
+        englishNls[ 'todo-tree.configuration.ripgrep.ripgrep.markdownDescription' ],
+        'Custom ripgrep executable path. Empty value uses the packaged ripgrep binary.'
+    );
+    assert.equal(
+        englishNls[ 'better-todo-tree.configuration.ripgrep.ripgrep.markdownDescription' ],
+        'Custom ripgrep executable path. Empty value uses the packaged ripgrep binary.'
+    );
+} );
+
 QUnit.test( 'legacy settings remain present and deprecated', function( assert )
 {
     var currentSetting = getConfigurationProperty( 'better-todo-tree.general.tags' );

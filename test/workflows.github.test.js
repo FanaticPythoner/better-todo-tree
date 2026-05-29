@@ -120,7 +120,23 @@ QUnit.test( 'ci workflow uploads only the smoke-test linux artifact', function( 
 
     assert.ok( ciWorkflow.indexOf( 'rm -rf artifacts/vsix' ) !== -1 );
     assert.ok( ciWorkflow.indexOf( 'artifacts/vsix/*-linux-x64.vsix' ) !== -1 );
-    assert.ok( ciWorkflow.indexOf( 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' ) !== -1 );
+    assert.ok( ciWorkflow.indexOf( 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a' ) !== -1 );
+} );
+
+QUnit.test( 'VSIX builder stages one ripgrep-universal binary for each native target', function( assert )
+{
+    var buildScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'build-vsix.mjs' ), 'utf8' );
+
+    assert.ok( buildScript.indexOf( "node_modules', '@vscode', 'ripgrep-universal'" ) !== -1 );
+    assert.ok( buildScript.indexOf( "import { binPathFor } from '@vscode/ripgrep-universal';" ) !== -1 );
+    assert.ok( buildScript.indexOf( "['linux-armhf', Object.freeze({ os: 'linux', arch: 'arm' })]" ) !== -1 );
+    assert.ok( buildScript.indexOf( "['alpine-x64', Object.freeze({ os: 'linux', arch: 'x64' })]" ) !== -1 );
+    assert.ok( buildScript.indexOf( "['alpine-arm64', Object.freeze({ os: 'linux', arch: 'arm64' })]" ) !== -1 );
+    assert.ok( buildScript.indexOf( "fs.chmodSync(destinationPath, platform.os === 'win32' ? 0o644 : 0o755)" ) !== -1 );
+    assert.ok( buildScript.indexOf( "copyRipgrepPackageFile('LICENSE')" ) !== -1 );
+    assert.ok( buildScript.indexOf( "const { pack } = require('@vscode/vsce/out/package.js')" ) !== -1 );
+    assert.ok( buildScript.indexOf( 'dependencies: false' ) !== -1 );
+    assert.ok( buildScript.indexOf( 'finally {\n        resetRipgrepStage();\n    }' ) !== -1 );
 } );
 
 QUnit.test( 'security workflow keeps dependency review and CodeQL coverage pinned', function( assert )
@@ -144,8 +160,8 @@ QUnit.test( 'justfile exposes GitHub Actions verification recipes', function( as
     assert.ok( justfile.indexOf( 'test-actions-release-build:' ) !== -1 );
     assert.ok( justfile.indexOf( 'test-actions-latest-build:' ) !== -1 );
     assert.ok( justfile.indexOf( 'test-actions:' ) !== -1 );
-    assert.ok( releaseWorkflow.indexOf( 'actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0' ) !== -1 );
-    assert.ok( latestWorkflow.indexOf( 'actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0' ) !== -1 );
+    assert.ok( releaseWorkflow.indexOf( 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c' ) !== -1 );
+    assert.ok( latestWorkflow.indexOf( 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c' ) !== -1 );
 } );
 
 QUnit.test( 'parity harness source files are present in the repository tree', function( assert )

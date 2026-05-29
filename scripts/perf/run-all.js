@@ -310,6 +310,10 @@ function createRipgrepConfigStubs( state )
             existsSync: function( fsPath )
             {
                 return state.existingPaths.has( fsPath );
+            },
+            readdirSync: function()
+            {
+                return [];
             }
         },
         './attributes.js': {
@@ -330,6 +334,16 @@ function createRipgrepConfigStubs( state )
 function ripgrepPathForLayout( appRoot, layout )
 {
     var exeName = ripgrepExecutableName();
+
+    if( layout === 'extension-dist' )
+    {
+        return path.join(
+            '/tmp/better-todo-tree-rg-bench-extension',
+            'dist/ripgrep',
+            ripgrepPlatformArch(),
+            exeName
+        );
+    }
 
     if( layout === 'universal-unpacked' )
     {
@@ -362,7 +376,7 @@ function createRipgrepPathBatch( configModule, state, layout, batchSize )
             var existingPath = ripgrepPathForLayout( appRoot, layout );
 
             state.env.appRoot = appRoot;
-            state.configuredPath = path.join( appRoot, 'missing', ripgrepExecutableName() );
+            state.configuredPath = '';
             state.existingPaths = new Set( [ existingPath ] );
 
             if( configModule.ripgrepPath() === existingPath )
@@ -404,6 +418,7 @@ async function benchmarkRipgrepPathResolution( baselineLoader )
 {
     var batchSize = readPositiveIntegerEnv( 'RIPGREP_PATH_BENCH_BATCH', 2048 );
     var iterations = readPositiveIntegerEnv( 'RIPGREP_PATH_BENCH_ITERATIONS', 25 );
+    var currentExtensionPath = '/tmp/better-todo-tree-rg-bench-extension';
     var currentState = {
         env: { appRoot: '' },
         configuredPath: '',
@@ -416,13 +431,22 @@ async function benchmarkRipgrepPathResolution( baselineLoader )
     };
     var currentConfig = loadCurrentModule( 'src/config.js', createRipgrepConfigStubs( currentState ) );
     var baselineConfig = baselineLoader( 'src/config.js', createRipgrepConfigStubs( baselineState ) );
-    var currentBatch = createRipgrepPathBatch( currentConfig, currentState, 'universal-unpacked', batchSize );
+    currentConfig.init( {
+        extensionPath: currentExtensionPath,
+        workspaceState: {
+            get: function( key, defaultValue )
+            {
+                return defaultValue;
+            }
+        }
+    } );
+    var currentBatch = createRipgrepPathBatch( currentConfig, currentState, 'extension-dist', batchSize );
     var baselineBatch = createRipgrepPathBatch( baselineConfig, baselineState, 'legacy-module', batchSize );
 
     return {
         name: 'config-ripgrep-path-resolution',
         current: attachThroughput(
-            await createMeasurement( 'config-ripgrep-path-resolution-current-universal', iterations, currentBatch ),
+            await createMeasurement( 'config-ripgrep-path-resolution-current-extension-dist', iterations, currentBatch ),
             batchSize
         ),
         baseline: attachThroughput(
@@ -2008,7 +2032,7 @@ function buildScenarioDefinitions( baselineLoader )
         {
             name: 'config-ripgrep-path-resolution',
             measurementScope: 'Cold config.ripgrepPath resolution with changing VS Code app roots.',
-            inputModel: 'One configured miss and one packaged ripgrep hit per operation.',
+            inputModel: 'Empty custom ripgrep path and one extension-packaged ripgrep hit per operation.',
             run: function()
             {
                 return benchmarkRipgrepPathResolution( baselineLoader );

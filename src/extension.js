@@ -3279,10 +3279,9 @@ function activate( context )
             }
         }
 
-        // We can't do anything if we can't find ripgrep
         if( !config.ripgrepPath() )
         {
-            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": Failed to find vscode-ripgrep - please install ripgrep manually and set '" + identity.CURRENT_NAMESPACE + ".ripgrep.ripgrep' to point to the executable" );
+            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to locate ripgrep. Reinstall the extension, clear '" + identity.CURRENT_NAMESPACE + ".ripgrep.ripgrep', or set it to an executable path." );
             return;
         }
 
