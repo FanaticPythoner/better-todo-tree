@@ -14,3 +14,5 @@ TODOS_LISTS/
 *REPORT*.md
 artifacts/vsix/
 artifacts/release-notes/
+artifacts/**/*.log
+artifacts/perf/runtime-benchmarks.json
