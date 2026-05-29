@@ -4,6 +4,9 @@ set -euo pipefail
 remote_name='origin'
 base_branch='master'
 source_branch='master'
+target_owner='FanaticPythoner'
+target_repo='better-todo-tree'
+target_repo_slug="$target_owner/$target_repo"
 branch_name=''
 no_wait=0
 pr_mode='prompt'
@@ -26,7 +29,7 @@ Usage:
 Options:
   --branch NAME        Override derived branch name.
   --remote NAME        Git remote for base fetch and branch push. Default: origin.
-  --base NAME          Remote base branch. Default: master.
+  --base NAME          Remote base branch. Only master is supported.
   --source NAME        Local source branch carrying pending changes. Default: master.
   --no-wait           Push without interactive Enter prompt.
   --pr                Create PR without prompt after push.
@@ -48,6 +51,11 @@ fail()
 require_command()
 {
   command -v "$1" >/dev/null 2>&1 || fail "required command '$1' is not available."
+}
+
+require_target_base()
+{
+  [[ "$base_branch" == 'master' ]] || fail "base branch '$base_branch' is unsupported. Expected master."
 }
 
 repo_root()
@@ -129,6 +137,9 @@ parse_issue_url()
   parsed_owner="${BASH_REMATCH[1]}"
   parsed_repo="${BASH_REMATCH[2]}"
   parsed_number="${BASH_REMATCH[3]}"
+
+  [[ "$parsed_owner/$parsed_repo" == "$target_repo_slug" ]] \
+    || fail "issue URL must target $target_repo_slug."
 }
 
 slugify_title()
@@ -303,11 +314,12 @@ create_branch()
   local base_ref="refs/remotes/$remote_name/$base_branch"
 
   require_git_repo
+  require_target_base
   resolve_branch_name >/dev/null
   fetch_base
   require_no_branch_collision
 
-  git branch "$branch_name" "$base_ref"
+  git branch --no-track "$branch_name" "$base_ref"
   git push "$remote_name" "refs/heads/$branch_name:refs/heads/$branch_name"
   git branch --set-upstream-to="$remote_name/$branch_name" "$branch_name" >/dev/null
 
@@ -322,24 +334,58 @@ require_clean_merge_state()
   [[ -z "$unmerged" ]] || fail "unmerged paths block branch preparation: $unmerged"
 }
 
-stash_source_changes()
+require_staged_source_changes()
 {
-  local status_output=''
+  local status=0
 
-  status_output="$(git status --porcelain=v1)"
-  if [[ -z "$status_output" ]]; then
-    printf '\n'
-    return 0
-  fi
+  set +e
+  git diff --cached --quiet --exit-code
+  status="$?"
+  set -e
 
-  git stash push --include-untracked --message "issue-branch:$branch_name:$(date -u +%Y%m%dT%H%M%SZ)" >/dev/null
-  printf 'stash@{0}\n'
+  case "$status" in
+    0)
+      fail 'no staged source changes to move.'
+      ;;
+    1)
+      return 0
+      ;;
+    *)
+      fail 'could not inspect staged source changes.'
+      ;;
+  esac
+}
+
+require_no_unstaged_source_changes()
+{
+  local status=0
+  local untracked=''
+
+  set +e
+  git diff --quiet --exit-code
+  status="$?"
+  set -e
+
+  case "$status" in
+    0)
+      ;;
+    1)
+      fail 'unstaged tracked changes are present; only staged changes can move.'
+      ;;
+    *)
+      fail 'could not inspect unstaged source changes.'
+      ;;
+  esac
+
+  untracked="$(git ls-files --others --exclude-standard)"
+  [[ -z "$untracked" ]] || fail "untracked paths are present; only staged changes can move: $untracked"
 }
 
 stage_branch_changes()
 {
+  local apply_status=0
   local active_branch=''
-  local stash_ref=''
+  local patch_file=''
 
   require_git_repo
   branch_name="$(resolve_branch_name)"
@@ -348,19 +394,29 @@ stage_branch_changes()
   active_branch="$(current_branch)" || fail 'detached HEAD cannot supply source changes.'
   [[ "$active_branch" == "$source_branch" ]] || fail "current branch '$active_branch' does not match source '$source_branch'."
   git rev-parse --verify "refs/heads/$branch_name" >/dev/null 2>&1 || fail "local branch '$branch_name' was not found."
+  require_staged_source_changes
+  require_no_unstaged_source_changes
 
-  stash_ref="$(stash_source_changes)"
+  patch_file="$(mktemp "${TMPDIR:-/tmp}/issue-branch-staged.XXXXXX.patch")"
+  git diff --cached --binary > "$patch_file"
+  git reset --hard HEAD >/dev/null
   git switch "$branch_name" >/dev/null
 
-  if [[ -n "$stash_ref" ]]; then
-    if git stash apply --index "$stash_ref"; then
-      git stash drop "$stash_ref" >/dev/null
-    else
-      fail "stash apply failed on '$branch_name'. Retained stash: $stash_ref"
+  set +e
+  git apply --index "$patch_file"
+  apply_status="$?"
+  set -e
+
+  if [[ "$apply_status" -eq 0 ]]; then
+    rm -f "$patch_file"
+  else
+    git switch "$source_branch" >/dev/null || fail "staged patch apply failed on '$branch_name'. Retained patch: $patch_file"
+    if git apply --index "$patch_file"; then
+      fail "staged patch apply failed on '$branch_name'. Source index restored. Retained patch: $patch_file"
     fi
+    fail "staged patch apply failed on '$branch_name'. Source index restore failed. Retained patch: $patch_file"
   fi
 
-  git add -A
   printf 'staged changes on %s\n' "$branch_name"
 }
 
@@ -401,8 +457,13 @@ create_pr()
 {
   require_git_repo
   require_command gh
+  require_target_base
   branch_name="$(resolve_branch_name)"
-  gh pr create --base "$base_branch" --head "$branch_name" --fill
+  env -u DEBUG -u GH_DEBUG GH_PROMPT_DISABLED=1 gh pr create \
+    --repo "$target_repo_slug" \
+    --base 'master' \
+    --head "$target_owner:$branch_name" \
+    --fill
 }
 
 prompt_pr()
@@ -418,7 +479,7 @@ prompt_pr()
       ;;
     prompt)
       [[ -t 0 ]] || fail 'TTY required for PR prompt. Use --pr or --no-pr.'
-      printf 'Create pull request for %s? [Y/n] ' "$branch_name"
+      printf 'Create pull request into %s master for %s? [Y/n] ' "$target_repo_slug" "$branch_name"
       read -r answer
       case "$answer" in
         ''|y|Y|yes|YES)

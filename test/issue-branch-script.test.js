@@ -8,6 +8,7 @@ var repoRoot = path.resolve( __dirname, '..' );
 var scriptPath = path.join( repoRoot, 'scripts', 'branch', 'issue-branch.sh' );
 var issue28Url = 'https://github.com/FanaticPythoner/better-todo-tree/issues/28';
 var issue36Url = 'https://github.com/FanaticPythoner/better-todo-tree/issues/36';
+var upstreamIssueUrl = 'https://github.com/Gruntfuggly/todo-tree/issues/28';
 var derivedIssueBranch = 'fix/issues-28-36-not-quite-a-drop-in-replacement-label-format-after-displays-before';
 
 function runScript( cwd, args, extraEnv )
@@ -131,6 +132,39 @@ QUnit.test( 'issue-branch rejects protected branch names', function( assert )
     assert.ok( result.stderr.indexOf( "branch 'master' is protected" ) >= 0, result.stderr );
 } );
 
+QUnit.test( 'issue-branch rejects non-project issue URLs', function( assert )
+{
+    var result = runScript( repoRoot, [ 'name', upstreamIssueUrl ] );
+
+    assert.notEqual( result.status, 0 );
+    assert.ok( result.stderr.indexOf( 'issue URL must target FanaticPythoner/better-todo-tree' ) >= 0, result.stderr );
+} );
+
+QUnit.test( 'issue-branch rejects non-master base branches', function( assert )
+{
+    var fixture = createFixtureRepository();
+    var fakeGh = createFakeGh( fixture.root );
+    var result;
+
+    try
+    {
+        result = runScript( fixture.work, [
+            'create',
+            '--remote', 'origin',
+            '--base', 'main',
+            issue28Url,
+            issue36Url
+        ], fakeGh.env );
+
+        assert.notEqual( result.status, 0 );
+        assert.ok( result.stderr.indexOf( "base branch 'main' is unsupported" ) >= 0, result.stderr );
+    }
+    finally
+    {
+        fs.rmSync( fixture.root, { recursive: true, force: true } );
+    }
+} );
+
 QUnit.test( 'issue-branch creates remote base branch before staging source changes', function( assert )
 {
     var fixture = createFixtureRepository();
@@ -146,7 +180,7 @@ QUnit.test( 'issue-branch creates remote base branch before staging source chang
     {
         fs.writeFileSync( readmePath, 'base\nlocal change\n' );
         fs.writeFileSync( extraPath, 'new file\n' );
-        runGit( fixture.work, [ 'add', 'README.md' ] );
+        runGit( fixture.work, [ 'add', 'README.md', 'extra.txt' ] );
 
         result = runScript( fixture.work, [
             'create',
@@ -161,6 +195,8 @@ QUnit.test( 'issue-branch creates remote base branch before staging source chang
         originMasterSha = runGit( fixture.work, [ 'rev-parse', 'origin/master' ] );
         remoteBranchSha = runGit( fixture.work, [ 'rev-parse', 'origin/' + branch ] );
         assert.equal( remoteBranchSha, originMasterSha );
+        assert.equal( runGit( fixture.work, [ 'config', 'branch.' + branch + '.remote' ] ), 'origin' );
+        assert.equal( runGit( fixture.work, [ 'config', 'branch.' + branch + '.merge' ] ), 'refs/heads/' + branch );
 
         result = runScript( fixture.work, [
             'stage',
@@ -196,6 +232,90 @@ QUnit.test( 'issue-branch creates remote base branch before staging source chang
     }
 } );
 
+QUnit.test( 'issue-branch stage refuses unstaged source changes', function( assert )
+{
+    var fixture = createFixtureRepository();
+    var fakeGh = createFakeGh( fixture.root );
+    var readmePath = path.join( fixture.work, 'README.md' );
+    var result;
+
+    try
+    {
+        result = runScript( fixture.work, [
+            'create',
+            '--remote', 'origin',
+            '--base', 'master',
+            issue28Url,
+            issue36Url
+        ], fakeGh.env );
+        assert.equal( result.status, 0, result.stderr );
+
+        fs.writeFileSync( readmePath, 'base\nstaged change\n' );
+        runGit( fixture.work, [ 'add', 'README.md' ] );
+        fs.writeFileSync( readmePath, 'base\nstaged change\nunstaged change\n' );
+
+        result = runScript( fixture.work, [
+            'stage',
+            '--remote', 'origin',
+            '--source', 'master',
+            issue28Url,
+            issue36Url
+        ], fakeGh.env );
+
+        assert.notEqual( result.status, 0 );
+        assert.ok( result.stderr.indexOf( 'unstaged tracked changes are present' ) >= 0, result.stderr );
+        assert.equal( runGit( fixture.work, [ 'branch', '--show-current' ] ), 'master' );
+        assert.equal( runGit( fixture.work, [ 'diff', '--cached', '--name-only' ] ), 'README.md' );
+    }
+    finally
+    {
+        fs.rmSync( fixture.root, { recursive: true, force: true } );
+    }
+} );
+
+QUnit.test( 'issue-branch stage refuses untracked source changes', function( assert )
+{
+    var fixture = createFixtureRepository();
+    var fakeGh = createFakeGh( fixture.root );
+    var readmePath = path.join( fixture.work, 'README.md' );
+    var scratchPath = path.join( fixture.work, 'scratch.txt' );
+    var result;
+
+    try
+    {
+        result = runScript( fixture.work, [
+            'create',
+            '--remote', 'origin',
+            '--base', 'master',
+            issue28Url,
+            issue36Url
+        ], fakeGh.env );
+        assert.equal( result.status, 0, result.stderr );
+
+        fs.writeFileSync( readmePath, 'base\nstaged change\n' );
+        fs.writeFileSync( scratchPath, 'scratch\n' );
+        runGit( fixture.work, [ 'add', 'README.md' ] );
+
+        result = runScript( fixture.work, [
+            'stage',
+            '--remote', 'origin',
+            '--source', 'master',
+            issue28Url,
+            issue36Url
+        ], fakeGh.env );
+
+        assert.notEqual( result.status, 0 );
+        assert.ok( result.stderr.indexOf( 'untracked paths are present' ) >= 0, result.stderr );
+        assert.equal( runGit( fixture.work, [ 'branch', '--show-current' ] ), 'master' );
+        assert.equal( runGit( fixture.work, [ 'diff', '--cached', '--name-only' ] ), 'README.md' );
+        assert.ok( fs.existsSync( scratchPath ) );
+    }
+    finally
+    {
+        fs.rmSync( fixture.root, { recursive: true, force: true } );
+    }
+} );
+
 QUnit.test( 'issue-branch pr derives branch name from issue URLs', function( assert )
 {
     var fixture = createFixtureRepository();
@@ -214,7 +334,17 @@ QUnit.test( 'issue-branch pr derives branch name from issue URLs', function( ass
         assert.equal( result.status, 0, result.stderr );
         assert.deepEqual(
             fs.readFileSync( fakeGh.argsPath, 'utf8' ).trim().split( '\n' ),
-            [ 'pr', 'create', '--base', 'master', '--head', derivedIssueBranch, '--fill' ]
+            [
+                'pr',
+                'create',
+                '--repo',
+                'FanaticPythoner/better-todo-tree',
+                '--base',
+                'master',
+                '--head',
+                'FanaticPythoner:' + derivedIssueBranch,
+                '--fill'
+            ]
         );
     }
     finally
