@@ -7,9 +7,9 @@ source "$script_dir/release-artifacts.sh"
 
 : "${OVSX_PAT:?OVSX_PAT must be set.}"
 
-retry_interval_seconds="${OPEN_VSX_READONLY_RETRY_INTERVAL_SECONDS:-300}"
-max_wait_seconds="${OPEN_VSX_READONLY_MAX_WAIT_SECONDS:-0}"
-readonly_exit_code=75
+retry_interval_seconds="${OPEN_VSX_RETRY_INTERVAL_SECONDS:-300}"
+max_wait_seconds="${OPEN_VSX_MAX_WAIT_SECONDS:-0}"
+retryable_exit_code=75
 
 require_non_negative_integer()
 {
@@ -33,11 +33,13 @@ require_positive_integer()
   fi
 }
 
-is_open_vsx_readonly_output()
+is_open_vsx_retryable_output()
 {
   local output_file="$1"
 
-  LC_ALL=C grep -Eiq 'registry is in read-only mode|read-only mode|read only mode' "$output_file"
+  LC_ALL=C grep -Eiq \
+    'registry is in read-only mode|read-only mode|read only mode|status (408|425|429|500|502|503|504)|Service Unavailable|Bad Gateway|Gateway Timeout|Too Many Requests|ECONNRESET|ETIMEDOUT|ESOCKETTIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ENETUNREACH|socket hang up|network timeout|request timed out' \
+    "$output_file"
 }
 
 publish_package_once()
@@ -67,16 +69,16 @@ publish_package_once()
 
   cat "$output_file"
 
-  if is_open_vsx_readonly_output "$output_file"; then
+  if is_open_vsx_retryable_output "$output_file"; then
     rm -f "$output_file"
-    return "$readonly_exit_code"
+    return "$retryable_exit_code"
   fi
 
   rm -f "$output_file"
   return "$status"
 }
 
-publish_package_with_readonly_wait()
+publish_package_with_retry()
 {
   local file="$1"
   local started_at=0
@@ -98,14 +100,14 @@ publish_package_with_readonly_wait()
       return 0
     fi
 
-    if [[ "$status" -ne "$readonly_exit_code" ]]; then
+    if [[ "$status" -ne "$retryable_exit_code" ]]; then
       echo "Open VSX publish failed: package=$file exit_code=$status" >&2
       return "$status"
     fi
 
     elapsed=$(( $(date +%s) - started_at ))
     if [[ "$max_wait_seconds" -gt 0 && "$elapsed" -ge "$max_wait_seconds" ]]; then
-      echo "Open VSX registry remained read-only for ${elapsed}s: package=$file" >&2
+      echo "Open VSX publish remained retryable for ${elapsed}s: package=$file" >&2
       return 1
     fi
 
@@ -115,22 +117,22 @@ publish_package_with_readonly_wait()
     fi
 
     if [[ "$sleep_seconds" -le 0 ]]; then
-      echo "Open VSX registry remained read-only for ${elapsed}s: package=$file" >&2
+      echo "Open VSX publish remained retryable for ${elapsed}s: package=$file" >&2
       return 1
     fi
 
-    printf 'Open VSX registry read-only: package=%s attempt=%s elapsed_seconds=%s retry_in_seconds=%s\n' \
+    printf 'Open VSX publish retryable: package=%s attempt=%s elapsed_seconds=%s retry_in_seconds=%s\n' \
       "$file" "$attempt" "$elapsed" "$sleep_seconds"
     sleep "$sleep_seconds"
     attempt=$(( attempt + 1 ))
   done
 }
 
-require_positive_integer OPEN_VSX_READONLY_RETRY_INTERVAL_SECONDS "$retry_interval_seconds"
-require_non_negative_integer OPEN_VSX_READONLY_MAX_WAIT_SECONDS "$max_wait_seconds"
+require_positive_integer OPEN_VSX_RETRY_INTERVAL_SECONDS "$retry_interval_seconds"
+require_non_negative_integer OPEN_VSX_MAX_WAIT_SECONDS "$max_wait_seconds"
 
 mapfile -t files < <(release_artifact_files)
 
 for file in "${files[@]}"; do
-  publish_package_with_readonly_wait "$file"
+  publish_package_with_retry "$file"
 done

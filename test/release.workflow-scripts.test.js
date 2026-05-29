@@ -221,7 +221,7 @@ QUnit.test( 'publish-open-vsx publishes every VSIX with duplicate-safe flags', f
     assert.ok( callLog.indexOf( '@vscode/vsce publish' ) === -1 );
 } );
 
-QUnit.test( 'publish-open-vsx waits on read-only registry and retries the same VSIX', function( assert )
+QUnit.test( 'publish-open-vsx waits on retryable registry failures and retries the same VSIX', function( assert )
 {
     var workspace = createWorkspace();
     var callLogPath = path.join( workspace.root, 'npx.log' );
@@ -232,7 +232,7 @@ QUnit.test( 'publish-open-vsx waits on read-only registry and retries the same V
     var env = Object.assign( {}, process.env, {
         PATH: workspace.bin + path.delimiter + process.env.PATH,
         OVSX_PAT: 'ovsx-test-token',
-        OPEN_VSX_READONLY_RETRY_INTERVAL_SECONDS: '300'
+        OPEN_VSX_RETRY_INTERVAL_SECONDS: '300'
     } );
 
     fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-linux-x64.vsix' ), 'linux' );
@@ -246,8 +246,12 @@ QUnit.test( 'publish-open-vsx waits on read-only registry and retries the same V
         'count="$((count + 1))"\n' +
         'printf "%s\\n" "$count" > "' + counterPath + '"\n' +
         'printf "%s\\n" "$*" >> "' + callLogPath + '"\n' +
-        'if [[ "$count" -le 2 ]]; then\n' +
+        'if [[ "$count" -eq 1 ]]; then\n' +
         '  printf "Registry is in read-only mode.\\n"\n' +
+        '  exit 1\n' +
+        'fi\n' +
+        'if [[ "$count" -eq 2 ]]; then\n' +
+        '  printf "The server responded with status 503: Service Unavailable\\n"\n' +
         '  exit 1\n' +
         'fi\n' +
         'printf "published %s\\n" "$*"\n'
@@ -269,7 +273,8 @@ QUnit.test( 'publish-open-vsx waits on read-only registry and retries the same V
     assert.strictEqual( callLog.split( firstPackage ).length - 1, 3 );
     assert.strictEqual( callLog.split( secondPackage ).length - 1, 1 );
     assert.deepEqual( sleepLog.trim().split( /\r?\n/ ), [ '300', '300' ] );
-    assert.ok( result.stdout.indexOf( 'Open VSX registry read-only: package=' + firstPackage ) !== -1 );
+    assert.ok( result.stdout.indexOf( 'Open VSX publish retryable: package=' + firstPackage ) !== -1 );
+    assert.ok( result.stdout.indexOf( 'The server responded with status 503: Service Unavailable' ) !== -1 );
     assert.ok( result.stdout.indexOf( 'Open VSX publish succeeded: package=' + firstPackage + ' attempts=3' ) !== -1 );
 } );
 

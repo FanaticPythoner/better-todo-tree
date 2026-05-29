@@ -117,7 +117,7 @@ jobs:
         timeout-minutes: 4320
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
-          OPEN_VSX_READONLY_RETRY_INTERVAL_SECONDS: 300
+          OPEN_VSX_RETRY_INTERVAL_SECONDS: 300
         run: bash scripts/release/publish-open-vsx.sh
 
       - name: Attest build provenance

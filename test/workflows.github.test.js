@@ -90,7 +90,7 @@ QUnit.test( 'release workflows build and publish from the resolved release ref',
     assert.ok( releaseWorkflow.indexOf( 'run: bash scripts/release/publish-open-vsx.sh' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'continue-on-error: true' ) === -1 );
     assert.ok( releaseWorkflow.indexOf( 'timeout-minutes: 4320' ) !== -1 );
-    assert.ok( releaseWorkflow.indexOf( 'OPEN_VSX_READONLY_RETRY_INTERVAL_SECONDS: 300' ) !== -1 );
+    assert.ok( releaseWorkflow.indexOf( 'OPEN_VSX_RETRY_INTERVAL_SECONDS: 300' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'steps.publish_open_vsx.outcome }}" == \'failure\'' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( '::warning::Open VSX publication failed after VS Code Marketplace publication completed.' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'run: bash scripts/release/create-github-release.sh' ) !== -1 );
@@ -107,8 +107,8 @@ QUnit.test( 'release workflows build and publish from the resolved release ref',
     assert.ok( publishOpenVsxScript.indexOf( 'ovsx_args=(--no-install ovsx)' ) !== -1 );
     assert.ok( publishOpenVsxScript.indexOf( 'publish --packagePath' ) !== -1 );
     assert.ok( publishOpenVsxScript.indexOf( '--skip-duplicate' ) !== -1 );
-    assert.ok( publishOpenVsxScript.indexOf( 'registry is in read-only mode' ) !== -1 );
-    assert.ok( publishOpenVsxScript.indexOf( 'OPEN_VSX_READONLY_RETRY_INTERVAL_SECONDS' ) !== -1 );
+    assert.ok( publishOpenVsxScript.indexOf( 'status (408|425|429|500|502|503|504)' ) !== -1 );
+    assert.ok( publishOpenVsxScript.indexOf( 'OPEN_VSX_RETRY_INTERVAL_SECONDS' ) !== -1 );
     assert.ok( releaseArtifactsScript.indexOf( "No VSIX artifacts were found in '" ) !== -1 );
     assert.ok( githubReleaseScript.indexOf( 'release_artifact_files' ) !== -1 );
     assert.ok( githubReleaseScript.indexOf( "gh release view \"$RELEASE_TAG\"" ) !== -1 );
