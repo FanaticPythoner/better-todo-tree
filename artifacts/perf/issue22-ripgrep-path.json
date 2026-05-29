@@ -1,0 +1,192 @@
+{
+  "generatedAt": "2026-05-26T11:33:24.626Z",
+  "node": "v25.2.0",
+  "baselineRef": "HEAD",
+  "selection": {
+    "mode": "scenario-list",
+    "suite": "microbenchmark",
+    "scenarios": [
+      "config-ripgrep-path-resolution"
+    ],
+    "kinds": [
+      "microbenchmark"
+    ]
+  },
+  "machine": {
+    "host": {
+      "hostname": "n00ne-AERO-17-YD",
+      "osPrettyName": "Ubuntu 22.04.5 LTS",
+      "kernel": "6.8.0-117-generic",
+      "architecture": "x64",
+      "loadAverage": "5.05, 4.33, 3.72",
+      "availableParallelism": 16
+    },
+    "cpu": {
+      "accessible": true,
+      "modelName": "Intel(R) Core(TM) i9-14900HX",
+      "vendorId": "GenuineIntel",
+      "logicalCpus": 16,
+      "threadsPerCore": 2,
+      "coresPerSocket": 8,
+      "sockets": 1,
+      "minMHz": 800,
+      "maxMHz": 5800,
+      "l1dCache": "384 KiB (8 instances)",
+      "l1iCache": "256 KiB (8 instances)",
+      "l2Cache": "16 MiB (8 instances)",
+      "l3Cache": "36 MiB (1 instance)",
+      "numaNodes": 1
+    },
+    "memory": {
+      "totalBytes": 67119759360,
+      "availableBytesAtCollection": 21595205632,
+      "swapTotalBytes": 128848973824,
+      "swapFreeBytesAtCollection": 98287824896,
+      "layoutAccessible": true,
+      "onlinePhysicalBytes": 70866960384,
+      "dmi": {
+        "accessible": false,
+        "error": "/sys/firmware/dmi/tables/smbios_entry_point: Permission denied\n/dev/mem: Permission denied"
+      }
+    },
+    "storage": {
+      "accessible": true,
+      "rootDevice": {
+        "name": "nvme1n1",
+        "model": "Samsung SSD 9100 PRO 4TB",
+        "sizeBytes": 4000787030016,
+        "transport": "nvme",
+        "rotational": false,
+        "readOnly": false
+      }
+    }
+  },
+  "measurementModel": {
+    "latency": {
+      "valueModel": "Wall-clock elapsed time around each harness flow iteration.",
+      "summary": "Min, p50, p90, p95, and max across the recorded iterations.",
+      "accuracy": "Exact for each sampled iteration in this run."
+    },
+    "profiledRssBurst": {
+      "valueModel": "Difference between the isolated scenario worker RSS measured immediately before the flow and that worker iteration's peak RSS.",
+      "startSource": "process.memoryUsage().rss",
+      "peakSource": "process.resourceUsage().maxRSS",
+      "accuracy": "Exact for the measured worker iteration."
+    },
+    "profiledPeakRss": {
+      "valueModel": "Highest process RSS reached by the isolated scenario worker iteration.",
+      "peakSource": "process.resourceUsage().maxRSS",
+      "accuracy": "Exact worker-process OS high-water mark."
+    }
+  },
+  "validation": {
+    "resultCount": 1,
+    "allResultsMatchSelection": true,
+    "allResultsAreUserFlow": false
+  },
+  "results": [
+    {
+      "name": "config-ripgrep-path-resolution",
+      "current": {
+        "name": "config-ripgrep-path-resolution-current-universal",
+        "iterations": 25,
+        "p50Ms": 11.39,
+        "p90Ms": 15.71,
+        "p95Ms": 15.75,
+        "minMs": 10.29,
+        "maxMs": 22.73,
+        "sampleMs": [
+          10.29,
+          10.33,
+          10.46,
+          10.52,
+          10.58,
+          10.63,
+          10.69,
+          10.73,
+          10.81,
+          11,
+          11.03,
+          11.24,
+          11.39,
+          11.49,
+          11.55,
+          11.59,
+          11.67,
+          11.92,
+          12.12,
+          12.41,
+          12.5,
+          13.25,
+          15.71,
+          15.75,
+          22.73
+        ],
+        "peakRssP50MiB": 68.06,
+        "peakRssP90MiB": 68.31,
+        "peakRssP95MiB": 68.31,
+        "peakRssMiB": 68.31,
+        "peakAdditionalRssMiB": 11.63,
+        "rssBurstP50MiB": 0,
+        "rssBurstP90MiB": 0.13,
+        "rssBurstP95MiB": 0.25,
+        "rssBurstMaxMiB": 11.63,
+        "lastValue": 2048,
+        "operationsPerIteration": 2048,
+        "throughputOpsPerSecond": 179806.85
+      },
+      "baseline": {
+        "name": "config-ripgrep-path-resolution-baseline-legacy",
+        "iterations": 25,
+        "p50Ms": 6.62,
+        "p90Ms": 8,
+        "p95Ms": 8.06,
+        "minMs": 6.1,
+        "maxMs": 8.49,
+        "sampleMs": [
+          6.1,
+          6.17,
+          6.24,
+          6.4,
+          6.4,
+          6.43,
+          6.45,
+          6.45,
+          6.49,
+          6.5,
+          6.52,
+          6.62,
+          6.62,
+          6.7,
+          6.74,
+          6.75,
+          6.83,
+          6.85,
+          6.89,
+          6.97,
+          7.02,
+          7.32,
+          8,
+          8.06,
+          8.49
+        ],
+        "peakRssP50MiB": 68.81,
+        "peakRssP90MiB": 68.81,
+        "peakRssP95MiB": 68.81,
+        "peakRssMiB": 68.81,
+        "peakAdditionalRssMiB": 0.25,
+        "rssBurstP50MiB": 0,
+        "rssBurstP90MiB": 0.13,
+        "rssBurstP95MiB": 0.13,
+        "rssBurstMaxMiB": 0.25,
+        "lastValue": 2048,
+        "operationsPerIteration": 2048,
+        "throughputOpsPerSecond": 309365.56
+      },
+      "kind": "microbenchmark",
+      "userFlow": "",
+      "measurementScope": "Cold config.ripgrepPath resolution with changing VS Code app roots.",
+      "inputModel": "One configured miss and one packaged ripgrep hit per operation."
+    }
+  ]
+}
