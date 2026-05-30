@@ -1,6 +1,8 @@
 var fs = require( 'fs' );
 var path = require( 'path' );
 
+var fullCommitShaPattern = /^[0-9a-f]{40}$/;
+
 function getWorkflowPaths()
 {
     return fs.readdirSync( path.join( __dirname, '..', '.github', 'workflows' ) )
@@ -49,32 +51,80 @@ function parseActionReference( reference )
     };
 }
 
-function findActionReference( references, action )
+function getActionReferences( references, action )
 {
-    return references.find( function( reference )
+    return references.filter( function( reference )
     {
         return reference.action === action;
     } );
 }
 
-function assertPinnedAction( assert, references, action )
+function workflowAssertionMessage( label, message )
 {
-    var reference = findActionReference( references, action );
+    return label ? label + ': ' + message : message;
+}
 
-    assert.ok( reference, action + ' is configured' );
-    assert.ok( reference && /^[0-9a-f]{40}$/.test( reference.ref ), action + ' uses a full commit SHA' );
+function isFullCommitSha( ref )
+{
+    return fullCommitShaPattern.test( ref );
+}
+
+function assertFullCommitSha( assert, ref, message )
+{
+    assert.ok( isFullCommitSha( ref ), message );
+}
+
+function assertPinnedAction( assert, references, action, label )
+{
+    var actionReferences = getActionReferences( references, action );
+    var reference = actionReferences[ 0 ];
+
+    assert.equal(
+        actionReferences.length,
+        1,
+        workflowAssertionMessage( label, action + ' is configured once' )
+    );
+    if( actionReferences.length !== 1 )
+    {
+        throw new Error( 'workflow action reference count mismatch: ' + action );
+    }
+    assertFullCommitSha(
+        assert,
+        reference.ref,
+        workflowAssertionMessage( label, action + ' uses a full commit SHA' )
+    );
 
     return reference;
 }
 
-function withActionReference( contents, previousReference, nextReference )
+function createActionReference( action, ref )
 {
-    if( contents.indexOf( previousReference ) === -1 )
+    if( !isFullCommitSha( ref ) )
     {
-        throw new Error( 'workflow fixture action reference missing: ' + previousReference );
+        throw new Error( 'workflow action revision invalid: ' + action );
     }
 
-    return contents.split( previousReference ).join( nextReference );
+    return action + '@' + ref;
+}
+
+function withActionRevision( contents, action, ref )
+{
+    var actionReferences = getActionReferences( getExternalActionReferences( contents ), action );
+
+    if( actionReferences.length !== 1 )
+    {
+        throw new Error( 'workflow action reference count mismatch: ' + action );
+    }
+
+    return contents.split( actionReferences[ 0 ].text ).join( createActionReference( action, ref ) );
+}
+
+function withActionRevisions( contents, revisions )
+{
+    return revisions.reduce( function( updatedContents, revision )
+    {
+        return withActionRevision( updatedContents, revision.action, revision.ref );
+    }, contents );
 }
 
 function getWorkflowJobBlock( contents, jobName )
@@ -96,23 +146,48 @@ function getWorkflowJobBlock( contents, jobName )
     return lines.slice( start, end === -1 ? lines.length : end ).join( '\n' );
 }
 
-function assertSecurityWorkflowContract( assert, securityWorkflow )
+function assertSecurityWorkflowContract( assert, securityWorkflow, label )
 {
     var references = getExternalActionReferences( securityWorkflow );
-    var dependencyReview = assertPinnedAction( assert, references, 'actions/dependency-review-action' );
-    var codeqlInit = assertPinnedAction( assert, references, 'github/codeql-action/init' );
-    var codeqlAnalyze = assertPinnedAction( assert, references, 'github/codeql-action/analyze' );
+    var dependencyReview = assertPinnedAction( assert, references, 'actions/dependency-review-action', label );
+    var codeqlInit = assertPinnedAction( assert, references, 'github/codeql-action/init', label );
+    var codeqlAnalyze = assertPinnedAction( assert, references, 'github/codeql-action/analyze', label );
     var dependencyReviewJob = getWorkflowJobBlock( securityWorkflow, 'dependency-review' );
     var codeqlJob = getWorkflowJobBlock( securityWorkflow, 'codeql' );
 
-    assert.equal( codeqlInit.ref, codeqlAnalyze.ref, 'CodeQL init and analyze use the same action revision' );
-    assert.ok( dependencyReviewJob.indexOf( "if: github.event_name == 'pull_request'" ) !== -1 );
-    assert.ok( dependencyReviewJob.indexOf( dependencyReview.text ) !== -1 );
-    assert.ok( codeqlJob.indexOf( 'security-events: write' ) !== -1 );
-    assert.ok( codeqlJob.indexOf( codeqlInit.text ) !== -1 );
-    assert.ok( codeqlJob.indexOf( codeqlAnalyze.text ) !== -1 );
-    assert.ok( codeqlJob.indexOf( '- javascript-typescript' ) !== -1 );
-    assert.ok( codeqlJob.indexOf( '- actions' ) !== -1 );
+    assert.equal(
+        codeqlInit.ref,
+        codeqlAnalyze.ref,
+        workflowAssertionMessage( label, 'CodeQL init and analyze use the same action revision' )
+    );
+    assert.ok(
+        dependencyReviewJob.indexOf( "if: github.event_name == 'pull_request'" ) !== -1,
+        workflowAssertionMessage( label, 'dependency review runs only on pull requests' )
+    );
+    assert.ok(
+        dependencyReviewJob.indexOf( dependencyReview.text ) !== -1,
+        workflowAssertionMessage( label, 'dependency review job uses the pinned action reference' )
+    );
+    assert.ok(
+        codeqlJob.indexOf( 'security-events: write' ) !== -1,
+        workflowAssertionMessage( label, 'CodeQL job can write code scanning results' )
+    );
+    assert.ok(
+        codeqlJob.indexOf( codeqlInit.text ) !== -1,
+        workflowAssertionMessage( label, 'CodeQL job uses the pinned init reference' )
+    );
+    assert.ok(
+        codeqlJob.indexOf( codeqlAnalyze.text ) !== -1,
+        workflowAssertionMessage( label, 'CodeQL job uses the pinned analyze reference' )
+    );
+    assert.ok(
+        codeqlJob.indexOf( '- javascript-typescript' ) !== -1,
+        workflowAssertionMessage( label, 'CodeQL matrix scans JavaScript and TypeScript' )
+    );
+    assert.ok(
+        codeqlJob.indexOf( '- actions' ) !== -1,
+        workflowAssertionMessage( label, 'CodeQL matrix scans GitHub Actions' )
+    );
 }
 
 QUnit.module( 'GitHub workflows' );
@@ -124,8 +199,9 @@ QUnit.test( 'external workflow actions are pinned to full commit SHAs', function
         var contents = fs.readFileSync( workflowPath, 'utf8' );
         getExternalActionReferences( contents ).forEach( function( reference )
         {
-            assert.ok(
-                /^[0-9a-f]{40}$/.test( reference.ref ),
+            assertFullCommitSha(
+                assert,
+                reference.ref,
                 path.basename( workflowPath ) + ' pins ' + reference.text
             );
         } );
@@ -241,23 +317,58 @@ QUnit.test( 'security workflow keeps dependency review and CodeQL coverage pinne
 QUnit.test( 'PR 20 and PR 31 action revisions satisfy security workflow contract', function( assert )
 {
     var securityWorkflow = readWorkflow( 'security.yml' );
-    var dependencyReviewWorkflow = withActionReference(
-        securityWorkflow,
-        'actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48',
-        'actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294'
-    );
-    var codeqlWorkflow = withActionReference(
-        withActionReference(
-            securityWorkflow,
-            'github/codeql-action/init@c10b8064de6f491fea524254123dbe5e09572f13',
-            'github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa'
-        ),
-        'github/codeql-action/analyze@c10b8064de6f491fea524254123dbe5e09572f13',
-        'github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa'
-    );
+    var regressionFixtures = [
+        {
+            name: 'PR 20 dependency review',
+            revisions: [
+                {
+                    action: 'actions/dependency-review-action',
+                    ref: 'a1d282b36b6f3519aa1f3fc636f609c47dddb294'
+                }
+            ]
+        },
+        {
+            name: 'PR 31 CodeQL',
+            revisions: [
+                {
+                    action: 'github/codeql-action/init',
+                    ref: '7211b7c8077ea37d8641b6271f6a365a22a5fbfa'
+                },
+                {
+                    action: 'github/codeql-action/analyze',
+                    ref: '7211b7c8077ea37d8641b6271f6a365a22a5fbfa'
+                }
+            ]
+        }
+    ];
 
-    assertSecurityWorkflowContract( assert, dependencyReviewWorkflow );
-    assertSecurityWorkflowContract( assert, codeqlWorkflow );
+    regressionFixtures.forEach( function( fixture )
+    {
+        assertSecurityWorkflowContract(
+            assert,
+            withActionRevisions( securityWorkflow, fixture.revisions ),
+            fixture.name
+        );
+    } );
+} );
+
+QUnit.test( 'workflow action revision fixtures fail on invalid input', function( assert )
+{
+    var securityWorkflow = readWorkflow( 'security.yml' );
+
+    assert.throws( function()
+    {
+        withActionRevision( securityWorkflow, 'github/codeql-action/init', 'v4.36.0' );
+    }, /workflow action revision invalid: github\/codeql-action\/init/ );
+
+    assert.throws( function()
+    {
+        withActionRevision(
+            securityWorkflow,
+            'github/codeql-action/upload-sarif',
+            '7211b7c8077ea37d8641b6271f6a365a22a5fbfa'
+        );
+    }, /workflow action reference count mismatch: github\/codeql-action\/upload-sarif/ );
 } );
 
 QUnit.test( 'justfile exposes GitHub Actions verification recipes', function( assert )
