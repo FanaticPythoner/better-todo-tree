@@ -104,7 +104,7 @@ Both `defaultHighlight` and `customHighlight` allow for the following settings:
 
 `borderRadius` - used to set the border radius of the background of the highlight.
 
-`icon` - used to set a different icon in the tree view. Must be a valid octicon (see <https://octicons.github.com>) or codicon (see <https://microsoft.github.io/vscode-codicons/dist/codicon.html>). If using codicons, specify them in the format "$(*icon*)". The icon defaults to a tick if it's not valid. You can also use "better-todo-tree", or "better-todo-tree-filled" if you want to use the icon from the activity view.
+`icon` - used to set a different icon in the tree view. Valid values are octicon names, codicon names in `"$(icon)"` format, `"better-todo-tree"`, and `"better-todo-tree-filled"`. Example: `"bug"` selects the Primer octicon, and `"$(bug)"` selects the VS Code codicon.
 
 `iconColour` - used to set the colour of the icon in the tree. If not specified, it will try to use the foreground colour or the background colour. Colour can be specified as per foreground and background colours, but see note below.
 
@@ -392,7 +392,7 @@ Normally, multiline support is enabled by detecting the use of `\n` in the regex
 **better-todo-tree.regex.regex** (<tt>
 &#x28;&#x2f;&#x2f;&#x7c;&#x23;&#x7c;&#x3c;&#x21;&#x2d;&#x2d;&#x7c;&#x3b;&#x7c;&#x2f;&#x5c;&#x5c;&#x2a;&#x7c;&#x5e;&#x7c;&#x5e;&#x5b;&#x20;&#x5c;&#x5c;&#x74;&#x5d;&#x2a;&#x28;&#x2d;&#x7c;&#x5c;&#x5c;&#x64;&#x2b;&#x2e;&#x29;&#x29;&#x5c;&#x5c;&#x73;&#x2a;&#x28;&#x24;&#x54;&#x41;&#x47;&#x53;&#x29;</tt>)</br>
 
-This defines the regex used to locate TODOs. By default, it searches for tags in comments starting with <tt>&#47;&#47;</tt>, <tt>#</tt>, <tt>;</tt>, <tt>&lt;!--</tt> or <tt>&#47;*</tt>, and also markdown todo lists. This should cover most languages. However if you want to refine it, make sure that the <tt>($TAGS)</tt> is kept as <tt>($TAGS)</tt> will be replaced by the expanded tag list. For some of the extension features to work, <tt>($TAGS)</tt> should be present in the regex, however, the basic functionality should still work if you need to explicitly expand the tag list.
+This defines the regex used to locate TODOs. By default, it searches for tags in comments starting with <tt>&#47;&#47;</tt>, <tt>#</tt>, <tt>;</tt>, <tt>&lt;!--</tt> or <tt>&#47;*</tt>, and markdown todo lists. The <tt>($TAGS)</tt> placeholder is replaced by the expanded tag list. Prefix-only custom regexes that contain <tt>($TAGS)</tt> render text from the detected tag to the end of the physical line.
 
 <sup>*Note: This is a [Rust regular expression](https://docs.rs/regex/1.0.0/regex)</a>, not javascript.*</sup>
 

@@ -122,6 +122,24 @@ function splitPhysicalLines( text, startOffset )
     return lines;
 }
 
+function trimTrailingEndToken( text, contentStart, endToken )
+{
+    var trimmedRight = text.replace( /[ \t]+$/, '' );
+
+    if( !endToken || !trimmedRight.endsWith( endToken ) )
+    {
+        return text.length;
+    }
+
+    var contentEnd = trimmedRight.length - endToken.length;
+    while( contentEnd > contentStart && text[ contentEnd - 1 ] === ' ' )
+    {
+        contentEnd--;
+    }
+
+    return contentEnd;
+}
+
 function trimCommentLine( lineText, options )
 {
     var rawText = lineText;
@@ -183,15 +201,7 @@ function trimCommentLine( lineText, options )
 
         if( endToken )
         {
-            var trimmedRight = rawText.replace( /[ \t]+$/, '' );
-            if( trimmedRight.endsWith( endToken ) )
-            {
-                contentEnd = rawText.lastIndexOf( endToken );
-                while( contentEnd > contentStart && rawText[ contentEnd - 1 ] === ' ' )
-                {
-                    contentEnd--;
-                }
-            }
+            contentEnd = trimTrailingEndToken( rawText, contentStart, endToken );
         }
     }
 
@@ -453,6 +463,100 @@ function resolveTagCaptureRange( context, match, rawStartOffset )
     return undefined;
 }
 
+function canExtendTagPlaceholderMatch( context )
+{
+    return context.resourceConfig.enableMultiLine !== true &&
+        context.resourceConfig.regex.indexOf( "$TAGS" ) > -1;
+}
+
+function shouldExtendTagPlaceholderMatchToLineEnd( allowExtension, rawEndOffset, lineBounds )
+{
+    return allowExtension === true && lineBounds.endOffset > rawEndOffset;
+}
+
+function extractRegexMatchText( context, matchText, preferredTagOffset )
+{
+    if( context.resourceConfig.regex.indexOf( "$TAGS" ) === -1 )
+    {
+        return {
+            tag: matchText,
+            withoutTag: "",
+            before: "",
+            after: "",
+            tagOffset: 0,
+            subTag: undefined,
+            subTagOffset: undefined
+        };
+    }
+
+    return utils.extractTag( matchText, undefined, context.uri, preferredTagOffset, {
+        resourceConfig: context.resourceConfig,
+        tagRegex: context.tagRegex,
+        subTagRegex: context.subTagRegex
+    } );
+}
+
+function resolveCommentEndTrimPattern( context )
+{
+    return utils.resolveBlockCommentPattern( context.patternFileName || getUriFsPath( context.uri ) ).pattern;
+}
+
+function createNormalizedMatchTextResult( text, endOffset )
+{
+    return {
+        text: text,
+        endOffset: endOffset
+    };
+}
+
+function findTrailingMultiLineCommentEnd( pattern, text )
+{
+    return pattern.multiLineComment.reduce( function( best, entry )
+    {
+        var contentEnd;
+
+        if(
+            typeof ( entry.end ) === 'string' &&
+            ( best === undefined || entry.end.length > best.entry.end.length ) &&
+            ( contentEnd = trimTrailingEndToken( text, 0, entry.end ) ) < text.length &&
+            findTokenStart( text, entry.start, 0 ) !== undefined
+        )
+        {
+            return {
+                entry: entry,
+                contentEnd: contentEnd
+            };
+        }
+
+        return best;
+    }, undefined );
+}
+
+function trimTrailingMultiLineCommentEnd( context, matchText, logicalStartOffset, logicalEndOffset )
+{
+    var pattern = resolveCommentEndTrimPattern( context );
+
+    if( !pattern || !Array.isArray( pattern.multiLineComment ) )
+    {
+        return createNormalizedMatchTextResult( matchText, logicalEndOffset );
+    }
+
+    var lineBounds = getLineBoundsForOffset( context.text, context.lineOffsets, logicalStartOffset );
+    var linePrefix = context.text.slice( lineBounds.startOffset, logicalStartOffset );
+    var candidateText = linePrefix + matchText;
+    var trailingEnd = findTrailingMultiLineCommentEnd( pattern, candidateText );
+
+    if( !trailingEnd )
+    {
+        return createNormalizedMatchTextResult( matchText, logicalEndOffset );
+    }
+
+    return createNormalizedMatchTextResult(
+        candidateText.slice( linePrefix.length, trailingEnd.contentEnd ),
+        lineBounds.startOffset + trailingEnd.contentEnd
+    );
+}
+
 function splitTextLines( text )
 {
     return splitPhysicalLines( text, 0 );
@@ -702,7 +806,7 @@ function collectCommentPatternMatches( uri, text, pattern, lineOffsets, resource
 
 function resolveMarkdownCommentPattern()
 {
-    var markdownCommentPattern = utils.getCommentPattern( '.html' );
+    var markdownCommentPattern = utils.resolveBlockCommentPattern( '.md' ).pattern;
 
     if( markdownCommentPattern === undefined )
     {
@@ -978,6 +1082,7 @@ function normalizeRegexExecMatchWithContext( context, match )
     var tagCaptureRange = resolveTagCaptureRange( context, match, rawStartOffset );
     var tagStartOffset = tagCaptureRange ? tagCaptureRange[ 0 ] : undefined;
     var tagEndOffset = tagCaptureRange ? tagCaptureRange[ 1 ] : undefined;
+    var allowLineExtension = canExtendTagPlaceholderMatch( context );
 
     if( tagCaptureRange )
     {
@@ -993,19 +1098,32 @@ function normalizeRegexExecMatchWithContext( context, match )
             matchText = context.text.slice( logicalStartOffset, logicalEndOffset );
             preferredTagOffset = tagStartOffset - logicalStartOffset;
         }
-        else if( context.resourceConfig.isDefaultRegex === true && tagLineBounds.endOffset > rawEndOffset )
+        else if( shouldExtendTagPlaceholderMatchToLineEnd( allowLineExtension, rawEndOffset, tagLineBounds ) )
         {
             logicalEndOffset = tagLineBounds.endOffset;
             matchText = context.text.slice( logicalStartOffset, logicalEndOffset );
             preferredTagOffset = tagStartOffset - logicalStartOffset;
         }
     }
+    else if( allowLineExtension === true )
+    {
+        var rawLineBounds = getLineBoundsForOffset( context.text, context.lineOffsets, rawStartOffset );
 
-    var extracted = utils.extractTag( matchText, undefined, context.uri, preferredTagOffset, {
-        resourceConfig: context.resourceConfig,
-        tagRegex: context.tagRegex,
-        subTagRegex: context.subTagRegex
-    } );
+        if( shouldExtendTagPlaceholderMatchToLineEnd( allowLineExtension, rawEndOffset, rawLineBounds ) )
+        {
+            logicalEndOffset = rawLineBounds.endOffset;
+            matchText = context.text.slice( logicalStartOffset, logicalEndOffset );
+        }
+    }
+
+    if( allowLineExtension === true )
+    {
+        var trimmedMatch = trimTrailingMultiLineCommentEnd( context, matchText, logicalStartOffset, logicalEndOffset );
+        matchText = trimmedMatch.text;
+        logicalEndOffset = trimmedMatch.endOffset;
+    }
+
+    var extracted = extractRegexMatchText( context, matchText, preferredTagOffset );
     var actualTag = extracted.tag && extracted.tag.length > 0 ? extracted.tag : matchText;
 
     if( tagStartOffset === undefined )

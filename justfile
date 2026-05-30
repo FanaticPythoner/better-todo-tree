@@ -228,6 +228,54 @@ build-ext *platforms:
   {{node_bootstrap}}
   node scripts/release/build-vsix.mjs {{platforms}}
 
+# Whole flow: create branch, stage local source changes, wait, push branch, prompt PR.
+# Examples:
+#   just issue-branch-all https://github.com/FanaticPythoner/better-todo-tree/issues/28 https://github.com/FanaticPythoner/better-todo-tree/issues/36
+issue-branch-all *args:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  bash scripts/branch/issue-branch.sh flow {{args}}
+
+# Step only: print derived branch name.
+# Examples:
+#   just issue-branch-name https://github.com/FanaticPythoner/better-todo-tree/issues/28 https://github.com/FanaticPythoner/better-todo-tree/issues/36
+issue-branch-name *args:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  bash scripts/branch/issue-branch.sh name {{args}}
+
+# Step only: create local and remote branch from remote base.
+# Examples:
+#   just issue-branch-create https://github.com/FanaticPythoner/better-todo-tree/issues/28 https://github.com/FanaticPythoner/better-todo-tree/issues/36
+issue-branch-create *args:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  bash scripts/branch/issue-branch.sh create {{args}}
+
+# Step only: move current source-branch changes onto target branch and stage.
+# Examples:
+#   just issue-branch-stage https://github.com/FanaticPythoner/better-todo-tree/issues/28 https://github.com/FanaticPythoner/better-todo-tree/issues/36
+issue-branch-stage *args:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  bash scripts/branch/issue-branch.sh stage {{args}}
+
+# Step only: wait for local commit, then push target branch.
+# Examples:
+#   just issue-branch-push https://github.com/FanaticPythoner/better-todo-tree/issues/28 https://github.com/FanaticPythoner/better-todo-tree/issues/36
+issue-branch-push *args:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  bash scripts/branch/issue-branch.sh push {{args}}
+
+# Step only: create PR for target branch.
+# Examples:
+#   just issue-branch-pr https://github.com/FanaticPythoner/better-todo-tree/issues/28 https://github.com/FanaticPythoner/better-todo-tree/issues/36
+issue-branch-pr *args:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  bash scripts/branch/issue-branch.sh pr {{args}}
+
 # Examples:
 #   just clean
 #   just clean --force

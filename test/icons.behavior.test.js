@@ -73,6 +73,16 @@ function createContext( storagePath )
     };
 }
 
+function createIdentityStub( settings )
+{
+    return {
+        getSetting: function( key, defaultValue )
+        {
+            return Object.prototype.hasOwnProperty.call( settings, key ) ? settings[ key ] : defaultValue;
+        }
+    };
+}
+
 QUnit.module( 'behavioral icons', function( hooks )
 {
     var tempDirectories = [];
@@ -150,5 +160,43 @@ QUnit.module( 'behavioral icons', function( hooks )
         assert.equal( path.basename( gutterIcon.dark ), 'todo-bug-ff4545.svg' );
         assert.ok( fs.existsSync( treeIcon.dark ) );
         assert.ok( fs.existsSync( gutterIcon.dark ) );
+    } );
+
+    QUnit.test( 'issue #28 custom highlight codicon syntax validates current aliases', function( assert )
+    {
+        var icons = helpers.loadWithStubs( '../src/icons.js', {
+            vscode: createVscodeStub(),
+            './extensionIdentity.js': createIdentityStub( {
+                'highlights.defaultHighlight.icon': '$(bug)',
+                'highlights.customHighlight': {
+                    '@bug': {},
+                    '@flame': {}
+                },
+                'highlights.customHighlight.@bug.icon': '$(bug)',
+                'highlights.customHighlight.@flame.icon': '$(flame)'
+            } )
+        } );
+
+        assert.equal( icons.validateIcons(), '' );
+    } );
+
+    QUnit.test( 'issue #28 malformed codicon syntax remains invalid', function( assert )
+    {
+        var icons = helpers.loadWithStubs( '../src/icons.js', {
+            vscode: createVscodeStub(),
+            './extensionIdentity.js': createIdentityStub( {
+                'highlights.customHighlight': {
+                    '@broken': {},
+                    '@missing': {}
+                },
+                'highlights.customHighlight.@broken.icon': '$(bug',
+                'highlights.customHighlight.@missing.icon': '$(not-a-real-codicon)'
+            } )
+        } );
+
+        var message = icons.validateIcons();
+
+        assert.ok( message.indexOf( 'customHighlight.@broken.icon($(bug)' ) >= 0 );
+        assert.ok( message.indexOf( 'customHighlight.@missing.icon($(not-a-real-codicon))' ) >= 0 );
     } );
 } );

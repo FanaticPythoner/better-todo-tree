@@ -172,9 +172,75 @@ QUnit.module( "detection regex matrix", function()
         assert.deepEqual( results.map( function( result ) { return result.actualTag; } ), languageMatrix.DEFAULT_TAGS );
         results.forEach( function( result, index )
         {
-            assert.equal( result.displayText, languageMatrix.DEFAULT_TAGS[ index ] );
+            assert.equal( result.displayText, 'custom-item-' + index );
+            assert.equal( result.after, 'custom-item-' + index );
+            assert.equal( utils.formatLabel( '${tag} ${after}', result ), languageMatrix.DEFAULT_TAGS[ index ] + ' custom-item-' + index );
             assert.equal( result.line, index + 1 );
         } );
+    } );
+
+    QUnit.test( "issue #36 default regex labels render text after the tag", function( assert )
+    {
+        var uri = matrixHelpers.createUri( '/tmp/issue-36.js' );
+        var text = [
+            '// TODO customer-visible text',
+            '// FIXME second-visible text',
+            '// HACK third-visible text'
+        ].join( '\n' );
+
+        utils.init( matrixHelpers.createConfig( {
+            tagList: [ 'TODO', 'FIXME', 'HACK' ],
+            regexSource: utils.DEFAULT_REGEX_SOURCE,
+            subTagRegexString: '^:\\s*'
+        } ) );
+
+        var results = detection.scanText( uri, text );
+
+        assert.deepEqual(
+            results.map( function( result ) { return utils.formatLabel( '${tag} ${after}', result ); } ),
+            [ 'TODO customer-visible text', 'FIXME second-visible text', 'HACK third-visible text' ]
+        );
+        assert.deepEqual(
+            results.map( function( result ) { return result.before; } ),
+            [ '', '', '' ]
+        );
+        assert.deepEqual(
+            results.map( function( result ) { return result.after; } ),
+            [ 'customer-visible text', 'second-visible text', 'third-visible text' ]
+        );
+    } );
+
+    QUnit.test( "issue #36 workspace regex labels match editor labels", function( assert )
+    {
+        var config = matrixHelpers.createConfig( {
+            tagList: [ 'TODO' ],
+            regexSource: '(?:(?://|#|<!--|;|/\\*\\*?|\\*)\\s*($TAGS)|^\\s*- \\[ \\])',
+            subTagRegexString: '^:\\s*'
+        } );
+        var uri = matrixHelpers.createUri( '/tmp/issue-36-workspace.js' );
+        var text = '// TODO workspace-visible text';
+
+        utils.init( config );
+
+        var scanned = detection.scanText( uri, text )[ 0 ];
+        var normalized = detection.normalizeWorkspaceRegexMatch( uri, {
+            fsPath: uri.fsPath,
+            line: 1,
+            column: 1,
+            lines: text,
+            match: '// TODO',
+            absoluteOffset: 0,
+            submatches: [ {
+                match: '// TODO',
+                start: 0,
+                end: 7
+            } ]
+        } );
+
+        assert.equal( utils.formatLabel( '${tag} ${after}', normalized ), 'TODO workspace-visible text' );
+        assert.equal( utils.formatLabel( '${tag} ${after}', normalized ), utils.formatLabel( '${tag} ${after}', scanned ) );
+        assert.equal( normalized.before, '//' );
+        assert.equal( normalized.after, 'workspace-visible text' );
     } );
 
     QUnit.test( "issue 898 punctuation-heavy custom tags normalize through custom regexes", function( assert )
