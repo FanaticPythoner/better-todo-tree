@@ -562,7 +562,7 @@ function activate( context )
     {
         var message = buildScanProgressMessage( state, snapshot );
 
-        statusBarIndicator.text = "$(loading~spin) " + identity.DISPLAY_NAME + " " + snapshot.percent + "%";
+        statusBarIndicator.text = identity.STATUS_BUSY_ICON_LABEL + " " + identity.DISPLAY_NAME + " " + snapshot.percent + "%";
         statusBarIndicator.show();
         statusBarIndicator.command = identity.COMMANDS.stopScan;
         statusBarIndicator.tooltip = message || 'Click to interrupt scan';
@@ -1119,7 +1119,7 @@ function activate( context )
         interrupted = false;
         cancelledScanGenerations.delete( activeScanGeneration );
 
-        statusBarIndicator.text = identity.DISPLAY_NAME + ": Scanning...";
+        statusBarIndicator.text = identity.STATUS_BUSY_ICON_LABEL + " " + identity.DISPLAY_NAME + ": Scanning...";
         statusBarIndicator.show();
         statusBarIndicator.command = identity.COMMANDS.stopScan;
         statusBarIndicator.tooltip = "Click to interrupt scan";
