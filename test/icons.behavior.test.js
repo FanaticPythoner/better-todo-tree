@@ -180,6 +180,31 @@ QUnit.module( 'behavioral icons', function( hooks )
         assert.equal( icons.validateIcons(), '' );
     } );
 
+    QUnit.test( 'issue #40 reported codicon aliases validate', function( assert )
+    {
+        var icons = helpers.loadWithStubs( '../src/icons.js', {
+            vscode: createVscodeStub(),
+            './extensionIdentity.js': createIdentityStub( {
+                'highlights.customHighlight': {
+                    BUG: {},
+                    FIXME: {},
+                    TODO: {},
+                    MOMA: {},
+                    '[ ]': {},
+                    '[x]': {}
+                },
+                'highlights.customHighlight.BUG.icon': '$(bug)',
+                'highlights.customHighlight.FIXME.icon': '$(tools)',
+                'highlights.customHighlight.TODO.icon': '$(checklist)',
+                'highlights.customHighlight.MOMA.icon': '$(unverified)',
+                'highlights.customHighlight.[ ].icon': '$(unlock)',
+                'highlights.customHighlight.[x].icon': '$(lock)'
+            } )
+        } );
+
+        assert.equal( icons.validateIcons(), '' );
+    } );
+
     QUnit.test( 'issue #28 malformed codicon syntax remains invalid', function( assert )
     {
         var icons = helpers.loadWithStubs( '../src/icons.js', {
