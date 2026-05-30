@@ -1342,6 +1342,8 @@ var DEFAULT_DEFINITION = Object.freeze( {
                 builder.fragment( 'tagEndAnchor' )
             ] );
         },
+        workflowCodeqlInitInvalidMessage: 'workflow action revision invalid: github\\/codeql-action\\/init',
+        workflowCodeqlUploadSarifCountMismatchMessage: 'workflow action reference count mismatch: github\\/codeql-action\\/upload-sarif',
         pinnedActionReference: function( builder )
         {
             return builder.sequence( [

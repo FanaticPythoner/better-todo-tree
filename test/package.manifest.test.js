@@ -209,6 +209,10 @@ QUnit.test( 'busy and composite tree commands have localization entries in both 
 QUnit.test( 'busy placeholder commands use static product icons with plain localized titles', function( assert )
 {
     var packageJson = readPackageJson();
+    var busyIcon = {
+        light: 'resources/button-icons/refresh-spin-light.svg',
+        dark: 'resources/button-icons/refresh-spin-dark.svg'
+    };
     var treeStateBusy = packageJson.contributes.commands.find( function( entry )
     {
         return entry.command === 'better-todo-tree.treeStateBusy';
@@ -218,10 +222,12 @@ QUnit.test( 'busy placeholder commands use static product icons with plain local
         return entry.command === 'better-todo-tree.scanBusy';
     } );
 
-    assert.equal( treeStateBusy.icon, '$(loading)' );
-    assert.equal( scanBusy.icon, '$(loading)' );
-    assert.equal( treeStateBusy.icon.indexOf( '~spin' ), -1 );
-    assert.equal( scanBusy.icon.indexOf( '~spin' ), -1 );
+    assert.deepEqual( treeStateBusy.icon, busyIcon );
+    assert.deepEqual( scanBusy.icon, busyIcon );
+    assert.equal( treeStateBusy.icon.light.indexOf( '~spin' ), -1 );
+    assert.equal( treeStateBusy.icon.dark.indexOf( '~spin' ), -1 );
+    assert.equal( scanBusy.icon.light.indexOf( '~spin' ), -1 );
+    assert.equal( scanBusy.icon.dark.indexOf( '~spin' ), -1 );
     assert.equal( treeStateBusy.title, '%better-todo-tree.command.treeStateBusy.title%' );
     assert.equal( scanBusy.title, '%better-todo-tree.command.scanBusy.title%' );
 } );

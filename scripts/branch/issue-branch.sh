@@ -432,7 +432,7 @@ require_no_untracked_source_changes()
   [[ -z "$untracked" ]] || fail "untracked paths are present; only tracked changes can move: $untracked"
 }
 
-apply_index_patch()
+apply_patch_mode()
 {
   local patch_file="$1"
   local mode="$2"
@@ -450,17 +450,34 @@ apply_index_patch()
   esac
 }
 
+apply_patch_if_present()
+{
+  local patch_file="$1"
+  local mode="$2"
+
+  [[ -s "$patch_file" ]] || return 0
+
+  apply_patch_mode "$patch_file" "$mode"
+}
+
 write_source_snapshot()
 {
   local snapshot_dir="$1"
   local manifest_file="$2"
   local source_root="$snapshot_dir/files"
+  local base_root="$snapshot_dir/base"
   local path=''
 
   mkdir -p "$source_root"
+  mkdir -p "$base_root"
   : > "$manifest_file"
 
   while IFS= read -r -d '' path; do
+    if git cat-file -e "HEAD:$path" 2>/dev/null; then
+      mkdir -p "$base_root/$(dirname "$path")"
+      git show "HEAD:$path" > "$base_root/$path"
+    fi
+
     if [[ -e "$path" || -L "$path" ]]; then
       mkdir -p "$source_root/$(dirname "$path")"
       cp -pP "$path" "$source_root/$path"
@@ -471,11 +488,47 @@ write_source_snapshot()
   done < <(git diff --name-only -z --no-renames HEAD)
 }
 
+merge_snapshot_file()
+{
+  local target_path="$1"
+  local base_path="$2"
+  local source_path="$3"
+  local temp_path=''
+  local status=0
+
+  if [[ ! -f "$target_path" || ! -f "$base_path" || ! -f "$source_path" ]]; then
+    cp -pP "$source_path" "$target_path"
+    return 0
+  fi
+
+  temp_path="$(mktemp "${TMPDIR:-/tmp}/issue-branch-merge.XXXXXX")"
+
+  set +e
+  git merge-file -p "$target_path" "$base_path" "$source_path" > "$temp_path"
+  status="$?"
+  set -e
+
+  case "$status" in
+    0)
+      mv "$temp_path" "$target_path"
+      ;;
+    1)
+      rm -f "$temp_path"
+      cp -pP "$source_path" "$target_path"
+      ;;
+    *)
+      rm -f "$temp_path"
+      fail "source snapshot merge failed for '$target_path'."
+      ;;
+  esac
+}
+
 apply_source_snapshot_to_target()
 {
   local snapshot_dir="$1"
   local manifest_file="$2"
   local source_root="$snapshot_dir/files"
+  local base_root="$snapshot_dir/base"
   local action=''
   local path=''
   local changed_paths=()
@@ -484,7 +537,7 @@ apply_source_snapshot_to_target()
     case "$action" in
       write)
         mkdir -p "$(dirname "$path")"
-        cp -pP "$source_root/$path" "$path"
+        merge_snapshot_file "$path" "$base_root/$path" "$source_root/$path"
         git add -- "$path"
         changed_paths+=( "$path" )
         ;;
@@ -505,19 +558,30 @@ apply_source_snapshot_to_target()
   printf '  %s\n' "${changed_paths[@]}"
 }
 
+apply_source_patch_sequence()
+{
+  local staged_patch_file="$1"
+  local unstaged_patch_file="$2"
+  local mode="$3"
+
+  apply_patch_if_present "$staged_patch_file" "$mode" || return 1
+  apply_patch_if_present "$unstaged_patch_file" "$mode" || return 1
+}
+
 apply_source_patch_to_target()
 {
-  local patch_file="$1"
-  local snapshot_dir="$2"
-  local manifest_file="$3"
+  local staged_patch_file="$1"
+  local unstaged_patch_file="$2"
+  local snapshot_dir="$3"
+  local manifest_file="$4"
 
-  if apply_index_patch "$patch_file" exact; then
+  if apply_source_patch_sequence "$staged_patch_file" "$unstaged_patch_file" exact; then
     return 0
   fi
 
   git reset --hard HEAD >/dev/null || return 1
 
-  if apply_index_patch "$patch_file" merge; then
+  if apply_source_patch_sequence "$staged_patch_file" "$unstaged_patch_file" merge; then
     return 0
   fi
 
@@ -540,7 +604,7 @@ apply_patch_file_if_present()
 
   case "$mode" in
     index)
-      apply_index_patch "$patch_file" exact
+      apply_patch_mode "$patch_file" exact
       ;;
     worktree)
       git apply "$patch_file"
@@ -600,7 +664,7 @@ stage_branch_changes()
   git switch "$branch_name" >/dev/null
 
   set +e
-  apply_source_patch_to_target "$tracked_patch_file" "$snapshot_dir" "$manifest_file"
+  apply_source_patch_to_target "$staged_patch_file" "$unstaged_patch_file" "$snapshot_dir" "$manifest_file"
   apply_status="$?"
   set -e
 

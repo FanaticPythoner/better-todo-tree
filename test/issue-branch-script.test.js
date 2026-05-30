@@ -258,16 +258,16 @@ QUnit.test( 'issue-branch stage merges source patches onto updated base files', 
 
     try
     {
-        fs.writeFileSync( readmePath, 'one\ntwo\n' );
+        fs.writeFileSync( readmePath, 'one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n' );
         runGit( fixture.work, [ 'add', 'README.md' ] );
         runGit( fixture.work, [ 'commit', '-m', 'expand base fixture' ] );
         runGit( fixture.work, [ 'push', 'origin', 'master' ] );
-        fs.writeFileSync( readmePath, 'remote one\ntwo\n' );
+        fs.writeFileSync( readmePath, 'remote one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n' );
         runGit( fixture.work, [ 'add', 'README.md' ] );
         runGit( fixture.work, [ 'commit', '-m', 'advance remote fixture' ] );
         runGit( fixture.work, [ 'push', 'origin', 'master' ] );
         runGit( fixture.work, [ 'reset', '--hard', 'HEAD~1' ] );
-        fs.writeFileSync( readmePath, 'one\nlocal two\n' );
+        fs.writeFileSync( readmePath, 'one\ntwo\nthree\nfour\nfive\nsix\nseven\nlocal eight\n' );
         runGit( fixture.work, [ 'add', 'README.md' ] );
 
         result = runScript( fixture.work, [
@@ -288,7 +288,10 @@ QUnit.test( 'issue-branch stage merges source patches onto updated base files', 
         ], fakeGh.env );
         assert.equal( result.status, 0, result.stderr );
         assert.equal( runGit( fixture.work, [ 'branch', '--show-current' ] ), branch );
-        assert.equal( fs.readFileSync( readmePath, 'utf8' ), 'remote one\nlocal two\n' );
+        assert.equal(
+            fs.readFileSync( readmePath, 'utf8' ),
+            'remote one\ntwo\nthree\nfour\nfive\nsix\nseven\nlocal eight\n'
+        );
         assert.equal( runGit( fixture.work, [ 'diff', '--cached', '--name-only' ] ), 'README.md' );
     }
     finally

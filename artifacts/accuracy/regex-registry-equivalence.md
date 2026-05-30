@@ -2,15 +2,15 @@
 
 | Field | Value |
 | --- | ---: |
-| Baseline regex entries | 114 |
-| Baseline unique regexes | 81 |
+| Baseline regex entries | 118 |
+| Baseline unique regexes | 83 |
 | Current hardcoded regex entries | 0 |
-| Registry fragments | 186 |
-| Registry patterns | 208 |
-| Source coverage | 81/81 |
+| Registry fragments | 188 |
+| Registry patterns | 210 |
+| Source coverage | 83/83 |
 | Behavior parity | 73/73 |
-| Compiled baseline regexes | 81/81 |
-| Elapsed ms | 551.605 |
+| Compiled baseline regexes | 83/83 |
+| Elapsed ms | 138.482 |
 
 ## Behavior Matrix
 

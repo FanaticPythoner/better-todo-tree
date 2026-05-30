@@ -64,9 +64,16 @@ QUnit.test( 'flow branch preparation contains no remote push command', function(
 QUnit.test( 'patch transfer attempts exact apply before merge apply', function( assert )
 {
     var body = functionBody( 'apply_source_patch_to_target' );
-    var exactIndex = indexOfLine( body, 'apply_index_patch "$patch_file" exact' );
+    var modeBody = functionBody( 'apply_patch_mode' );
+    var exactIndex = indexOfLine(
+        body,
+        'apply_source_patch_sequence "$staged_patch_file" "$unstaged_patch_file" exact'
+    );
     var firstResetIndex = indexOfLine( body, 'git reset --hard HEAD' );
-    var mergeIndex = indexOfLine( body, 'apply_index_patch "$patch_file" merge' );
+    var mergeIndex = indexOfLine(
+        body,
+        'apply_source_patch_sequence "$staged_patch_file" "$unstaged_patch_file" merge'
+    );
     var snapshotIndex = indexOfLine(
         body,
         'apply_source_snapshot_to_target "$snapshot_dir" "$manifest_file"'
@@ -75,6 +82,8 @@ QUnit.test( 'patch transfer attempts exact apply before merge apply', function( 
     assert.ok( exactIndex < firstResetIndex );
     assert.ok( firstResetIndex < mergeIndex );
     assert.ok( mergeIndex < snapshotIndex );
+    assert.ok( modeBody.indexOf( 'git apply --3way --index "$patch_file"' ) >= 0 );
+    assert.equal( modeBody.indexOf( 'git add -A' ), -1 );
 } );
 
 QUnit.test( 'stage preserves source index and worktree patches separately', function( assert )
@@ -84,10 +93,15 @@ QUnit.test( 'stage preserves source index and worktree patches separately', func
     var stagedIndex = indexOfLine( body, 'git diff --cached --binary > "$staged_patch_file"' );
     var unstagedIndex = indexOfLine( body, 'git diff --binary > "$unstaged_patch_file"' );
     var resetIndex = indexOfLine( body, 'git reset --hard HEAD' );
+    var applyIndex = indexOfLine(
+        body,
+        'apply_source_patch_to_target "$staged_patch_file" "$unstaged_patch_file" "$snapshot_dir" "$manifest_file"'
+    );
 
     assert.ok( trackedIndex < resetIndex );
     assert.ok( stagedIndex < resetIndex );
     assert.ok( unstagedIndex < resetIndex );
+    assert.ok( resetIndex < applyIndex );
     assert.equal( body.indexOf( 'require_no_unstaged_source_changes' ), -1 );
 } );
 

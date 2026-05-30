@@ -14,7 +14,8 @@ var languageMatrix = require( '../../test/languageMatrix.js' );
 var stubs = require( '../../test/stubs.js' );
 
 var REPO_ROOT = path.resolve( __dirname, '..', '..' );
-var DEFAULT_BASELINE_REF = 'HEAD';
+var DEFAULT_BASELINE_REF = 'auto';
+var BASELINE_REF_ENV = 'BETTER_TODO_TREE_REGEX_BASELINE_REF';
 var KEY_SEPARATOR = String.fromCharCode( 0 );
 var LINE_FEED = String.fromCharCode( 10 );
 var CURRENT_SCAN_EXCLUDED_DIRECTORIES = Object.freeze( [
@@ -63,6 +64,80 @@ function runGit( args )
     }
 
     return String( result.stdout || '' );
+}
+
+function gitRefExists( ref )
+{
+    var result = childProcess.spawnSync( 'git', [ 'rev-parse', '--verify', ref + '^{commit}' ], {
+        cwd: REPO_ROOT,
+        encoding: 'utf8',
+        stdio: [ 'ignore', 'pipe', 'pipe' ]
+    } );
+
+    return result.status === 0;
+}
+
+function pushUniqueCandidate( candidates, ref )
+{
+    if( typeof ref === 'string' && ref.length > 0 && candidates.indexOf( ref ) === -1 )
+    {
+        candidates.push( ref );
+    }
+}
+
+function baselineRefCandidates()
+{
+    var candidates = [];
+
+    pushUniqueCandidate( candidates, process.env[ BASELINE_REF_ENV ] );
+    if( typeof process.env.GITHUB_BASE_REF === 'string' && process.env.GITHUB_BASE_REF.length > 0 )
+    {
+        pushUniqueCandidate( candidates, 'origin/' + process.env.GITHUB_BASE_REF );
+    }
+    pushUniqueCandidate( candidates, 'HEAD^1' );
+    pushUniqueCandidate( candidates, 'origin/master' );
+    pushUniqueCandidate( candidates, 'master' );
+    pushUniqueCandidate( candidates, 'HEAD' );
+
+    return candidates;
+}
+
+function resolveBaselineRef( requestedRef )
+{
+    var candidates;
+    var selected = null;
+
+    if( requestedRef !== DEFAULT_BASELINE_REF )
+    {
+        return {
+            ref: requestedRef,
+            entries: collectBaselineRegexEntries( requestedRef )
+        };
+    }
+
+    candidates = baselineRefCandidates().filter( gitRefExists );
+    candidates.some( function( candidate )
+    {
+        var entries = collectBaselineRegexEntries( candidate );
+
+        if( entries.length > 0 )
+        {
+            selected = {
+                ref: candidate,
+                entries: entries
+            };
+            return true;
+        }
+
+        return false;
+    } );
+
+    if( selected === null )
+    {
+        throw new Error( 'baseline regex entries missing: ' + candidates.join( ', ' ) );
+    }
+
+    return selected;
 }
 
 function splitLines( value )
@@ -952,9 +1027,10 @@ function runEquivalenceAudit( options )
 {
     options = options || {};
 
-    var baselineRef = options.baselineRef || DEFAULT_BASELINE_REF;
+    var baseline = resolveBaselineRef( options.baselineRef || DEFAULT_BASELINE_REF );
+    var baselineRef = baseline.ref;
     var startedAt = process.hrtime.bigint();
-    var baselineEntries = collectBaselineRegexEntries( baselineRef );
+    var baselineEntries = baseline.entries;
     var baselineGroups = groupBaselineEntries( baselineEntries );
     var currentHardcodedEntries = collectCurrentHardcodedRegexEntries();
     var sourceCoverage = compareSourceCoverage( baselineGroups );

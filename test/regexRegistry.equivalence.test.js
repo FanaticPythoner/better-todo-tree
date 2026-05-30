@@ -10,7 +10,7 @@ QUnit.test( 'registry refactor preserves extracted baseline regex behavior', fun
         '-e',
         [
             'var harness = require( "./scripts/evidence/regexRegistryEquivalenceHarness.js" );',
-            'process.stdout.write( JSON.stringify( harness.runEquivalenceAudit( { baselineRef: "HEAD" } ) ) );'
+            'process.stdout.write( JSON.stringify( harness.runEquivalenceAudit() ) );'
         ].join( '' )
     ], {
         cwd: repoRoot,

@@ -15,7 +15,7 @@ var defaultMarkdownPath = path.join( repoRoot, 'artifacts', 'accuracy', 'regex-r
 function parseArgs( args )
 {
     var options = {
-        baselineRef: 'HEAD',
+        baselineRef: 'auto',
         jsonPath: defaultJsonPath,
         markdownPath: defaultMarkdownPath
     };
