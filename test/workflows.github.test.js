@@ -14,6 +14,107 @@ function getWorkflowPaths()
         } );
 }
 
+function readWorkflow( workflowName )
+{
+    return fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', workflowName ), 'utf8' );
+}
+
+function getExternalActionReferences( contents )
+{
+    return contents.split( /\r?\n/ ).reduce( function( references, line )
+    {
+        var match = line.match( /^\s*uses:\s*([^\s#]+)\s*$/ );
+        if( !match || match[ 1 ].indexOf( './' ) === 0 )
+        {
+            return references;
+        }
+
+        references.push( parseActionReference( match[ 1 ] ) );
+        return references;
+    }, [] );
+}
+
+function parseActionReference( reference )
+{
+    var parts = reference.split( '@' );
+    if( parts.length !== 2 || !parts[ 0 ] || !parts[ 1 ] )
+    {
+        throw new Error( 'workflow action reference: expected owner/repo[/path]@sha' );
+    }
+
+    return {
+        action: parts[ 0 ],
+        ref: parts[ 1 ],
+        text: reference
+    };
+}
+
+function findActionReference( references, action )
+{
+    return references.find( function( reference )
+    {
+        return reference.action === action;
+    } );
+}
+
+function assertPinnedAction( assert, references, action )
+{
+    var reference = findActionReference( references, action );
+
+    assert.ok( reference, action + ' is configured' );
+    assert.ok( reference && /^[0-9a-f]{40}$/.test( reference.ref ), action + ' uses a full commit SHA' );
+
+    return reference;
+}
+
+function withActionReference( contents, previousReference, nextReference )
+{
+    if( contents.indexOf( previousReference ) === -1 )
+    {
+        throw new Error( 'workflow fixture action reference missing: ' + previousReference );
+    }
+
+    return contents.split( previousReference ).join( nextReference );
+}
+
+function getWorkflowJobBlock( contents, jobName )
+{
+    var lines = contents.split( /\r?\n/ );
+    var start = lines.findIndex( function( line )
+    {
+        return line === '  ' + jobName + ':';
+    } );
+    if( start === -1 )
+    {
+        return '';
+    }
+
+    var end = lines.findIndex( function( line, index )
+    {
+        return index > start && /^  [A-Za-z0-9_-]+:$/.test( line );
+    } );
+    return lines.slice( start, end === -1 ? lines.length : end ).join( '\n' );
+}
+
+function assertSecurityWorkflowContract( assert, securityWorkflow )
+{
+    var references = getExternalActionReferences( securityWorkflow );
+    var dependencyReview = assertPinnedAction( assert, references, 'actions/dependency-review-action' );
+    var codeqlInit = assertPinnedAction( assert, references, 'github/codeql-action/init' );
+    var codeqlAnalyze = assertPinnedAction( assert, references, 'github/codeql-action/analyze' );
+    var dependencyReviewJob = getWorkflowJobBlock( securityWorkflow, 'dependency-review' );
+    var codeqlJob = getWorkflowJobBlock( securityWorkflow, 'codeql' );
+
+    assert.equal( codeqlInit.ref, codeqlAnalyze.ref, 'CodeQL init and analyze use the same action revision' );
+    assert.ok( dependencyReviewJob.indexOf( "if: github.event_name == 'pull_request'" ) !== -1 );
+    assert.ok( dependencyReviewJob.indexOf( dependencyReview.text ) !== -1 );
+    assert.ok( codeqlJob.indexOf( 'security-events: write' ) !== -1 );
+    assert.ok( codeqlJob.indexOf( codeqlInit.text ) !== -1 );
+    assert.ok( codeqlJob.indexOf( codeqlAnalyze.text ) !== -1 );
+    assert.ok( codeqlJob.indexOf( '- javascript-typescript' ) !== -1 );
+    assert.ok( codeqlJob.indexOf( '- actions' ) !== -1 );
+}
+
 QUnit.module( 'GitHub workflows' );
 
 QUnit.test( 'external workflow actions are pinned to full commit SHAs', function( assert )
@@ -21,23 +122,11 @@ QUnit.test( 'external workflow actions are pinned to full commit SHAs', function
     getWorkflowPaths().forEach( function( workflowPath )
     {
         var contents = fs.readFileSync( workflowPath, 'utf8' );
-        contents.split( /\r?\n/ ).forEach( function( line )
+        getExternalActionReferences( contents ).forEach( function( reference )
         {
-            var match = line.match( /^\s*uses:\s*([^\s#]+)\s*$/ );
-            if( !match )
-            {
-                return;
-            }
-
-            var reference = match[ 1 ];
-            if( reference.indexOf( './' ) === 0 )
-            {
-                return;
-            }
-
             assert.ok(
-                /^[^@]+@[0-9a-f]{40}$/.test( reference ),
-                path.basename( workflowPath ) + ' pins ' + reference
+                /^[0-9a-f]{40}$/.test( reference.ref ),
+                path.basename( workflowPath ) + ' pins ' + reference.text
             );
         } );
     } );
@@ -45,7 +134,7 @@ QUnit.test( 'external workflow actions are pinned to full commit SHAs', function
 
 QUnit.test( 'release workflow requests provenance-related permissions', function( assert )
 {
-    var contents = fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', 'release.yml' ), 'utf8' );
+    var contents = readWorkflow( 'release.yml' );
 
     assert.ok( contents.indexOf( 'id-token: write' ) !== -1 );
     assert.ok( contents.indexOf( 'attestations: write' ) !== -1 );
@@ -54,7 +143,7 @@ QUnit.test( 'release workflow requests provenance-related permissions', function
 
 QUnit.test( 'latest workflow publishes a moving prerelease from master', function( assert )
 {
-    var latestWorkflow = fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', 'latest.yml' ), 'utf8' );
+    var latestWorkflow = readWorkflow( 'latest.yml' );
     var movingReleaseScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'create-or-update-moving-github-release.sh' ), 'utf8' );
 
     assert.ok( latestWorkflow.indexOf( 'push:\n    branches:\n      - master' ) !== -1 );
@@ -72,8 +161,8 @@ QUnit.test( 'latest workflow publishes a moving prerelease from master', functio
 
 QUnit.test( 'release workflows build and publish from the resolved release ref', function( assert )
 {
-    var releaseWorkflow = fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', 'release.yml' ), 'utf8' );
-    var reusableBuildWorkflow = fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', 'reusable-build-vsix.yml' ), 'utf8' );
+    var releaseWorkflow = readWorkflow( 'release.yml' );
+    var reusableBuildWorkflow = readWorkflow( 'reusable-build-vsix.yml' );
     var publishVsCodeScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'publish-vscode-marketplace.sh' ), 'utf8' );
     var publishOpenVsxScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'publish-open-vsx.sh' ), 'utf8' );
     var githubReleaseScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'create-github-release.sh' ), 'utf8' );
@@ -121,7 +210,7 @@ QUnit.test( 'release workflows build and publish from the resolved release ref',
 
 QUnit.test( 'ci workflow uploads only the smoke-test linux artifact', function( assert )
 {
-    var ciWorkflow = fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', 'ci.yml' ), 'utf8' );
+    var ciWorkflow = readWorkflow( 'ci.yml' );
 
     assert.ok( ciWorkflow.indexOf( 'rm -rf artifacts/vsix' ) !== -1 );
     assert.ok( ciWorkflow.indexOf( 'artifacts/vsix/*-linux-x64.vsix' ) !== -1 );
@@ -146,18 +235,36 @@ QUnit.test( 'VSIX builder stages one ripgrep-universal binary for each native ta
 
 QUnit.test( 'security workflow keeps dependency review and CodeQL coverage pinned', function( assert )
 {
-    var securityWorkflow = fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', 'security.yml' ), 'utf8' );
+    assertSecurityWorkflowContract( assert, readWorkflow( 'security.yml' ) );
+} );
 
-    assert.ok( securityWorkflow.indexOf( 'actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48' ) !== -1 );
-    assert.ok( securityWorkflow.indexOf( 'github/codeql-action/init@c10b8064de6f491fea524254123dbe5e09572f13' ) !== -1 );
-    assert.ok( securityWorkflow.indexOf( 'github/codeql-action/analyze@c10b8064de6f491fea524254123dbe5e09572f13' ) !== -1 );
+QUnit.test( 'PR 20 and PR 31 action revisions satisfy security workflow contract', function( assert )
+{
+    var securityWorkflow = readWorkflow( 'security.yml' );
+    var dependencyReviewWorkflow = withActionReference(
+        securityWorkflow,
+        'actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48',
+        'actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294'
+    );
+    var codeqlWorkflow = withActionReference(
+        withActionReference(
+            securityWorkflow,
+            'github/codeql-action/init@c10b8064de6f491fea524254123dbe5e09572f13',
+            'github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa'
+        ),
+        'github/codeql-action/analyze@c10b8064de6f491fea524254123dbe5e09572f13',
+        'github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa'
+    );
+
+    assertSecurityWorkflowContract( assert, dependencyReviewWorkflow );
+    assertSecurityWorkflowContract( assert, codeqlWorkflow );
 } );
 
 QUnit.test( 'justfile exposes GitHub Actions verification recipes', function( assert )
 {
     var justfile = fs.readFileSync( path.join( __dirname, '..', 'justfile' ), 'utf8' );
-    var releaseWorkflow = fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', 'release.yml' ), 'utf8' );
-    var latestWorkflow = fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', 'latest.yml' ), 'utf8' );
+    var releaseWorkflow = readWorkflow( 'release.yml' );
+    var latestWorkflow = readWorkflow( 'latest.yml' );
 
     assert.ok( justfile.indexOf( 'bootstrap-release-env:' ) !== -1 );
     assert.ok( justfile.indexOf( 'lint-actions:' ) !== -1 );
