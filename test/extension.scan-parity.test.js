@@ -1428,6 +1428,52 @@ QUnit.test( "issue #42 default-derived workspace regex uses candidate scan", fun
     } );
 } );
 
+QUnit.test( "PCRE2-only workspace tag regex uses raw normalization", function( assert )
+{
+    var filePath = '/workspace/repeated.js';
+    var uri = matrixHelpers.createUri( filePath );
+    var fixture = [ {
+        uri: uri,
+        actualTag: 'TODO',
+        displayText: 'TODO',
+        continuationText: []
+    } ];
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        regexSource: '($TAGS)\\s+\\g{1}',
+        resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        fileContents: {
+            '/workspace/repeated.js': 'TODO TODO\n'
+        },
+        ripgrepMatches: [ {
+            fsPath: filePath,
+            line: 1,
+            column: 1,
+            match: 'TODO TODO',
+            lines: 'TODO TODO\n'
+        } ],
+        normalizeResult: function()
+        {
+            return fixture[ 0 ];
+        },
+        normalizeWorkspaceResult: function()
+        {
+            return fixture[ 0 ];
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.ripgrepSearchCalls.length, 1 );
+        assert.equal( harness.ripgrepSearchCalls[ 0 ].regex, '($TAGS)\\s+\\g{1}' );
+        assert.equal( harness.scanTextCalls.length, 0 );
+        assert.deepEqual( getLatestReplaceCallForPath( harness, filePath ).results, fixture );
+    } );
+} );
+
 QUnit.test( "default workspace startup keeps plain visible editors on the O(1) non-notebook path", function( assert )
 {
     var firstDocument = matrixHelpers.createDocument( '/workspace/src/first.js', '// TODO first item' );

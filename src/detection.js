@@ -1,5 +1,6 @@
 var path = require( 'path' );
 
+var regexEngine = require( './regexEngine.js' );
 var utils = require( './utils.js' );
 
 function getUriFsPath( uri )
@@ -671,6 +672,7 @@ function createScanContext( uri, text, snapshot, options )
         resolveResourceConfig( uri );
     var flags = resourceConfig.regexCaseSensitive === true ? '' : 'i';
     var regexSource = options.regexSource || utils.getRegexSource( uri );
+    var skipExactRegex = resourceConfig.isDefaultRegex === true || options.skipExactRegex === true;
     var tagRegex = resourceConfig.regex.indexOf( "$TAGS" ) > -1 ?
         new RegExp( '(' + utils.getTagRegexSource( uri, resourceConfig.tags ) + ')', flags ) :
         undefined;
@@ -683,7 +685,7 @@ function createScanContext( uri, text, snapshot, options )
         resourceConfig: resourceConfig,
         lineOffsets: createLineOffsets( text ),
         regexSource: regexSource,
-        exactRegex: resourceConfig.isDefaultRegex === true ? undefined : utils.getRegexForEditorSearch( true, uri, {
+        exactRegex: skipExactRegex === true ? undefined : utils.getRegexForEditorSearch( true, uri, {
             includeIndices: true,
             resourceConfig: resourceConfig,
             regexSource: regexSource
@@ -1282,7 +1284,13 @@ function normalizeWorkspaceRegexMatch( uri, match, snapshot )
     var localMatchStart = match.submatches && match.submatches.length > 0 && typeof match.submatches[ 0 ].start === 'number' ?
         match.submatches[ 0 ].start :
         Math.max( ( match.column || 1 ) - 1, 0 );
-    var context = createScanContext( uri, contextText, snapshot );
+    var resourceConfig = snapshot && typeof ( snapshot.getResourceConfig ) === 'function' ?
+        snapshot.getResourceConfig( uri ) :
+        resolveResourceConfig( uri );
+    var skipExactRegex = regexEngine.containsJavaScriptIncompatibleBackreference( resourceConfig.regex ) === true;
+    var context = createScanContext( uri, contextText, snapshot, {
+        skipExactRegex: skipExactRegex
+    } );
     var exactMatch = findExactRegexExecMatch( context, localMatchStart );
     var normalized = normalizeRegexExecMatchWithContext(
         context,

@@ -467,6 +467,38 @@ QUnit.module( "detection regex matrix", function()
         assert.equal( normalized.match, scanned[ 0 ].match );
     } );
 
+    QUnit.test( "PCRE2-only workspace tag payload normalizes without JavaScript regex compilation", function( assert )
+    {
+        var config = matrixHelpers.createConfig( {
+            tagList: [ 'TODO' ],
+            regexSource: '($TAGS)\\s+\\g{1}',
+            subTagRegexString: '^:\\s*'
+        } );
+        var uri = matrixHelpers.createUri( '/tmp/pcre2-only.js' );
+
+        utils.init( config );
+
+        var normalized = detection.normalizeWorkspaceRegexMatch( uri, {
+            fsPath: uri.fsPath,
+            line: 1,
+            column: 1,
+            match: 'TODO TODO',
+            lines: 'TODO TODO\n',
+            absoluteOffset: 0,
+            submatches: [ {
+                match: 'TODO TODO',
+                start: 0,
+                end: 9
+            } ]
+        } );
+
+        assert.equal( normalized.actualTag, 'TODO' );
+        assert.equal( normalized.displayText, 'TODO' );
+        assert.equal( normalized.match, 'TODO TODO' );
+        assert.equal( normalized.line, 1 );
+        assert.equal( normalized.column, 1 );
+    } );
+
     QUnit.test( "issue #888 multiline banner regex anchors the star tag to the content line", function( assert )
     {
         var uri = matrixHelpers.createUri( '/tmp/issue-888.js' );
