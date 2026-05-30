@@ -132,7 +132,7 @@ QUnit.module( "detection regex matrix", function()
 
     QUnit.test( "regexes without $TAGS use the raw match as the actual tag", function( assert )
     {
-        var results = scanWithConfig( '/tmp/note.js', 'NOTE important', function( config )
+        var results = scanWithConfig( '/tmp/note.js', 'NOTE relevant', function( config )
         {
             config.tagList = [ 'TODO' ];
             config.regexSource = '(NOTE)';
@@ -430,6 +430,41 @@ QUnit.module( "detection regex matrix", function()
         assert.equal( normalized.endLine, scanned.endLine );
         assert.equal( normalized.matchStartOffset, scanned.matchStartOffset );
         assert.equal( normalized.matchEndOffset, scanned.matchEndOffset );
+    } );
+
+    QUnit.test( "issue #42 PCRE2 markdown task payload keeps display text", function( assert )
+    {
+        var regexSource = utils.DEFAULT_REGEX_SOURCE.replace( '|;', '' );
+        var config = matrixHelpers.createConfig( {
+            tagList: [ 'TODO', '[ ]', '[x]' ],
+            regexSource: regexSource,
+            subTagRegexString: '^:\\s*'
+        } );
+        var uri = matrixHelpers.createUri( '/tmp/issue-42.md' );
+        var text = '- [ ] Task 1\n- [ ] Task 2\n';
+
+        utils.init( config );
+
+        var scanned = detection.scanText( uri, text );
+        var normalized = detection.normalizeWorkspaceRegexMatch( uri, {
+            fsPath: uri.fsPath,
+            line: 1,
+            column: 1,
+            match: '- [ ]',
+            lines: '- [ ] Task 1\n',
+            absoluteOffset: 0,
+            submatches: [ {
+                match: '- [ ]',
+                start: 0,
+                end: 5
+            } ]
+        } );
+
+        assert.equal( scanned[ 0 ].actualTag, '[ ]' );
+        assert.equal( scanned[ 0 ].displayText, 'Task 1' );
+        assert.equal( normalized.actualTag, scanned[ 0 ].actualTag );
+        assert.equal( normalized.displayText, scanned[ 0 ].displayText );
+        assert.equal( normalized.match, scanned[ 0 ].match );
     } );
 
     QUnit.test( "issue #888 multiline banner regex anchors the star tag to the content line", function( assert )

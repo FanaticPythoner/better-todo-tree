@@ -23,6 +23,7 @@ var identity = require( './extensionIdentity.js' );
 var settingsSnapshotModule = require( './runtime/settingsSnapshot.js' );
 var documentScanCacheModule = require( './runtime/documentScanCache.js' );
 var streamScanner = require( './runtime/streamScanner.js' );
+var regexEngine = require( './regexEngine.js' );
 var packageJson = require( '../package.json' );
 
 var searchList = [];
@@ -2219,7 +2220,7 @@ function activate( context )
                 assertGenerationActive( generation );
                 beginScanRoot( generation, entry );
 
-                var scanPromise = workspaceConfig.isDefaultRegex === true ?
+                var scanPromise = regexEngine.shouldUseTagCandidateScan( workspaceConfig ) === true ?
                     scanWorkspaceCandidates( entry, generation, store ) :
                     scanWorkspaceRegexMatches( entry, generation, store );
 
