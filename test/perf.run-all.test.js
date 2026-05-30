@@ -1,5 +1,6 @@
 var QUnit = require( 'qunit' );
 var perfRunner = require( '../scripts/perf/run-all.js' );
+var regexRegistry = require( '../src/regexRegistry.js' );
 
 function createMachineProfile()
 {
@@ -176,7 +177,7 @@ QUnit.test( 'validateResultsForSelection rejects non-user-flow rows in a user-fl
     assert.throws( function()
     {
         perfRunner.validateResultsForSelection( results, selection );
-    }, /must be a user-flow/ );
+    }, regexRegistry.createRegExp( 'mustBeUserFlow' ) );
 } );
 
 QUnit.test( 'validateMarkdownMatchesPayload accepts the exact markdown render', function( assert )
@@ -273,7 +274,7 @@ QUnit.test( 'validateReadmeSummaryRows rejects summary mappings to microbenchmar
     assert.throws( function()
     {
         perfRunner.validateReadmeSummaryRows( definitions );
-    }, /must reference a user-flow scenario/ );
+    }, regexRegistry.createRegExp( 'mustReferenceUserFlowScenario' ) );
 } );
 
 QUnit.test( 'collectBenchmarkMachineHealth rejects overloaded machine states', function( assert )
@@ -354,23 +355,23 @@ QUnit.test( 'PERF_TRACE_SCENARIOS defaults ON so long benchmark runs surface pro
         'no remaining gate that requires PERF_TRACE_SCENARIOS=1 to surface progress'
     );
     assert.ok(
-        /\[perf\] \(' \+ \( index \+ 1 \) \+ '\/' \+ selectedDefinitions\.length/.test( runAllSource ),
+        regexRegistry.createRegExp( 'perfTraceScenarioIndex' ).test( runAllSource ),
         'scenario-level progress lines include the running scenario index out of the total count'
     );
     assert.ok(
-        /' done in ' \+ elapsedMs \+ 'ms\\n'/.test( runAllSource ),
+        regexRegistry.createRegExp( 'perfTraceDone' ).test( runAllSource ),
         'scenario-level completion lines include the per-scenario wall-clock duration'
     );
     assert.ok(
-        /\[perf\]   ' \+ definition\.name \+ ' latency '/.test( runAllSource ),
+        regexRegistry.createRegExp( 'perfTraceLatency' ).test( runAllSource ),
         'long-running user-flow scenarios emit per-iteration latency progress so they cannot be confused with hangs'
     );
     assert.ok(
-        /\[perf\]   ' \+ definition\.name \+ ' memory '/.test( runAllSource ),
+        regexRegistry.createRegExp( 'perfTraceMemory' ).test( runAllSource ),
         'long-running user-flow scenarios emit per-iteration memory-profiling progress'
     );
     assert.ok(
-        /PERF_TRACE_SCENARIOS:\s*'0'/.test( runAllSource ),
+        regexRegistry.createRegExp( 'perfTraceWorkerEnv' ).test( runAllSource ),
         'isolated user-flow worker subprocesses set PERF_TRACE_SCENARIOS=0 so only the orchestrator emits progress'
     );
 } );
@@ -386,11 +387,11 @@ QUnit.test( 'justfile node_bootstrap re-anchors NVM_DIR onto $SUDO_USER home whe
         'justfile node_bootstrap references $SUDO_USER for sudo-aware nvm discovery'
     );
     assert.ok(
-        /getent passwd\s+"\$SUDO_USER"/.test( justfile ),
+        regexRegistry.createRegExp( 'sudoGetentPasswd' ).test( justfile ),
         'justfile resolves $SUDO_USER home directory via getent passwd'
     );
     assert.ok(
-        /\/home\/linuxbrew\/\.linuxbrew\/bin\/node/.test( justfile ),
+        regexRegistry.createRegExp( 'linuxbrewNodePath' ).test( justfile ),
         'justfile node_bootstrap surfaces linuxbrew node when sudo strips PATH (secure_path)'
     );
 } );
@@ -404,36 +405,36 @@ QUnit.test( 'extensionScenarios.instrumentProvider does not alias caller results
         'utf8'
     );
 
-    var instrumentBody = harnessSource.match( /function instrumentProvider\([\s\S]*?return provider;\s*\}/ );
+    var instrumentBody = harnessSource.match( regexRegistry.createRegExp( 'instrumentProviderFunction' ) );
     assert.ok( instrumentBody, 'instrumentProvider is defined' );
 
     if( instrumentBody )
     {
         var body = instrumentBody[ 0 ];
         assert.equal(
-            /provider\.replaceDocument\s*=\s*function\([^)]*\)\s*\{[^}]*var entry\s*=\s*\{\s*uri:\s*uri,\s*results:\s*results\s*\}/.test( body ),
+            regexRegistry.createRegExp( 'providerReplaceDocumentAliasesResults' ).test( body ),
             false,
             'wrapped replaceDocument MUST NOT alias the caller-supplied results array (would mutate the searchResults stub via the wrapped add() iterating callback)'
         );
         assert.ok(
-            /provider\.replaceDocument\s*=\s*function\([^)]*\)\s*\{[\s\S]*?var entry\s*=\s*\{\s*uri:\s*uri,\s*results:\s*\[\]\s*\}/.test( body ),
+            regexRegistry.createRegExp( 'providerReplaceDocumentFreshEntry' ).test( body ),
             'wrapped replaceDocument starts entry.results as a fresh empty array; the originalReplaceDocument iterations populate it via wrapped add()'
         );
     }
 
-    var stubBody = harnessSource.match( /function createProviderStub\(\)[\s\S]*?return\s*\{[\s\S]*?\};\s*\}/ );
+    var stubBody = harnessSource.match( regexRegistry.createRegExp( 'createProviderStubFunction' ) );
     assert.ok( stubBody, 'createProviderStub is defined' );
 
     if( stubBody )
     {
         var stub = stubBody[ 0 ];
         assert.equal(
-            /replaceDocument:\s*function\([^)]*\)\s*\{[^}]*var entry\s*=\s*\{\s*uri:\s*uri,\s*results:\s*results\s*\}/.test( stub ),
+            regexRegistry.createRegExp( 'stubReplaceDocumentAliasesResults' ).test( stub ),
             false,
             'createProviderStub.replaceDocument MUST NOT alias the caller-supplied results array'
         );
         assert.ok(
-            /replaceDocument:\s*function\([^)]*\)\s*\{[\s\S]*?results\.slice\(\)/.test( stub ),
+            regexRegistry.createRegExp( 'stubReplaceDocumentCopiesResults' ).test( stub ),
             'createProviderStub.replaceDocument defensively copies the caller-supplied results array'
         );
     }
@@ -450,7 +451,7 @@ QUnit.test( 'instrumentProvider preserves bounded provider state across repeated
     var BASELINE_REF = 'a6f60e0ce830c4649ac34fc05e5a1799ec91d151';
     var runAllPath = path.resolve( __dirname, '..', 'scripts', 'perf', 'run-all.js' );
     var instrumentedSrc = fs.readFileSync( runAllPath, 'utf8' )
-        .replace( /if\(\s*require\.main\s*===\s*module\s*\)\s*\{[\s\S]*?\}\s*$/m, '' )
+        .replace( regexRegistry.createRegExp( 'requireMainBlock', 'm' ), '' )
         + '\n\nmodule.exports.__internal = {' +
         'loadCurrentModule, createBaselineModuleLoader, createUri, createWorkspaceState' +
         '};\n';

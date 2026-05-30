@@ -1,7 +1,11 @@
 var fs = require( 'fs' );
 var path = require( 'path' );
+var regexRegistry = require( '../src/regexRegistry.js' );
 
-var fullCommitShaPattern = /^[0-9a-f]{40}$/;
+function readWorkflow( workflowName )
+{
+    return fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', workflowName ), 'utf8' );
+}
 
 function getWorkflowPaths()
 {
@@ -16,24 +20,20 @@ function getWorkflowPaths()
         } );
 }
 
-function readWorkflow( workflowName )
-{
-    return fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', workflowName ), 'utf8' );
-}
-
 function getExternalActionReferences( contents )
 {
-    return contents.split( /\r?\n/ ).reduce( function( references, line )
-    {
-        var match = line.match( /^\s*uses:\s*([^\s#]+)\s*$/ );
-        if( !match || match[ 1 ].indexOf( './' ) === 0 )
+    return contents.split( regexRegistry.createRegExp( 'optionalCarriageReturnLineBreak' ) )
+        .reduce( function( references, line )
         {
-            return references;
-        }
+            var match = line.match( regexRegistry.createRegExp( 'workflowUsesLine' ) );
+            if( !match || match[ 1 ].indexOf( './' ) === 0 )
+            {
+                return references;
+            }
 
-        references.push( parseActionReference( match[ 1 ] ) );
-        return references;
-    }, [] );
+            references.push( parseActionReference( match[ 1 ] ) );
+            return references;
+        }, [] );
 }
 
 function parseActionReference( reference )
@@ -66,7 +66,7 @@ function workflowAssertionMessage( label, message )
 
 function isFullCommitSha( ref )
 {
-    return fullCommitShaPattern.test( ref );
+    return regexRegistry.createRegExp( 'sha1Lowercase' ).test( ref );
 }
 
 function assertFullCommitSha( assert, ref, message )
@@ -129,7 +129,7 @@ function withActionRevisions( contents, revisions )
 
 function getWorkflowJobBlock( contents, jobName )
 {
-    var lines = contents.split( /\r?\n/ );
+    var lines = contents.split( regexRegistry.createRegExp( 'optionalCarriageReturnLineBreak' ) );
     var start = lines.findIndex( function( line )
     {
         return line === '  ' + jobName + ':';
@@ -141,7 +141,7 @@ function getWorkflowJobBlock( contents, jobName )
 
     var end = lines.findIndex( function( line, index )
     {
-        return index > start && /^  [A-Za-z0-9_-]+:$/.test( line );
+        return index > start && regexRegistry.createRegExp( 'workflowJobHeaderLine' ).test( line );
     } );
     return lines.slice( start, end === -1 ? lines.length : end ).join( '\n' );
 }
@@ -359,7 +359,10 @@ QUnit.test( 'workflow action revision fixtures fail on invalid input', function(
     assert.throws( function()
     {
         withActionRevision( securityWorkflow, 'github/codeql-action/init', 'v4.36.0' );
-    }, /workflow action revision invalid: github\/codeql-action\/init/ );
+    }, function( error )
+    {
+        return error.message === 'workflow action revision invalid: github/codeql-action/init';
+    } );
 
     assert.throws( function()
     {
@@ -368,7 +371,10 @@ QUnit.test( 'workflow action revision fixtures fail on invalid input', function(
             'github/codeql-action/upload-sarif',
             '7211b7c8077ea37d8641b6271f6a365a22a5fbfa'
         );
-    }, /workflow action reference count mismatch: github\/codeql-action\/upload-sarif/ );
+    }, function( error )
+    {
+        return error.message === 'workflow action reference count mismatch: github/codeql-action/upload-sarif';
+    } );
 } );
 
 QUnit.test( 'justfile exposes GitHub Actions verification recipes', function( assert )
@@ -425,7 +431,7 @@ QUnit.test( 'parity harness pins to the canonical upstream Gruntfuggly/todo-tree
         'pinned remote is the canonical upstream repository'
     );
     assert.ok(
-        /^[0-9a-f]{40}$/.test( upstreamGitLoader.UPSTREAM_COMMIT ),
+        regexRegistry.createRegExp( 'sha1Lowercase' ).test( upstreamGitLoader.UPSTREAM_COMMIT ),
         'pinned commit is a 40-char lowercase hex SHA-1: ' + upstreamGitLoader.UPSTREAM_COMMIT
     );
 } );
@@ -433,7 +439,8 @@ QUnit.test( 'parity harness pins to the canonical upstream Gruntfuggly/todo-tree
 QUnit.test( '.vscodeignore excludes the upstream clone, test fixtures, build tooling, and editor backups so they never ship in the published VSIX', function( assert )
 {
     var contents = fs.readFileSync( path.join( __dirname, '..', '.vscodeignore' ), 'utf8' );
-    var lines = contents.split( /\r?\n/ ).map( function( line ) { return line.trim(); } );
+    var lines = contents.split( regexRegistry.createRegExp( 'optionalCarriageReturnLineBreak' ) )
+        .map( function( line ) { return line.trim(); } );
 
     assert.ok( lines.indexOf( 'test/' ) !== -1, '.vscodeignore lists `test/`' );
     assert.ok( lines.indexOf( 'src/' ) !== -1, '.vscodeignore lists `src/` (bundle ships from dist/)' );
@@ -449,7 +456,8 @@ QUnit.test( '.vscodeignore excludes the upstream clone, test fixtures, build too
 QUnit.test( '.gitignore excludes the upstream clone cache so cloned upstream sources are never committed', function( assert )
 {
     var contents = fs.readFileSync( path.join( __dirname, '..', '.gitignore' ), 'utf8' );
-    var lines = contents.split( /\r?\n/ ).map( function( line ) { return line.trim(); } );
+    var lines = contents.split( regexRegistry.createRegExp( 'optionalCarriageReturnLineBreak' ) )
+        .map( function( line ) { return line.trim(); } );
 
     assert.ok( lines.indexOf( '.tools/' ) !== -1, '.gitignore lists `.tools/`' );
 } );
@@ -470,7 +478,7 @@ QUnit.test( 'repository root is free of pre-refactor scratch files and stray age
     var rootEntries = fs.readdirSync( repoRoot );
     var oldJsFiles = rootEntries.filter( function( entry )
     {
-        return /^old-.*\.js$/.test( entry );
+        return regexRegistry.createRegExp( 'oldJsFile' ).test( entry );
     } );
     assert.equal(
         oldJsFiles.length,
@@ -480,7 +488,8 @@ QUnit.test( 'repository root is free of pre-refactor scratch files and stray age
 
     var bakFiles = rootEntries.filter( function( entry )
     {
-        return /\.bak$/.test( entry ) || /~$/.test( entry );
+        return regexRegistry.createRegExp( 'backupFileSuffix' ).test( entry ) ||
+            regexRegistry.createRegExp( 'tildeSuffix' ).test( entry );
     } );
     assert.equal(
         bakFiles.length,

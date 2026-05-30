@@ -11,6 +11,7 @@
 
 var utils = require( '../../src/utils.js' );
 var detection = require( '../../src/detection.js' );
+var regexRegistry = require( '../../src/regexRegistry.js' );
 var corpus = require( './corpus.js' );
 var comparator = require( './compare.js' );
 var scanHarness = require( './scanHarness.js' );
@@ -326,14 +327,14 @@ QUnit.module( 'parity todo-tree vs better-todo-tree', function( hooks )
     {
         var customConfig = makeBetterTodoTreeConfig();
         customConfig.tagList = [ '#LATER' ];
-        customConfig.regexSource = '($TAGS).*';
+        customConfig.regexSource = regexRegistry.pattern( 'tagAnyText' );
         customConfig.caseSensitive = true;
         customConfig.tags = function() { return [ '#LATER' ]; };
         customConfig.regex = function()
         {
             return {
                 tags: [ '#LATER' ],
-                regex: '($TAGS).*',
+                regex: regexRegistry.pattern( 'tagAnyText' ),
                 caseSensitive: true,
                 multiLine: false
             };
@@ -397,8 +398,8 @@ QUnit.module( 'parity todo-tree vs better-todo-tree', function( hooks )
         assert.ok( fs.existsSync( licensePath ), 'upstream License.txt is present in the clone (' + licensePath + ')' );
 
         var licenseContents = fs.readFileSync( licensePath, 'utf8' );
-        assert.ok( /MIT License/i.test( licenseContents ), 'upstream License.txt contains the MIT License header' );
-        assert.ok( /Nigel Scott/.test( licenseContents ), 'upstream License.txt names the original author' );
+        assert.ok( regexRegistry.createRegExp( 'mitLicense', 'i' ).test( licenseContents ), 'upstream License.txt contains the MIT License header' );
+        assert.ok( regexRegistry.createRegExp( 'nigelScott' ).test( licenseContents ), 'upstream License.txt names the original author' );
     } );
 
     QUnit.test( 'upstream webpack bundle builds, loads, and exposes activate/deactivate', function( assert )

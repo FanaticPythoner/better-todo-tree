@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require( 'path' );
+const regexRegistry = require( './src/regexRegistry.js' );
 
 /**@type {import('webpack').Configuration}*/
 const config = {
@@ -25,8 +26,8 @@ const config = {
     module: {
         rules: [
             {
-                test: /\.ts$/,
-                exclude: /node_modules/,
+                test: regexRegistry.createRegExp( 'typescriptFileExtension' ),
+                exclude: regexRegistry.createRegExp( 'nodeModulesPath' ),
                 use: [
                     {
                         loader: 'ts-loader'

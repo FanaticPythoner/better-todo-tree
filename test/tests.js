@@ -4,6 +4,7 @@ var path = require( 'path' );
 var strftime = require( 'fast-strftime' );
 var utils = require( '../src/utils.js' );
 var attributes = require( '../src/attributes.js' );
+var regexRegistry = require( '../src/regexRegistry.js' );
 var stubs = require( './stubs.js' );
 var searchResults = require( '../src/searchResults.js' );
 
@@ -167,7 +168,7 @@ QUnit.test( "utils.extractTag removes colon from ${after}", function( assert )
 QUnit.test( "utils.extractTag removes custom regex from ${after}", function( assert )
 {
     var testConfig = stubs.getTestConfig();
-    testConfig.subTagRegexString = "(^--\\s*)";
+    testConfig.subTagRegexString = regexRegistry.pattern( 'dashSubTagPrefixCapture' );
     utils.init( testConfig );
 
     result = utils.extractTag( "before TODO-- after" );
@@ -228,10 +229,10 @@ QUnit.test( "utils.extractTag returns entire text if regex is empty", function( 
     assert.equal( result.after, "                before = text; // TODO stuff  " );
 } );
 
-QUnit.test( "utils.extractTag returns expected result if regex does not contain $TAGS", function( assert )
+QUnit.test( "utils.extractTag returns expected result if regex has no tag placeholder", function( assert )
 {
     var testConfig = stubs.getTestConfig();
-    testConfig.regexSource = "// TODO";
+    testConfig.regexSource = regexRegistry.pattern( 'slashTodoLiteral' );
     utils.init( testConfig );
 
     result = utils.extractTag( "                before = text; // TODO stuff  ", 1 );
@@ -243,7 +244,7 @@ QUnit.test( "utils.extractTag returns expected result if regex does not contain 
 QUnit.test( "utils.extractTag can extract sub tag", function( assert )
 {
     var testConfig = stubs.getTestConfig();
-    testConfig.subTagRegexString = ".*\\((.*)\\).*";
+    testConfig.subTagRegexString = regexRegistry.pattern( 'subTagParenthesizedAnyText' );
     utils.init( testConfig );
 
     result = utils.extractTag( "before TODO (email@place.com) after" );
@@ -263,10 +264,10 @@ QUnit.test( "utils.extractTag works with multiline", function( assert )
 QUnit.test( "utils.getRegexSource returns the regex source without expanded tags if they aren't present", function( assert )
 {
     var testConfig = stubs.getTestConfig();
-    testConfig.regexSource = "notags";
+    testConfig.regexSource = regexRegistry.pattern( 'noTagsLiteral' );
     utils.init( testConfig );
 
-    assert.equal( utils.getRegexSource(), "notags" );
+    assert.equal( utils.getRegexSource(), regexRegistry.pattern( 'noTagsLiteral' ) );
 } );
 
 QUnit.test( "utils.getRegexSource returns the regex source with expanded tags", function( assert )
@@ -275,12 +276,18 @@ QUnit.test( "utils.getRegexSource returns the regex source with expanded tags", 
     testConfig.tagList = [ "TWO", "ONE" ];
     utils.init( testConfig );
 
-    assert.equal( utils.getRegexSource(), "(TWO|ONE)" );
+    assert.equal( utils.getRegexSource(), regexRegistry.buildEscapedAlternationCaptureSource( [ "TWO", "ONE" ] ) );
 
-    testConfig.regexSource = "($TAGS)-($TAGS)";
+    testConfig.regexSource = [
+        regexRegistry.TAG_CAPTURE_PLACEHOLDER,
+        regexRegistry.TAG_CAPTURE_PLACEHOLDER
+    ].join( '-' );
     utils.init( testConfig );
 
-    assert.equal( utils.getRegexSource(), "(TWO|ONE)-(TWO|ONE)" );
+    assert.equal( utils.getRegexSource(), [
+        regexRegistry.buildEscapedAlternationCaptureSource( [ "TWO", "ONE" ] ),
+        regexRegistry.buildEscapedAlternationCaptureSource( [ "TWO", "ONE" ] )
+    ].join( '-' ) );
 } );
 
 QUnit.test( "utils.getRegexSource returns the regex source and escapes backslashes", function( assert )
@@ -289,7 +296,7 @@ QUnit.test( "utils.getRegexSource returns the regex source and escapes backslash
     testConfig.tagList = [ "\\TWO", "ONE\\" ];
     utils.init( testConfig );
 
-    assert.equal( utils.getRegexSource(), "(\\\\TWO|ONE\\\\)" );
+    assert.equal( utils.getRegexSource(), regexRegistry.buildEscapedAlternationCaptureSource( [ "\\TWO", "ONE\\" ] ) );
 } );
 
 QUnit.test( "utils.getRegexSource sorts the tags in reverse order to allow more specific tags to be found first", function( assert )
@@ -298,7 +305,9 @@ QUnit.test( "utils.getRegexSource sorts the tags in reverse order to allow more 
     testConfig.tagList = [ "FIXME", "TODO", "TODO(API)" ];
     utils.init( testConfig );
 
-    assert.equal( utils.getRegexSource(), "(TODO\\(API\\)|TODO|FIXME)" );
+    assert.equal( utils.getRegexSource(), regexRegistry.buildEscapedAlternationCaptureSource( [
+        "TODO(API)", "TODO", "FIXME"
+    ] ) );
 } );
 
 QUnit.test( "utils.getRegexSource returns the regex source and escapes other regex characters", function( assert )
@@ -310,7 +319,9 @@ QUnit.test( "utils.getRegexSource returns the regex source and escapes other reg
 
     utils.init( testConfig );
 
-    assert.equal( utils.getRegexSource(), "(A\\|B|A\\{B|A\\^B|A\\[B|A\\?B|A\\.B|A\\+B|A\\*B|A\\)B|A\\(B|A\\$B)" );
+    assert.equal( utils.getRegexSource(), regexRegistry.buildEscapedAlternationCaptureSource( [
+        "A|B", "A{B", "A^B", "A[B", "A?B", "A.B", "A+B", "A*B", "A)B", "A(B", "A$B"
+    ] ) );
 } );
 
 QUnit.test( "utils.getRegexForRipGrep applies the expected default flags", function( assert )
@@ -334,19 +345,19 @@ QUnit.test( "utils.getResourceConfig honours uri specific regex overrides", func
     var uri = { toString: function() { return "/tmp/override.js"; } };
 
     stubs.setUriOverride( testConfig, uri, {
-        regexSource: '(XXX)',
+        regexSource: regexRegistry.pattern( 'xxxCapture' ),
         shouldBeCaseSensitive: true,
         enableMultiLineFlag: true,
-        subTagRegexString: '^:\\s*'
+        subTagRegexString: regexRegistry.pattern( 'subTagPrefix' )
     } );
     utils.init( testConfig );
 
     var resourceConfig = utils.getResourceConfig( uri );
 
-    assert.equal( resourceConfig.regex, '(XXX)' );
+    assert.equal( resourceConfig.regex, regexRegistry.pattern( 'xxxCapture' ) );
     assert.equal( resourceConfig.regexCaseSensitive, true );
     assert.equal( resourceConfig.enableMultiLine, true );
-    assert.equal( resourceConfig.subTagRegex, '^:\\s*' );
+    assert.equal( resourceConfig.subTagRegex, regexRegistry.pattern( 'subTagPrefix' ) );
 } );
 
 QUnit.test( "utils.getRegexForEditorSearch applies uri specific flags", function( assert )
@@ -355,7 +366,7 @@ QUnit.test( "utils.getRegexForEditorSearch applies uri specific flags", function
     var uri = { toString: function() { return "/tmp/override.js"; } };
 
     stubs.setUriOverride( testConfig, uri, {
-        regexSource: '(TODO)',
+        regexSource: regexRegistry.pattern( 'todoCapture' ),
         shouldBeCaseSensitive: true,
         enableMultiLineFlag: true
     } );

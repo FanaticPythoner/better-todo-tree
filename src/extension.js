@@ -20,11 +20,13 @@ var attributes = require( './attributes.js' );
 var searchResults = require( './searchResults.js' );
 var detection = require( './detection.js' );
 var identity = require( './extensionIdentity.js' );
+var regexRegistry = require( './regexRegistry.js' );
 var settingsSnapshotModule = require( './runtime/settingsSnapshot.js' );
 var documentScanCacheModule = require( './runtime/documentScanCache.js' );
 var streamScanner = require( './runtime/streamScanner.js' );
 var regexEngine = require( './regexEngine.js' );
 var packageJson = require( '../package.json' );
+var packageNls = require( '../package.nls.json' );
 
 var searchList = [];
 var currentFilter;
@@ -49,6 +51,8 @@ var documentRefreshTimers = new Map();
 var documentVersions = new Map();
 var pendingDocumentRefreshes = new Map();
 var gitHeadCheckInFlight = new Set();
+var nlsTokenRegex = regexRegistry.createRegExp( 'nlsToken' );
+var workspaceFolderPlaceholderRegex = regexRegistry.createRegExp( 'workspaceFolderPlaceholder', 'g' );
 
 var SCAN_MODE_WORKSPACE_AND_OPEN_FILES = 'workspace';
 var SCAN_MODE_OPEN_FILES = 'open files';
@@ -216,7 +220,7 @@ function activate( context )
 
         extensionContextUpdateQueue = scheduled.catch( function( error )
         {
-            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to update command contexts (" + error.message + ")" );
+            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to update command contexts (" + formatErrorMessage( error ) + ")" );
         } );
 
         return scheduled;
@@ -244,13 +248,108 @@ function activate( context )
         } ) );
     }
 
-    function registerCommandPair( suffix, handler )
+    function resolvePackageString( value, location )
     {
-        context.subscriptions.push( vscode.commands.registerCommand( identity.COMMANDS[ suffix ], handler ) );
+        if( typeof ( value ) !== 'string' || value.length === 0 )
+        {
+            throw new Error( location + ' missing' );
+        }
+
+        var nlsMatch = value.match( nlsTokenRegex );
+        if( nlsMatch === null )
+        {
+            return value;
+        }
+
+        var resolved = packageNls[ nlsMatch[ 1 ] ];
+        if( typeof ( resolved ) !== 'string' || resolved.length === 0 )
+        {
+            throw new Error( 'package.nls entry missing for ' + nlsMatch[ 1 ] );
+        }
+
+        return resolved;
+    }
+
+    function buildManifestCommandTitles()
+    {
+        var commands = packageJson &&
+            packageJson.contributes &&
+            Array.isArray( packageJson.contributes.commands ) ?
+            packageJson.contributes.commands :
+            [];
+
+        return commands.reduce( function( titles, command )
+        {
+            if( command && typeof ( command.command ) === 'string' )
+            {
+                titles[ command.command ] = resolvePackageString( command.title, 'command title for ' + command.command );
+            }
+
+            return titles;
+        }, {} );
+    }
+
+    function trimCommandTitlePrefix( title )
+    {
+        var prefix = identity.DISPLAY_NAME + ': ';
+
+        return title.indexOf( prefix ) === 0 ? title.slice( prefix.length ) : title;
+    }
+
+    function buildCommandOperationNames()
+    {
+        var titles = buildManifestCommandTitles();
+
+        return Object.freeze( Object.keys( identity.COMMANDS ).reduce( function( names, suffix )
+        {
+            var commandId = identity.COMMANDS[ suffix ];
+            if( typeof ( titles[ commandId ] ) === 'string' && titles[ commandId ].length > 0 )
+            {
+                names[ suffix ] = trimCommandTitlePrefix( titles[ commandId ] ).toLowerCase();
+            }
+
+            return names;
+        }, {} ) );
+    }
+
+    var commandOperationNames = buildCommandOperationNames();
+
+    function commandOperationName( suffix )
+    {
+        var operationName = commandOperationNames[ suffix ];
+        if( typeof ( operationName ) !== 'string' )
+        {
+            throw new Error( 'command suffix missing: ' + suffix );
+        }
+
+        return operationName;
+    }
+
+    function createRegisteredCommandHandler( suffix, handler, operationName )
+    {
+        var boundaryOperationName = operationName || commandOperationName( suffix );
+
+        return function()
+        {
+            var commandArguments = arguments;
+            var commandThis = this;
+
+            return runCommandOperation( boundaryOperationName, function()
+            {
+                return handler.apply( commandThis, commandArguments );
+            } );
+        };
+    }
+
+    function registerCommandPair( suffix, handler, operationName )
+    {
+        var commandHandler = createRegisteredCommandHandler( suffix, handler, operationName );
+
+        context.subscriptions.push( vscode.commands.registerCommand( identity.COMMANDS[ suffix ], commandHandler ) );
 
         if( identity.LEGACY_COMMANDS[ suffix ] !== undefined )
         {
-            context.subscriptions.push( vscode.commands.registerCommand( identity.LEGACY_COMMANDS[ suffix ], handler ) );
+            context.subscriptions.push( vscode.commands.registerCommand( identity.LEGACY_COMMANDS[ suffix ], commandHandler ) );
         }
     }
 
@@ -325,12 +424,129 @@ function activate( context )
         return Promise.resolve();
     }
 
-    function updateWorkspaceState( values )
+    function formatErrorMessage( error )
+    {
+        return error && error.message ? error.message : String( error );
+    }
+
+    function normalizeCommandError( error )
+    {
+        if( error instanceof Error )
+        {
+            return error;
+        }
+
+        return new Error( formatErrorMessage( error ) );
+    }
+
+    function writeWorkspaceStateEntry( entry )
+    {
+        try
+        {
+            return Promise.resolve( context.workspaceState.update( entry.key, entry.value ) );
+        }
+        catch( error )
+        {
+            return Promise.reject( error );
+        }
+    }
+
+    function writeWorkspaceState( values )
     {
         return Promise.all( values.map( function( entry )
         {
-            return context.workspaceState.update( entry.key, entry.value );
+            return writeWorkspaceStateEntry( entry );
         } ) );
+    }
+
+    function updateWorkspaceState( values )
+    {
+        var stateEntries = normalizeWorkspaceStateEntries( values );
+        var previousEntries = captureWorkspaceStateEntries( stateEntries );
+
+        return Promise.all( stateEntries.map( function( entry )
+        {
+            return writeWorkspaceStateEntry( entry ).then(
+                function() { return undefined; },
+                function( error ) { return error; }
+            );
+        } ) ).then( function( errors )
+        {
+            var updateError = errors.find( function( error )
+            {
+                return error !== undefined;
+            } );
+
+            if( updateError === undefined )
+            {
+                return;
+            }
+
+            return writeWorkspaceState( previousEntries ).then( function()
+            {
+                throw updateError;
+            }, function( rollbackError )
+            {
+                updateError.rollbackError = rollbackError;
+                throw updateError;
+            } );
+        } );
+    }
+
+    function writeGlobalStateEntry( entry )
+    {
+        try
+        {
+            return Promise.resolve( context.globalState.update( entry.key, entry.value ) );
+        }
+        catch( error )
+        {
+            return Promise.reject( error );
+        }
+    }
+
+    function updateGlobalState( values )
+    {
+        return Promise.all( values.map( function( entry )
+        {
+            return writeGlobalStateEntry( entry );
+        } ) );
+    }
+
+    function reportCommandFailure( operationName, error )
+    {
+        var commandError = normalizeCommandError( error );
+
+        if( commandError.reportedToUser !== true )
+        {
+            commandError.reportedToUser = true;
+            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to " + operationName + " (" + formatErrorMessage( commandError ) + ")" );
+        }
+
+        throw commandError;
+    }
+
+    function observeOperationFailure( operationName, promise )
+    {
+        return Promise.resolve( promise ).catch( function( error )
+        {
+            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to " + operationName + " (" + formatErrorMessage( error ) + ")" );
+        } );
+    }
+
+    function runCommandOperation( operationName, operation )
+    {
+        try
+        {
+            return Promise.resolve( operation() ).catch( function( error )
+            {
+                reportCommandFailure( operationName, error );
+            } );
+        }
+        catch( error )
+        {
+            reportCommandFailure( operationName, error );
+        }
     }
 
     function applyTreeStateOverrides( values )
@@ -781,7 +997,7 @@ function activate( context )
 
         treeStateMutationQueue = scheduled.catch( function( error )
         {
-            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to update " + operationName + " (" + error.message + ")" );
+            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to update " + operationName + " (" + formatErrorMessage( error ) + ")" );
         } ).finally( function()
         {
             treeBusyStateCounts[ busyContextKey ] = Math.max( ( treeBusyStateCounts[ busyContextKey ] || 0 ) - 1, 0 );
@@ -922,7 +1138,7 @@ function activate( context )
         var badgeTotal = config.shouldShowActivityBarBadge() ? activityBarTotal : 0;
         todoTreeView.badge = { value: badgeTotal };
 
-        var countRegex = new RegExp( "([^(]*)(\\(\\d+\\))*" );
+        var countRegex = regexRegistry.createRegExp( 'countSuffix' );
         var match = countRegex.exec( todoTreeView.title );
         if( match !== null )
         {
@@ -1035,44 +1251,54 @@ function activate( context )
 
     function onStatusBarClicked()
     {
-        if( config.clickingStatusBarShouldRevealTree() )
+        return runCommandOperation( 'handle status bar click', function()
         {
-            if( todoTreeView.visible === false )
+            if( config.clickingStatusBarShouldRevealTree() )
             {
-                vscode.commands.executeCommand( identity.VIEW_ID + '.focus' );
+                if( todoTreeView.visible === false )
+                {
+                    return vscode.commands.executeCommand( identity.VIEW_ID + '.focus' );
+                }
+
+                return Promise.resolve();
             }
-        }
-        else if( config.clickingStatusBarShouldToggleHighlights() )
-        {
-            var enabled = getSetting( 'highlights.enabled', true );
-            var target = settingLocation( 'highlights.enabled' );
-            updateSetting( 'highlights.enabled', !enabled, target );
-        }
-        else
-        {
+
+            if( config.clickingStatusBarShouldToggleHighlights() )
+            {
+                var enabled = getSetting( 'highlights.enabled', true );
+                var target = settingLocation( 'highlights.enabled' );
+                return updateSetting( 'highlights.enabled', !enabled, target );
+            }
+
             var setting = getSetting( 'general.statusBar', 'none' );
+            var message;
+
             if( setting === STATUS_BAR_TOTAL )
             {
                 setting = STATUS_BAR_TAGS;
-                vscode.window.showInformationMessage( identity.DISPLAY_NAME + ": Now showing tag counts" );
-            }
-            else if( setting === STATUS_BAR_TAGS )
-            {
-                setting = STATUS_BAR_TOP_THREE;
-                vscode.window.showInformationMessage( identity.DISPLAY_NAME + ": Now showing top three tag counts" );
+                message = identity.DISPLAY_NAME + ": Now showing tag counts";
             }
             else if( setting === STATUS_BAR_TOP_THREE )
             {
                 setting = STATUS_BAR_CURRENT_FILE;
-                vscode.window.showInformationMessage( identity.DISPLAY_NAME + ": Now showing total tags in current file" );
+                message = identity.DISPLAY_NAME + ": Now showing total tags in current file";
+            }
+            else if( setting === STATUS_BAR_TAGS )
+            {
+                setting = STATUS_BAR_TOP_THREE;
+                message = identity.DISPLAY_NAME + ": Now showing top three tag counts";
             }
             else
             {
                 setting = STATUS_BAR_TOTAL;
-                vscode.window.showInformationMessage( identity.DISPLAY_NAME + ": Now showing total tags" );
+                message = identity.DISPLAY_NAME + ": Now showing total tags";
             }
-            updateSetting( 'general.statusBar', setting, vscode.ConfigurationTarget.Global );
-        }
+
+            return updateSetting( 'general.statusBar', setting, vscode.ConfigurationTarget.Global ).then( function()
+            {
+                return vscode.window.showInformationMessage( message );
+            } );
+        } );
     }
 
     function createCancelledError( message )
@@ -1320,7 +1546,7 @@ function activate( context )
                 throw error;
             }
 
-            var message = error.message;
+            var message = formatErrorMessage( error );
             if( error.stderr )
             {
                 message += " (" + error.stderr + ")";
@@ -2258,7 +2484,7 @@ function activate( context )
                 vscode.workspace.workspaceFolders.map( function( folder )
                 {
                     var path = rootFolder;
-                    path = path.replace( /\$\{workspaceFolder\}/g, folder.uri.fsPath );
+                    path = path.replace( workspaceFolderPlaceholderRegex, folder.uri.fsPath );
                     rootFolders.push( path );
                 } );
             }
@@ -2339,7 +2565,7 @@ function activate( context )
 
                 if( error.reportedToUser !== true )
                 {
-                    vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": scan failed (" + error.message + ")" );
+                    vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": scan failed (" + formatErrorMessage( error ) + ")" );
                 }
                 applyDirtyResultsToTree( { fullSort: false, refilterAll: false }, activeSearchResults );
             }
@@ -2807,50 +3033,87 @@ function activate( context )
     function groupBySubTag() { return queueWorkspaceStateRefresh( 'tree grouping', 'grouping-busy', { key: 'groupedBySubTag', value: true }, undefined, { forceRefreshWhenUnchanged: true } ); }
     function ungroupBySubTag() { return queueWorkspaceStateRefresh( 'tree grouping', 'grouping-busy', { key: 'groupedBySubTag', value: false }, undefined, { forceRefreshWhenUnchanged: true } ); }
 
+    function applyTreeFilter( filter )
+    {
+        currentFilter = filter;
+        provider.finalizePendingChanges( currentFilter, { refilterAll: true } );
+        updateInformation();
+        return refreshTree();
+    }
+
+    function persistTreeFilter( filter )
+    {
+        return updateWorkspaceState( [
+            { key: 'filtered', value: filter !== undefined && filter !== "" },
+            { key: 'currentFilter', value: filter }
+        ] ).then( function()
+        {
+            return applyTreeFilter( filter );
+        } );
+    }
+
     function clearTreeFilter()
     {
-        currentFilter = undefined;
-        context.workspaceState.update( 'filtered', false );
-        context.workspaceState.update( 'currentFilter', undefined );
-        provider.finalizePendingChanges( undefined, { refilterAll: true } );
-        updateInformation();
-        refreshTree();
+        return persistTreeFilter( undefined );
+    }
+
+    function addTags( tagsToAdd )
+    {
+        var tags = ( getSetting( 'general.tags', [] ) || [] ).slice();
+        var changed = false;
+
+        tagsToAdd.forEach( function( tag )
+        {
+            if( tags.indexOf( tag ) === -1 )
+            {
+                tags.push( tag );
+                changed = true;
+            }
+        } );
+
+        if( changed === true )
+        {
+            return updateSetting( 'general.tags', tags, vscode.ConfigurationTarget.Global );
+        }
+
+        return Promise.resolve();
     }
 
     function addTag( tag )
     {
-        var tags = getSetting( 'general.tags', [] );
-        if( tags.indexOf( tag ) === -1 )
-        {
-            tags.push( tag );
-            updateSetting( 'general.tags', tags, vscode.ConfigurationTarget.Global );
-        }
+        return addTags( [ tag ] );
     }
 
     function addTagDialog()
     {
-        vscode.window.showInputBox( { prompt: "New tag", placeHolder: "e.g. FIXME" } ).then( function( tag )
+        return runCommandOperation( 'add tag', function()
         {
-            if( tag )
+            return vscode.window.showInputBox( { prompt: "New tag", placeHolder: "e.g. FIXME" } ).then( function( tag )
             {
-                addTag( tag );
-            }
+                if( tag )
+                {
+                    return addTag( tag );
+                }
+            } );
         } );
     }
 
     function removeTagDialog()
     {
-        var tags = getSetting( 'general.tags', [] );
-        vscode.window.showQuickPick( tags, { matchOnDetail: true, matchOnDescription: true, canPickMany: true, placeHolder: "Select tags to remove" } ).then( function( tagsToRemove )
+        return runCommandOperation( 'remove tags', function()
         {
-            if( tagsToRemove )
+            var tags = ( getSetting( 'general.tags', [] ) || [] ).slice();
+            return vscode.window.showQuickPick( tags, { matchOnDetail: true, matchOnDescription: true, canPickMany: true, placeHolder: "Select tags to remove" } ).then( function( tagsToRemove )
             {
-                tagsToRemove.map( tag =>
+                if( tagsToRemove )
                 {
-                    tags = tags.filter( t => tag != t );
-                } );
-                updateSetting( 'general.tags', tags, vscode.ConfigurationTarget.Global );
-            }
+                    tagsToRemove.forEach( tag =>
+                    {
+                        tags = tags.filter( t => tag != t );
+                    } );
+                    return updateSetting( 'general.tags', tags, vscode.ConfigurationTarget.Global );
+                }
+            } );
         } );
     }
 
@@ -2884,22 +3147,21 @@ function activate( context )
     {
         if( markdownUpdatePopupOpen === false && ignoreMarkdownUpdate === false )
         {
-            if( getSetting( 'regex.regex', '' ).indexOf( "|^\\s*- \\[ \\])" ) > -1 )
+            if( getSetting( 'regex.regex', '' ).indexOf( utils.LEGACY_MARKDOWN_TASK_FRAGMENT ) > -1 )
             {
                 markdownUpdatePopupOpen = true;
                 setTimeout( function()
                 {
-                    // Information messages seem to self close after 15 seconds.
                     markdownUpdatePopupOpen = false;
                 }, 15000 );
                 var message = identity.DISPLAY_NAME + ": There is now an improved method of locating markdown TODOs.";
                 var buttons = [ MORE_INFO_BUTTON, NEVER_SHOW_AGAIN_BUTTON ];
                 if( getSetting( 'regex.regex', '' ) === getCurrentConfiguration().inspect( 'regex.regex' ).defaultValue )
                 {
-                    message += " Update settings automatically?";
+                    message += " Apply settings automatically?";
                     buttons.unshift( YES_BUTTON );
                 }
-                vscode.window.showInformationMessage( message, ...buttons ).then( function( button )
+                observeOperationFailure( 'process markdown migration prompt', vscode.window.showInformationMessage( message, ...buttons ).then( function( button )
                 {
                     markdownUpdatePopupOpen = false;
                     if( button === undefined )
@@ -2908,21 +3170,26 @@ function activate( context )
                     }
                     else if( button === YES_BUTTON )
                     {
-                        ignoreMarkdownUpdate = true;
-                        addTag( '[ ]' );
-                        addTag( '[x]' );
-                        updateSetting( 'regex.regex', '(^|//|#|<!--|;|/\\*|^[ \\t]*(-|\\d+.))\\s*(?=\\[x\\]|\\[ \\]|[A-Za-z0-9_])($TAGS)(?![A-Za-z0-9_])', vscode.ConfigurationTarget.Global );
+                        return Promise.all( [
+                            addTags( [ '[ ]', '[x]' ] ),
+                            updateSetting( 'regex.regex', utils.DEFAULT_REGEX_SOURCE, vscode.ConfigurationTarget.Global )
+                        ] ).then( function()
+                        {
+                            ignoreMarkdownUpdate = true;
+                        } );
                     }
                     else if( button === MORE_INFO_BUTTON )
                     {
-                        vscode.env.openExternal( vscode.Uri.parse( "https://github.com/FanaticPythoner/better-todo-tree#markdown-support" ) );
+                        return vscode.env.openExternal( vscode.Uri.parse( "https://github.com/FanaticPythoner/better-todo-tree#markdown-support" ) );
                     }
                     else if( button === NEVER_SHOW_AGAIN_BUTTON )
                     {
-                        context.globalState.update( 'ignoreMarkdownUpdate', true );
-                        ignoreMarkdownUpdate = true;
+                        return writeGlobalStateEntry( { key: 'ignoreMarkdownUpdate', value: true } ).then( function()
+                        {
+                            ignoreMarkdownUpdate = true;
+                        } );
                     }
-                } );
+                } ) );
             }
         }
     }
@@ -3012,7 +3279,7 @@ function activate( context )
                     } );
                 } );
 
-                updates.push( context.globalState.update( legacySettingImportMarker, 225 ) );
+                updates.push( writeGlobalStateEntry( { key: legacySettingImportMarker, value: 225 } ) );
             }
 
             var legacyRootConfiguration = getLegacyConfiguration();
@@ -3057,22 +3324,22 @@ function activate( context )
             {
                 if( getSetting( 'tree.showInExplorer', false ) === true )
                 {
-                    vscode.commands.executeCommand( 'vscode.moveViews', {
+                    observeOperationFailure( 'move deprecated tree view', vscode.commands.executeCommand( 'vscode.moveViews', {
                         viewIds: [ identity.VIEW_ID ],
                         destinationId: 'workbench.view.explorer'
-                    } );
+                    } ) );
 
-                    vscode.window.showInformationMessage( identity.DISPLAY_NAME + ": 'showInExplorer' has been deprecated. View can be dragged to any VS Code location.", OPEN_SETTINGS_BUTTON, NEVER_SHOW_AGAIN_BUTTON ).then( function( button )
+                    observeOperationFailure( 'process showInExplorer migration prompt', vscode.window.showInformationMessage( identity.DISPLAY_NAME + ": 'showInExplorer' has been deprecated. The view can now be dragged to another location.", OPEN_SETTINGS_BUTTON, NEVER_SHOW_AGAIN_BUTTON ).then( function( button )
                     {
                         if( button === OPEN_SETTINGS_BUTTON )
                         {
-                            vscode.commands.executeCommand( 'workbench.action.openSettingsJson', identity.CURRENT_NAMESPACE + '.tree.showInExplorer' );
+                            return vscode.commands.executeCommand( 'workbench.action.openSettingsJson', identity.CURRENT_NAMESPACE + '.tree.showInExplorer' );
                         }
                         else if( button === NEVER_SHOW_AGAIN_BUTTON )
                         {
-                            context.globalState.update( 'migratedVersion', 189 );
+                            return writeGlobalStateEntry( { key: 'migratedVersion', value: 189 } );
                         }
-                    } );
+                    } ) );
                 }
             }
 
@@ -3081,17 +3348,17 @@ function activate( context )
                 var validValues = [ 'start of line', 'start of todo', 'end of todo' ];
                 if( validValues.indexOf( getSetting( 'general.revealBehaviour', 'start of todo' ) ) === -1 )
                 {
-                    vscode.window.showInformationMessage( identity.DISPLAY_NAME + ": some 'revealBehaviour' settings have been removed to make the extension more consistent with VSCode.", OPEN_SETTINGS_BUTTON, NEVER_SHOW_AGAIN_BUTTON ).then( function( button )
+                    observeOperationFailure( 'process reveal behaviour migration prompt', vscode.window.showInformationMessage( identity.DISPLAY_NAME + ": some 'revealBehaviour' settings have been removed to make the extension more consistent with VSCode.", OPEN_SETTINGS_BUTTON, NEVER_SHOW_AGAIN_BUTTON ).then( function( button )
                     {
                         if( button === OPEN_SETTINGS_BUTTON )
                         {
-                            vscode.commands.executeCommand( 'workbench.action.openSettings', identity.CURRENT_NAMESPACE + '.general.revealBehaviour' );
+                            return vscode.commands.executeCommand( 'workbench.action.openSettings', identity.CURRENT_NAMESPACE + '.general.revealBehaviour' );
                         }
                         else if( button === NEVER_SHOW_AGAIN_BUTTON )
                         {
-                            context.globalState.update( 'migratedVersion', 210 );
+                            return writeGlobalStateEntry( { key: 'migratedVersion', value: 210 } );
                         }
-                    } );
+                    } ) );
                 }
             }
 
@@ -3099,21 +3366,21 @@ function activate( context )
             {
                 if( getSetting( 'general.enableFileWatcher', false ) === true )
                 {
-                    vscode.window.showInformationMessage( identity.DISPLAY_NAME + ": File watcher functionality will be removed in the next version of the extension.", MORE_INFO_BUTTON, OPEN_SETTINGS_BUTTON, NEVER_SHOW_AGAIN_BUTTON ).then( function( button )
+                    observeOperationFailure( 'process file watcher migration prompt', vscode.window.showInformationMessage( identity.DISPLAY_NAME + ": File watcher functionality will be removed in the next version of the extension.", MORE_INFO_BUTTON, OPEN_SETTINGS_BUTTON, NEVER_SHOW_AGAIN_BUTTON ).then( function( button )
                     {
                         if( button == MORE_INFO_BUTTON )
                         {
-                            vscode.env.openExternal( vscode.Uri.parse( "https://github.com/FanaticPythoner/better-todo-tree/issues/723" ) );
+                            return vscode.env.openExternal( vscode.Uri.parse( "https://github.com/FanaticPythoner/better-todo-tree/issues/723" ) );
                         }
                         else if( button === OPEN_SETTINGS_BUTTON )
                         {
-                            vscode.commands.executeCommand( 'workbench.action.openSettingsJson', identity.CURRENT_NAMESPACE + '.general.enableFileWatcher' );
+                            return vscode.commands.executeCommand( 'workbench.action.openSettingsJson', identity.CURRENT_NAMESPACE + '.general.enableFileWatcher' );
                         }
                         else if( button === NEVER_SHOW_AGAIN_BUTTON )
                         {
-                            context.globalState.update( 'migratedVersion', 223 );
+                            return writeGlobalStateEntry( { key: 'migratedVersion', value: 223 } );
                         }
-                    } );
+                    } ) );
                 }
             }
 
@@ -3125,7 +3392,7 @@ function activate( context )
                 if( currentSchemes !== schemesSettings.defaultValue )
                 {
                     var target = settingLocation( 'highlights.schemes' );
-                    updateSetting( 'general.schemes', currentSchemes, target );
+                    updates.push( updateSetting( 'general.schemes', currentSchemes, target ) );
                 }
             }
 
@@ -3138,13 +3405,15 @@ function activate( context )
         function showInTree( uri, options )
         {
             options = options || {};
+            var revealPromise = Promise.resolve();
             provider.getElement( uri.fsPath, function( element )
             {
                 if( todoTreeView.visible === true )
                 {
-                    todoTreeView.reveal( element, { focus: false, select: options.select !== false } );
+                    revealPromise = todoTreeView.reveal( element, { focus: false, select: options.select !== false } );
                 }
             } );
+            return revealPromise;
         }
 
         function triggerHighlightsForDocument( document )
@@ -3234,7 +3503,7 @@ function activate( context )
                     {
                         setTimeout( function()
                         {
-                            showInTree( ownerUri, { select: false } );
+                            observeOperationFailure( 'track active file in tree', showInTree( ownerUri, { select: false } ) );
                         }, 500 );
                     }
                     selectedDocument = undefined;
@@ -3293,82 +3562,96 @@ function activate( context )
 
         registerCommandPair( 'openUrl', ( url ) =>
         {
-            debug( "Opening " + url );
-            vscode.env.openExternal( vscode.Uri.parse( url ) );
-        } );
+            return runCommandOperation( 'open url', function()
+            {
+                debug( "Opening " + url );
+                return vscode.env.openExternal( vscode.Uri.parse( url ) );
+            } );
+        }, 'open url' );
 
         registerCommandPair( 'filter', function()
         {
-            vscode.window.showInputBox( { prompt: "Filter tree" } ).then(
-                function( term )
+            return runCommandOperation( 'set tree filter', function()
+            {
+                return vscode.window.showInputBox( { prompt: "Filter tree" } ).then( function( term )
                 {
-                    currentFilter = term;
-                    if( currentFilter )
+                    if( term )
                     {
-                        context.workspaceState.update( 'filtered', true );
-                        context.workspaceState.update( 'currentFilter', currentFilter );
-                        provider.finalizePendingChanges( currentFilter, { refilterAll: true } );
-                        updateInformation();
-                        refreshTree();
+                        return persistTreeFilter( term );
                     }
                 } );
+            } );
         } );
 
         registerCommandPair( 'stopScan', function()
         {
             interruptActiveScan();
-        } );
+        }, 'stop scan' );
 
         registerCommandPair( 'exportTree', function()
         {
-            var exportPath = getSetting( 'general.exportPath', '~/better-todo-tree-%Y%m%d-%H%M.txt' );
-            exportPath = utils.replaceEnvironmentVariables( exportPath );
-            exportPath = utils.formatExportPath( exportPath );
-
-            var uri = vscode.Uri.parse( identity.EXPORT_SCHEME + ':' + exportPath );
-            vscode.workspace.openTextDocument( uri ).then( function( document )
+            return runCommandOperation( 'export tree', function()
             {
-                vscode.window.showTextDocument( document, { preview: true } );
+                var exportPath = getSetting( 'general.exportPath', '~/better-todo-tree-%Y%m%d-%H%M.txt' );
+                exportPath = utils.replaceEnvironmentVariables( exportPath );
+                exportPath = utils.formatExportPath( exportPath );
+
+                var uri = vscode.Uri.parse( identity.EXPORT_SCHEME + ':' + exportPath );
+                return vscode.workspace.openTextDocument( uri ).then( function( document )
+                {
+                    return vscode.window.showTextDocument( document, { preview: true } );
+                } );
             } );
         } );
 
         registerCommandPair( 'showOnlyThisFolder', function( node )
         {
-            var rootNode = tree.locateWorkspaceNode( node.fsPath );
-            var includeGlobs = [ utils.createFolderGlob( node.fsPath, rootNode.fsPath, "/*" ) ];
-            context.workspaceState.update( 'includeGlobs', includeGlobs );
-            rebuild();
-            dumpFolderFilter();
+            return runCommandOperation( 'show only this folder', function()
+            {
+                var rootNode = tree.locateWorkspaceNode( node.fsPath );
+                var includeGlobs = [ utils.createFolderGlob( node.fsPath, rootNode.fsPath, "/*" ) ];
+                return updateWorkspaceState( [ { key: 'includeGlobs', value: includeGlobs } ] ).then( function()
+                {
+                    rebuild();
+                    dumpFolderFilter();
+                } );
+            } );
         } );
 
         registerCommandPair( 'showOnlyThisFolderAndSubfolders', function( node )
         {
-            var rootNode = tree.locateWorkspaceNode( node.fsPath );
-            var includeGlobs = [ utils.createFolderGlob( node.fsPath, rootNode.fsPath, "/**/*" ) ];
-            context.workspaceState.update( 'includeGlobs', includeGlobs );
-            rebuild();
-            dumpFolderFilter();
+            return runCommandOperation( 'show only this folder and subfolders', function()
+            {
+                var rootNode = tree.locateWorkspaceNode( node.fsPath );
+                var includeGlobs = [ utils.createFolderGlob( node.fsPath, rootNode.fsPath, "/**/*" ) ];
+                return updateWorkspaceState( [ { key: 'includeGlobs', value: includeGlobs } ] ).then( function()
+                {
+                    rebuild();
+                    dumpFolderFilter();
+                } );
+            } );
         } );
 
         registerCommandPair( 'switchScope', function()
         {
-            var scopes = getSetting( 'filtering.scopes', [] );
+            return runCommandOperation( 'switch filter scope', function()
+            {
+                var scopes = getSetting( 'filtering.scopes', [] );
 
-            if( !scopes || scopes.length === 0 )
-            {
-                vscode.window.showWarningMessage( identity.DISPLAY_NAME + ": No scopes configured (see " + identity.CURRENT_NAMESPACE + ".filtering.scopes setting)", OPEN_SETTINGS_BUTTON, OK_BUTTON ).then( function( button )
+                if( !scopes || scopes.length === 0 )
                 {
-                    if( button === OPEN_SETTINGS_BUTTON )
+                    return vscode.window.showWarningMessage( identity.DISPLAY_NAME + ": No scopes configured (see " + identity.CURRENT_NAMESPACE + ".filtering.scopes setting)", OPEN_SETTINGS_BUTTON, OK_BUTTON ).then( function( button )
                     {
-                        updateSetting( 'filtering.scopes', [], vscode.ConfigurationTarget.Global ).then( function()
+                        if( button === OPEN_SETTINGS_BUTTON )
                         {
-                            vscode.commands.executeCommand( 'workbench.action.openSettingsJson', identity.CURRENT_NAMESPACE + '.filtering.scopes' );
-                        } );
-                    }
-                } );
-            }
-            else
-            {
+                            return updateSetting( 'filtering.scopes', [], vscode.ConfigurationTarget.Global ).then( function()
+                            {
+                                return vscode.commands.executeCommand( 'workbench.action.openSettingsJson', identity.CURRENT_NAMESPACE + '.filtering.scopes' );
+                            } );
+                        }
+                    } );
+                }
+
                 var items = [];
                 var currentIncludeGlobs = JSON.stringify( context.workspaceState.get( 'includeGlobs' ) || [] );
                 var currentExcludeGlobs = JSON.stringify( context.workspaceState.get( 'excludeGlobs' ) || [] );
@@ -3385,120 +3668,151 @@ function activate( context )
                     items.push( scope );
                 } );
                 var options = { placeHolder: "Select scope..." };
-                vscode.window.showQuickPick( items, options ).then( function( scope )
+                return vscode.window.showQuickPick( items, options ).then( function( scope )
                 {
                     if( scope )
                     {
                         var currentConfig = scopes.find( c => c.name === scope.label );
 
-                        context.workspaceState.update( 'includeGlobs', utils.toGlobArray( currentConfig.includeGlobs ) );
-                        context.workspaceState.update( 'excludeGlobs', utils.toGlobArray( currentConfig.excludeGlobs ) );
-
-                        rebuild();
-                        dumpFolderFilter();
+                        return updateWorkspaceState( [
+                            { key: 'includeGlobs', value: utils.toGlobArray( currentConfig.includeGlobs ) },
+                            { key: 'excludeGlobs', value: utils.toGlobArray( currentConfig.excludeGlobs ) }
+                        ] ).then( function()
+                        {
+                            rebuild();
+                            dumpFolderFilter();
+                        } );
                     }
                 } );
-            }
-
+            } );
         } );
 
         registerCommandPair( 'excludeThisFolder', function( node )
         {
-            var rootNode = tree.locateWorkspaceNode( node.fsPath );
-            var glob = utils.createFolderGlob( node.fsPath, rootNode.fsPath, "/**/*" );
-            var excludeGlobs = context.workspaceState.get( 'excludeGlobs' ) || [];
-            if( excludeGlobs.indexOf( glob ) === -1 )
+            return runCommandOperation( 'exclude this folder', function()
             {
-                excludeGlobs.push( glob );
-                context.workspaceState.update( 'excludeGlobs', excludeGlobs );
-                rebuild();
-                dumpFolderFilter();
-            }
+                var rootNode = tree.locateWorkspaceNode( node.fsPath );
+                var glob = utils.createFolderGlob( node.fsPath, rootNode.fsPath, "/**/*" );
+                var excludeGlobs = ( context.workspaceState.get( 'excludeGlobs' ) || [] ).slice();
+                if( excludeGlobs.indexOf( glob ) === -1 )
+                {
+                    excludeGlobs.push( glob );
+                    return updateWorkspaceState( [ { key: 'excludeGlobs', value: excludeGlobs } ] ).then( function()
+                    {
+                        rebuild();
+                        dumpFolderFilter();
+                    } );
+                }
+            } );
         } );
 
         registerCommandPair( 'excludeThisFile', function( node )
         {
-            var excludeGlobs = context.workspaceState.get( 'excludeGlobs' ) || [];
-            if( excludeGlobs.indexOf( node.fsPath ) === -1 )
+            return runCommandOperation( 'exclude this file', function()
             {
-                excludeGlobs.push( node.fsPath );
-                context.workspaceState.update( 'excludeGlobs', excludeGlobs );
-                rebuild();
-                dumpFolderFilter();
-            }
+                var excludeGlobs = ( context.workspaceState.get( 'excludeGlobs' ) || [] ).slice();
+                if( excludeGlobs.indexOf( node.fsPath ) === -1 )
+                {
+                    excludeGlobs.push( node.fsPath );
+                    return updateWorkspaceState( [ { key: 'excludeGlobs', value: excludeGlobs } ] ).then( function()
+                    {
+                        rebuild();
+                        dumpFolderFilter();
+                    } );
+                }
+            } );
         } );
 
         registerCommandPair( 'removeFilter', function()
         {
-            var CLEAR_TREE_FILTER = "Clear Tree Filter";
-            var excludeGlobs = context.workspaceState.get( 'excludeGlobs' ) || [];
-            var includeGlobs = context.workspaceState.get( 'includeGlobs' ) || [];
-            var choices = [];
+            return runCommandOperation( 'remove filters', function()
+            {
+                var CLEAR_TREE_FILTER = "Clear Tree Filter";
+                var excludeGlobs = ( context.workspaceState.get( 'excludeGlobs' ) || [] ).slice();
+                var includeGlobs = ( context.workspaceState.get( 'includeGlobs' ) || [] ).slice();
+                var choices = [];
 
-            if( currentFilter )
-            {
-                choices[ CLEAR_TREE_FILTER ] = {};
-            }
+                if( currentFilter )
+                {
+                    choices[ CLEAR_TREE_FILTER ] = {};
+                }
 
-            excludeGlobs.forEach( function( excludeGlob )
-            {
-                if( excludeGlob.endsWith( "/**/*" ) )
+                excludeGlobs.forEach( function( excludeGlob )
                 {
-                    choices[ "Exclude Folder: " + excludeGlob.slice( 0, -5 ) ] = { exclude: excludeGlob };
-                }
-                else if( excludeGlob.indexOf( '*' ) === -1 )
-                {
-                    choices[ "Exclude File: " + excludeGlob ] = { exclude: excludeGlob };
-                }
-                else
-                {
-                    choices[ "Exclude: " + excludeGlob ] = { exclude: excludeGlob };
-                }
-            } );
-            includeGlobs.forEach( function( includeGlob )
-            {
-                if( includeGlob.endsWith( "/**/*" ) )
-                {
-                    choices[ "Include Folder and Subfolders: " + includeGlob.slice( 0, -5 ) ] = { include: includeGlob };
-                }
-                else if( includeGlob.endsWith( "/*" ) )
-                {
-                    choices[ "Include Folder: " + includeGlob.slice( 0, -2 ) ] = { include: includeGlob };
-                }
-                else
-                {
-                    choices[ "Include: " + includeGlob ] = { include: includeGlob };
-                }
-            } );
-
-            vscode.window.showQuickPick( Object.keys( choices ), { matchOnDetail: true, matchOnDescription: true, canPickMany: true, placeHolder: "Select filters to remove" } ).then( function( selection )
-            {
-                if( selection )
-                {
-                    if( selection.indexOf( CLEAR_TREE_FILTER ) === 0 )
+                    if( excludeGlob.endsWith( "/**/*" ) )
                     {
-                        clearTreeFilter();
-                        selection.shift();
+                        choices[ "Exclude Folder: " + excludeGlob.slice( 0, -5 ) ] = { exclude: excludeGlob };
                     }
-
-                    selection.map( function( choice )
+                    else if( excludeGlob.indexOf( '*' ) === -1 )
                     {
-                        if( choices[ choice ].include )
-                        {
-                            includeGlobs = includeGlobs.filter( f => choices[ choice ].include != f );
-                        }
-                        else if( choices[ choice ].exclude )
-                        {
-                            excludeGlobs = excludeGlobs.filter( f => choices[ choice ].exclude != f );
-                        }
-                    } );
+                        choices[ "Exclude File: " + excludeGlob ] = { exclude: excludeGlob };
+                    }
+                    else
+                    {
+                        choices[ "Exclude: " + excludeGlob ] = { exclude: excludeGlob };
+                    }
+                } );
+                includeGlobs.forEach( function( includeGlob )
+                {
+                    if( includeGlob.endsWith( "/**/*" ) )
+                    {
+                        choices[ "Include Folder and Subfolders: " + includeGlob.slice( 0, -5 ) ] = { include: includeGlob };
+                    }
+                    else if( includeGlob.endsWith( "/*" ) )
+                    {
+                        choices[ "Include Folder: " + includeGlob.slice( 0, -2 ) ] = { include: includeGlob };
+                    }
+                    else
+                    {
+                        choices[ "Include: " + includeGlob ] = { include: includeGlob };
+                    }
+                } );
 
-                    context.workspaceState.update( 'includeGlobs', includeGlobs );
-                    context.workspaceState.update( 'excludeGlobs', excludeGlobs );
+                return vscode.window.showQuickPick( Object.keys( choices ), { matchOnDetail: true, matchOnDescription: true, canPickMany: true, placeHolder: "Select filters to remove" } ).then( function( selection )
+                {
+                    if( selection )
+                    {
+                        var clearsTreeFilter = selection.indexOf( CLEAR_TREE_FILTER ) !== -1;
+                        var updates = [
+                            { key: 'includeGlobs', value: includeGlobs },
+                            { key: 'excludeGlobs', value: excludeGlobs }
+                        ];
 
-                    rebuild();
-                    dumpFolderFilter();
-                }
+                        selection.forEach( function( choice )
+                        {
+                            if( choices[ choice ].include )
+                            {
+                                includeGlobs = includeGlobs.filter( f => choices[ choice ].include != f );
+                            }
+                            else if( choices[ choice ].exclude )
+                            {
+                                excludeGlobs = excludeGlobs.filter( f => choices[ choice ].exclude != f );
+                            }
+                        } );
+
+                        updates[ 0 ].value = includeGlobs;
+                        updates[ 1 ].value = excludeGlobs;
+
+                        if( clearsTreeFilter )
+                        {
+                            updates.push(
+                                { key: 'filtered', value: false },
+                                { key: 'currentFilter', value: undefined }
+                            );
+                        }
+
+                        return updateWorkspaceState( updates ).then( function()
+                        {
+                            if( clearsTreeFilter )
+                            {
+                                applyTreeFilter( undefined );
+                            }
+
+                            rebuild();
+                            dumpFolderFilter();
+                        } );
+                    }
+                } );
             } );
         } );
 
@@ -3528,51 +3842,70 @@ function activate( context )
                 } );
             }
 
-            context.workspaceState.update( 'includeGlobs', [] );
-            context.workspaceState.update( 'excludeGlobs', [] );
-            context.workspaceState.update( 'expandedNodes', {} );
-            utils.clearSubmoduleExcludeGlobCache();
-            context.workspaceState.update( 'currentFilter', undefined );
-            context.workspaceState.update( 'filtered', undefined );
-            context.workspaceState.update( 'tagsOnly', undefined );
-            context.workspaceState.update( 'flat', undefined );
-            context.workspaceState.update( 'expanded', undefined );
-            context.workspaceState.update( 'grouped', undefined );
-            context.workspaceState.update( 'groupedByTag', undefined );
-            context.workspaceState.update( 'groupedBySubTag', undefined );
-            context.globalState.update( 'migratedVersion', undefined );
-            context.globalState.update( 'ignoreMarkdownUpdate', undefined );
-            context.globalState.update( legacySettingImportMarker, undefined );
-
-            Promise.all( [
-                purgeFolder( context.storageUri && context.storageUri.fsPath ),
-                purgeFolder( context.globalStorageUri && context.globalStorageUri.fsPath )
-            ] ).catch( function( error )
+            return runCommandOperation( 'reset cache', function()
             {
-                vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": Failed to reset cache contents (" + error.message + ")" );
+                return Promise.all( [
+                    updateWorkspaceState( [
+                        { key: 'includeGlobs', value: [] },
+                        { key: 'excludeGlobs', value: [] },
+                        { key: 'expandedNodes', value: {} },
+                        { key: 'currentFilter', value: undefined },
+                        { key: 'filtered', value: undefined },
+                        { key: 'tagsOnly', value: undefined },
+                        { key: 'flat', value: undefined },
+                        { key: 'expanded', value: undefined },
+                        { key: 'grouped', value: undefined },
+                        { key: 'groupedByTag', value: undefined },
+                        { key: 'groupedBySubTag', value: undefined }
+                    ] ),
+                    updateGlobalState( [
+                        { key: 'migratedVersion', value: undefined },
+                        { key: 'ignoreMarkdownUpdate', value: undefined },
+                        { key: legacySettingImportMarker, value: undefined }
+                    ] ),
+                    purgeFolder( context.storageUri && context.storageUri.fsPath ),
+                    purgeFolder( context.globalStorageUri && context.globalStorageUri.fsPath )
+                ] ).then( function()
+                {
+                    utils.clearSubmoduleExcludeGlobCache();
+                } );
             } );
         } );
 
         registerCommandPair( 'resetAllFilters', function()
         {
-            context.workspaceState.update( 'includeGlobs', [] );
-            context.workspaceState.update( 'excludeGlobs', [] );
-            rebuild();
-            dumpFolderFilter();
-            clearTreeFilter();
+            return runCommandOperation( 'reset filters', function()
+            {
+                return updateWorkspaceState( [
+                    { key: 'includeGlobs', value: [] },
+                    { key: 'excludeGlobs', value: [] },
+                    { key: 'filtered', value: false },
+                    { key: 'currentFilter', value: undefined }
+                ] ).then( function()
+                {
+                    rebuild();
+                    dumpFolderFilter();
+                    return applyTreeFilter( undefined );
+                } );
+            } );
         } );
 
         registerCommandPair( 'reveal', function()
         {
-            if( vscode.window.activeTextEditor )
+            return runCommandOperation( 'reveal active editor in tree', function()
             {
-                var ownerUri = getOwnerUriForDocument( vscode.window.activeTextEditor.document );
-
-                if( ownerUri )
+                if( vscode.window.activeTextEditor )
                 {
-                    showInTree( ownerUri, { select: true } );
+                    var ownerUri = getOwnerUriForDocument( vscode.window.activeTextEditor.document );
+
+                    if( ownerUri )
+                    {
+                        return showInTree( ownerUri, { select: true } );
+                    }
                 }
-            }
+
+                return Promise.resolve();
+            } );
         } );
 
         registerCommandPair( 'toggleItemCounts', function()
@@ -3595,136 +3928,168 @@ function activate( context )
 
         registerCommandPair( 'goToNext', function()
         {
-            var editor = vscode.window.activeTextEditor;
-
-            var text = editor.document.getText();
-            var regex = utils.getRegexForEditorSearch( false );
-
-            var newSelections = [];
-            var ok = true;
-
-            editor.selections.map( function( selection )
+            return runCommandOperation( 'go to next todo', function()
             {
-                var cursorOffset = editor.document.offsetAt( selection.start );
-                var textToSearch = text.substring( cursorOffset );
-                var matches = textToSearch.match( regex );
-
-                if( matches && matches.length && matches.index === 0 )
+                var editor = vscode.window.activeTextEditor;
+                if( !editor )
                 {
-                    cursorOffset += matches[ 0 ].length;
-                    textToSearch = text.substring( cursorOffset );
-                    matches = textToSearch.match( regex );
+                    return Promise.resolve();
                 }
 
-                if( matches && matches.length )
+                var text = editor.document.getText();
+                var regex = utils.getRegexForEditorSearch( false );
+
+                var newSelections = [];
+                var ok = true;
+
+                editor.selections.forEach( function( selection )
                 {
-                    var offset = cursorOffset + matches.index;
-                    if( matches[ 0 ][ 0 ] === '\n' )
+                    var cursorOffset = editor.document.offsetAt( selection.start );
+                    var textToSearch = text.substring( cursorOffset );
+                    var matches = textToSearch.match( regex );
+
+                    if( matches && matches.length && matches.index === 0 )
                     {
-                        ++offset;
+                        cursorOffset += matches[ 0 ].length;
+                        textToSearch = text.substring( cursorOffset );
+                        matches = textToSearch.match( regex );
                     }
-                    var newPosition = editor.document.positionAt( offset );
-                    newSelections.push( new vscode.Selection( newPosition, newPosition ) );
-                }
-                else
+
+                    if( matches && matches.length )
+                    {
+                        var offset = cursorOffset + matches.index;
+                        if( matches[ 0 ][ 0 ] === '\n' )
+                        {
+                            ++offset;
+                        }
+                        var newPosition = editor.document.positionAt( offset );
+                        newSelections.push( new vscode.Selection( newPosition, newPosition ) );
+                    }
+                    else
+                    {
+                        ok = false;
+                    }
+                } );
+
+                if( ok && newSelections.length > 0 )
                 {
-                    ok = false;
+                    editor.selections = newSelections;
+
+                    editor.revealRange( new vscode.Range( newSelections[ 0 ].start, newSelections[ 0 ].start ) );
                 }
+
+                return Promise.resolve();
             } );
-
-            if( ok && newSelections.length > 0 )
-            {
-                editor.selections = newSelections;
-
-                editor.revealRange( new vscode.Range( newSelections[ 0 ].start, newSelections[ 0 ].start ) );
-            }
         } );
 
         registerCommandPair( 'goToPrevious', function()
         {
-            var editor = vscode.window.activeTextEditor;
-
-            var text = editor.document.getText();
-
-            var newSelections = [];
-            var ok = true;
-
-            editor.selections.map( function( selection )
+            return runCommandOperation( 'go to previous todo', function()
             {
-                var cursorOffset = editor.document.offsetAt( selection.start );
-                var textToSearch = text.substring( 0, cursorOffset );
-
-                var regex = utils.getRegexForEditorSearch( true );
-
-                var lastMatch;
-                var lastMatchOffset = -1;
-
-                while( result = regex.exec( textToSearch ) )
+                var editor = vscode.window.activeTextEditor;
+                if( !editor )
                 {
-                    lastMatch = result;
-                    lastMatchOffset = result.index;
+                    return Promise.resolve();
                 }
 
-                if( lastMatchOffset !== -1 )
+                var text = editor.document.getText();
+
+                var newSelections = [];
+                var ok = true;
+
+                editor.selections.forEach( function( selection )
                 {
-                    if( lastMatch[ 0 ][ 0 ] === '\n' )
+                    var cursorOffset = editor.document.offsetAt( selection.start );
+                    var textToSearch = text.substring( 0, cursorOffset );
+
+                    var regex = utils.getRegexForEditorSearch( true );
+
+                    var result;
+                    var lastMatch;
+                    var lastMatchOffset = -1;
+
+                    while( ( result = regex.exec( textToSearch ) ) )
                     {
-                        ++lastMatchOffset;
+                        lastMatch = result;
+                        lastMatchOffset = result.index;
                     }
-                    var newPosition = editor.document.positionAt( lastMatchOffset );
-                    newSelections.push( new vscode.Selection( newPosition, newPosition ) );
-                }
-                else
+
+                    if( lastMatchOffset !== -1 )
+                    {
+                        if( lastMatch[ 0 ][ 0 ] === '\n' )
+                        {
+                            ++lastMatchOffset;
+                        }
+                        var newPosition = editor.document.positionAt( lastMatchOffset );
+                        newSelections.push( new vscode.Selection( newPosition, newPosition ) );
+                    }
+                    else
+                    {
+                        ok = false;
+                    }
+                } );
+
+                if( ok && newSelections.length > 0 )
                 {
-                    ok = false;
+                    editor.selections = newSelections;
+
+                    editor.revealRange( new vscode.Range( newSelections[ 0 ].start, newSelections[ 0 ].start ) );
                 }
+
+                return Promise.resolve();
             } );
-
-            if( ok && newSelections.length > 0 )
-            {
-                editor.selections = newSelections;
-
-                editor.revealRange( new vscode.Range( newSelections[ 0 ].start, newSelections[ 0 ].start ) );
-            }
         } );
 
         registerCommandPair( 'revealInFile', function( uri, selection )
         {
-            function flashLine()
+            return runCommandOperation( 'reveal todo in file', function()
             {
-                var editor = vscode.window.activeTextEditor;
-
-                var currentLineRange = editor.document.lineAt( editor.selection.active.line ).range;
-
-                var decorationOptions = {
-                    isWholeLine: true,
-                };
-
-                var flashBackgroundColour = new vscode.ThemeColor( 'editor.rangeHighlightBackground' );
-
-                decorationOptions.light = { backgroundColor: flashBackgroundColour };
-                decorationOptions.dark = { backgroundColor: flashBackgroundColour };
-
-                var lineFlashStyle = vscode.window.createTextEditorDecorationType( decorationOptions );
-
-                var lineRangeHighlight = { range: currentLineRange };
-
-                editor.setDecorations( lineFlashStyle, [ lineRangeHighlight ] );
-
-                setTimeout( function()
+                function flashLine()
                 {
-                    editor.setDecorations( lineFlashStyle, [] );
-                }, 150 );
-            }
-            vscode.commands.executeCommand( 'vscode.open', uri, selection ).then(
-                flashLine
-            );
+                    var editor = vscode.window.activeTextEditor;
+                    if( !editor )
+                    {
+                        return;
+                    }
+
+                    var currentLineRange = editor.document.lineAt( editor.selection.active.line ).range;
+
+                    var decorationOptions = {
+                        isWholeLine: true,
+                    };
+
+                    var flashBackgroundColour = new vscode.ThemeColor( 'editor.rangeHighlightBackground' );
+
+                    decorationOptions.light = { backgroundColor: flashBackgroundColour };
+                    decorationOptions.dark = { backgroundColor: flashBackgroundColour };
+
+                    var lineFlashStyle = vscode.window.createTextEditorDecorationType( decorationOptions );
+
+                    var lineRangeHighlight = { range: currentLineRange };
+
+                    editor.setDecorations( lineFlashStyle, [ lineRangeHighlight ] );
+
+                    setTimeout( function()
+                    {
+                        editor.setDecorations( lineFlashStyle, [] );
+                        if( lineFlashStyle.dispose )
+                        {
+                            lineFlashStyle.dispose();
+                        }
+                    }, 150 );
+                }
+
+                return vscode.commands.executeCommand( 'vscode.open', uri, selection ).then( flashLine );
+            } );
         } );
 
         context.subscriptions.push( todoTreeView.onDidExpandElement( function( e ) { provider.setExpanded( e.element.fsPath, true ); } ) );
         context.subscriptions.push( todoTreeView.onDidCollapseElement( function( e ) { provider.setExpanded( e.element.fsPath, false ); } ) );
 
-        registerCommandPair( 'filterClear', clearTreeFilter );
+        registerCommandPair( 'filterClear', function()
+        {
+            return runCommandOperation( 'clear tree filter', clearTreeFilter );
+        } );
         registerCommandPair( 'refresh', rebuild );
         registerCommandPair( 'cycleViewStyle', cycleViewStyle );
         registerCommandPair( 'showFlatView', showFlatView );
@@ -3741,22 +4106,23 @@ function activate( context )
         registerCommandPair( 'ungroupBySubTag', ungroupBySubTag );
         registerCommandPair( 'addTag', addTagDialog );
         registerCommandPair( 'removeTag', removeTagDialog );
-        registerCommandPair( 'onStatusBarClicked', onStatusBarClicked );
+        registerCommandPair( 'onStatusBarClicked', onStatusBarClicked, 'handle status bar click' );
         registerCommandPair( 'scanWorkspaceAndOpenFiles', scanWorkspaceAndOpenFiles );
         registerCommandPair( 'scanOpenFilesOnly', scanOpenFilesOnly );
         registerCommandPair( 'scanCurrentFileOnly', scanCurrentFileOnly );
         registerCommandPair( 'scanWorkspaceOnly', scanWorkspaceOnly );
         context.subscriptions.push( vscode.commands.registerCommand( identity.COMMANDS.importLegacySettings, function()
         {
-            context.globalState.update( legacySettingImportMarker, undefined ).then( function()
+            return writeGlobalStateEntry( { key: legacySettingImportMarker, value: undefined } ).then( function()
             {
                 return migrateSettings();
             } ).then( function( updateCount )
             {
-                vscode.window.showInformationMessage( identity.DISPLAY_NAME + ": imported legacy settings across " + updateCount + " configuration updates." );
+                return vscode.window.showInformationMessage( identity.DISPLAY_NAME + ": imported legacy settings across " + updateCount + " configuration updates." );
             } ).catch( function( error )
             {
-                vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to import legacy settings (" + error.message + ")" );
+                vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to import legacy settings (" + formatErrorMessage( error ) + ")" );
+                throw error;
             } );
         } ) );
 
@@ -3974,7 +4340,7 @@ function activate( context )
 
         migrateSettings().catch( function( error )
         {
-            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": Failed to migrate legacy settings (" + error.message + ")" );
+            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": Failed to migrate legacy settings (" + formatErrorMessage( error ) + ")" );
         } );
         validateColours();
         validateIcons();

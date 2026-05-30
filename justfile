@@ -228,7 +228,7 @@ build-ext *platforms:
   {{node_bootstrap}}
   node scripts/release/build-vsix.mjs {{platforms}}
 
-# Whole flow: create branch, stage local source changes, wait, push branch, prompt PR.
+# Whole flow: prepare local branch, stage local source changes, wait, push branch, prompt PR.
 # Examples:
 #   just issue-branch-all https://github.com/FanaticPythoner/better-todo-tree/issues/28 https://github.com/FanaticPythoner/better-todo-tree/issues/36
 issue-branch-all *args:

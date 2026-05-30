@@ -2,6 +2,15 @@ var path = require( 'path' );
 
 var regexEngine = require( './regexEngine.js' );
 var utils = require( './utils.js' );
+var regexRegistry = require( './regexRegistry.js' );
+
+var TAG_PLACEHOLDER = regexRegistry.TAG_PLACEHOLDER;
+var TAG_CAPTURE_PLACEHOLDER = regexRegistry.TAG_CAPTURE_PLACEHOLDER;
+var trailingHorizontalWhitespaceRegex = regexRegistry.createRegExp( 'trailingHorizontalWhitespace' );
+var leadingHorizontalWhitespaceRegex = regexRegistry.createRegExp( 'leadingHorizontalWhitespace' );
+var leadingWhitespaceRegex = regexRegistry.createRegExp( 'leadingWhitespace' );
+var identifierCharacterRegex = regexRegistry.createRegExp( 'identifierCharacter' );
+var lineBreakRegex = regexRegistry.createRegExp( 'optionalCarriageReturnLineBreak' );
 
 function getUriFsPath( uri )
 {
@@ -125,7 +134,7 @@ function splitPhysicalLines( text, startOffset )
 
 function trimTrailingEndToken( text, contentStart, endToken )
 {
-    var trimmedRight = text.replace( /[ \t]+$/, '' );
+    var trimmedRight = text.replace( trailingHorizontalWhitespaceRegex, '' );
 
     if( !endToken || !trimmedRight.endsWith( endToken ) )
     {
@@ -149,7 +158,7 @@ function trimCommentLine( lineText, options )
 
     if( options.type === 'singleline' )
     {
-        var leading = rawText.match( /^[ \t]*/ );
+        var leading = rawText.match( leadingHorizontalWhitespaceRegex );
         contentStart = leading ? leading[ 0 ].length : 0;
 
         var singleLineToken = options.singleLineTokens.filter( function( token )
@@ -171,7 +180,7 @@ function trimCommentLine( lineText, options )
     }
     else if( options.type === 'multiline' )
     {
-        var trimmedStart = rawText.match( /^[ \t]*/ );
+        var trimmedStart = rawText.match( leadingHorizontalWhitespaceRegex );
         var baseStart = trimmedStart ? trimmedStart[ 0 ].length : 0;
         var workingText = rawText.slice( baseStart );
         var startToken = options.startToken;
@@ -341,7 +350,7 @@ function getTagCaptureGroupIndex( regexSource )
         return tagCaptureGroupIndexCache.get( regexSource );
     }
 
-    var placeholderIndex = regexSource.indexOf( '($TAGS)' );
+    var placeholderIndex = regexSource.indexOf( TAG_CAPTURE_PLACEHOLDER );
     var captureGroupIndex = placeholderIndex === -1 ? undefined : countCapturingGroups( regexSource, placeholderIndex ) + 1;
 
     tagCaptureGroupIndexCache.set( regexSource, captureGroupIndex );
@@ -467,7 +476,7 @@ function resolveTagCaptureRange( context, match, rawStartOffset )
 function canExtendTagPlaceholderMatch( context )
 {
     return context.resourceConfig.enableMultiLine !== true &&
-        context.resourceConfig.regex.indexOf( "$TAGS" ) > -1;
+        context.resourceConfig.regex.indexOf( TAG_PLACEHOLDER ) > -1;
 }
 
 function shouldExtendTagPlaceholderMatchToLineEnd( allowExtension, rawEndOffset, lineBounds )
@@ -477,7 +486,7 @@ function shouldExtendTagPlaceholderMatchToLineEnd( allowExtension, rawEndOffset,
 
 function extractRegexMatchText( context, matchText, preferredTagOffset )
 {
-    if( context.resourceConfig.regex.indexOf( "$TAGS" ) === -1 )
+    if( context.resourceConfig.regex.indexOf( TAG_PLACEHOLDER ) === -1 )
     {
         return {
             tag: matchText,
@@ -577,8 +586,7 @@ function createPassThroughLines( text )
     } );
 }
 
-var markdownTaskListPrefixSource = '[ \\t]*(?:[-*+]|\\d+\\.)\\s*';
-var markdownTaskListLineRegex = new RegExp( '^(' + markdownTaskListPrefixSource + ')\\[[ xX]\\]' );
+var markdownTaskListLineRegex = regexRegistry.createRegExp( 'markdownTaskListLine' );
 
 function createAnchoredTagMatcher( tags, caseSensitive )
 {
@@ -623,7 +631,7 @@ function createAnchoredTagMatcher( tags, caseSensitive )
             }
             else
             {
-                var whitespaceMatch = text.match( /^\s*/ );
+                var whitespaceMatch = text.match( leadingWhitespaceRegex );
                 prefixLength = whitespaceMatch ? whitespaceMatch[ 0 ].length : 0;
             }
 
@@ -653,7 +661,7 @@ function createAnchoredTagMatcher( tags, caseSensitive )
             }
 
             var boundaryCharacter = text[ prefixLength + bestMatch.length ];
-            if( boundaryCharacter && /[A-Za-z0-9_]/.test( boundaryCharacter ) )
+            if( boundaryCharacter && identifierCharacterRegex.test( boundaryCharacter ) )
             {
                 return undefined;
             }
@@ -673,8 +681,8 @@ function createScanContext( uri, text, snapshot, options )
     var flags = resourceConfig.regexCaseSensitive === true ? '' : 'i';
     var regexSource = options.regexSource || utils.getRegexSource( uri );
     var skipExactRegex = resourceConfig.isDefaultRegex === true || options.skipExactRegex === true;
-    var tagRegex = resourceConfig.regex.indexOf( "$TAGS" ) > -1 ?
-        new RegExp( '(' + utils.getTagRegexSource( uri, resourceConfig.tags ) + ')', flags ) :
+    var tagRegex = resourceConfig.regex.indexOf( TAG_PLACEHOLDER ) > -1 ?
+        new RegExp( regexRegistry.captureSource( utils.getTagRegexSource( uri, resourceConfig.tags ) ), flags ) :
         undefined;
 
     return {
@@ -1137,12 +1145,12 @@ function normalizeRegexExecMatchWithContext( context, match )
         tagEndOffset = extracted.tag && extracted.tag.length > 0 ? tagStartOffset + extracted.tag.length : rawEndOffset;
     }
 
-    var originalLines = matchText.split( /\r?\n/ );
-    var displayText = ( extracted.after || "" ).split( /\r?\n/ )[ 0 ].trim();
+    var originalLines = matchText.split( lineBreakRegex );
+    var displayText = ( extracted.after || "" ).split( lineBreakRegex )[ 0 ].trim();
 
     if( displayText.length === 0 )
     {
-        displayText = ( extracted.before || "" ).split( /\r?\n/ )[ 0 ].trim();
+        displayText = ( extracted.before || "" ).split( lineBreakRegex )[ 0 ].trim();
     }
     if( displayText.length === 0 )
     {

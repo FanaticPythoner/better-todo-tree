@@ -7,10 +7,12 @@ var utils = require( './utils.js' );
 var icons = require( './icons.js' );
 var config = require( './config.js' );
 var identity = require( './extensionIdentity.js' );
+var regexRegistry = require( './regexRegistry.js' );
 
 var workspaceFolders;
 var nodes = [];
 var currentFilter;
+var pathBackslashRegex = regexRegistry.createRegExp( 'pathBackslash', 'g' );
 
 const PATH = "path";
 const TODO = "todo";
@@ -196,7 +198,7 @@ function createFlatNode( fsPath, rootNode, tag, subTag, resourceFsPath )
         label: path.basename( fsPath ),
         pathLabel: pathLabel === '.' ? '' : '(' + pathLabel + ')',
         nodes: [],
-        id: "path:" + ( rootNode ? rootNode.fsPath : '' ) + ":" + relativePath.replace( /\\/g, '/' ) + ":" + ( tag || '' ) + ":" + ( subTag || '' ),
+        id: "path:" + ( rootNode ? rootNode.fsPath : '' ) + ":" + relativePath.replace( pathBackslashRegex, '/' ) + ":" + ( tag || '' ) + ":" + ( subTag || '' ),
         visible: true,
         parent: undefined,
         todoCount: 0,

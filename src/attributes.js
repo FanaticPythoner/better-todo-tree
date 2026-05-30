@@ -1,4 +1,5 @@
 var config;
+var regexRegistry = require( './regexRegistry.js' );
 var compiledResolver;
 var compiledResolverCaseSensitive;
 var compiledResolverHighlights;
@@ -22,7 +23,7 @@ function buildResolver( customHighlight, caseSensitive )
         exactMatches.set( caseSensitive ? key : key.toLowerCase(), settings );
         partialMatchers.push( {
             regex: new RegExp(
-                key.replace( /\\/g, '\\\\' ).replace( /[|{}()[\]^$+*?.-]/g, '\\$&' ),
+                regexRegistry.escapeRegexLiteral( key ),
                 caseSensitive ? '' : 'i'
             ),
             settings: settings

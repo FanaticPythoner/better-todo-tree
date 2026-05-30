@@ -3,9 +3,11 @@ var fs = require( 'fs' );
 var path = require( 'path' );
 var attributes = require( './attributes.js' );
 var identity = require( './extensionIdentity.js' );
+var regexRegistry = require( './regexRegistry.js' );
 
 var context;
 var treeStateOverrides = {};
+var windowsPlatformRegex = regexRegistry.createRegExp( 'windowsPlatform' );
 
 var tagGroupLookup = {};
 var ripgrepPathCache = {
@@ -128,7 +130,7 @@ function subTagRegex( uri )
 
 function ripgrepExecutableName()
 {
-    var isWin = /^win/.test( process.platform );
+    var isWin = windowsPlatformRegex.test( process.platform );
     return isWin ? "rg.exe" : "rg";
 }
 

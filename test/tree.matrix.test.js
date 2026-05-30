@@ -1,4 +1,5 @@
 var utils = require( '../src/utils.js' );
+var regexRegistry = require( '../src/regexRegistry.js' );
 
 var helpers = require( './moduleHelpers.js' );
 var languageMatrix = require( './languageMatrix.js' );
@@ -123,8 +124,16 @@ function loadTreeModule( configStub )
 {
     var vscodeStub = createVscodeStub();
     utils.init( Object.assign( createConfig(), {
-        regex: function() { return { tags: languageMatrix.DEFAULT_TAGS.slice(), regex: '($TAGS)', caseSensitive: true, multiLine: false }; },
-        subTagRegex: function() { return '(^:\\s*)'; },
+        regex: function()
+        {
+            return {
+                tags: languageMatrix.DEFAULT_TAGS.slice(),
+                regex: regexRegistry.TAG_CAPTURE_PLACEHOLDER,
+                caseSensitive: true,
+                multiLine: false
+            };
+        },
+        subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); },
         globs: function() { return []; },
         shouldUseColourScheme: function() { return false; },
         defaultHighlight: function() { return {}; },

@@ -6,19 +6,31 @@
 var child_process = require( 'child_process' );
 var fs = require( 'fs' );
 var regexEngine = require( './regexEngine.js' );
+var regexRegistry = require( './regexRegistry.js' );
 
 var currentProcess;
-var currentCancellationRequested = false;
+var currentProcessState;
+var whitespaceCharacterRegex = regexRegistry.createRegExp( 'whitespaceCharacter' );
 
 var MAX_DEBUG_PREVIEW_LINES = 10;
 var MAX_DEBUG_TEXT_LENGTH = 2048;
 
 function RipgrepError( error, stderr, cancelled )
 {
+    Error.call( this );
+    this.name = 'RipgrepError';
     this.message = error;
     this.stderr = stderr;
     this.cancelled = cancelled === true;
+
+    if( Error.captureStackTrace )
+    {
+        Error.captureStackTrace( this, RipgrepError );
+    }
 }
+
+RipgrepError.prototype = Object.create( Error.prototype );
+RipgrepError.prototype.constructor = RipgrepError;
 
 function debugWithChannel( options, text )
 {
@@ -99,7 +111,7 @@ function parseArgumentString( input )
             return;
         }
 
-        if( /\s/.test( character ) )
+        if( whitespaceCharacterRegex.test( character ) )
         {
             if( current.length > 0 )
             {
@@ -248,20 +260,86 @@ function processStdoutChunk( chunk, state, onEvent )
     } );
 }
 
+function toRipgrepError( error, stderr, cancelled )
+{
+    if( error instanceof RipgrepError )
+    {
+        return error;
+    }
+
+    return new RipgrepError( error && error.message ? error.message : String( error ), stderr, cancelled );
+}
+
+function normalizeSearchOptions( options )
+{
+    if( options === undefined || options === null )
+    {
+        throw new RipgrepError( 'No search term provided', '', false );
+    }
+
+    if( !options.rgPath )
+    {
+        throw new RipgrepError( 'No ripgrep executable provided', '', false );
+    }
+
+    if( options.globs !== undefined && Array.isArray( options.globs ) !== true )
+    {
+        throw new RipgrepError( 'ripgrep globs must be an array', '', false );
+    }
+
+    var normalizedOptions = Object.assign( {}, options );
+    normalizedOptions.regex = normalizedOptions.regex || '';
+    normalizedOptions.unquotedRegex = normalizedOptions.unquotedRegex !== undefined ?
+        normalizedOptions.unquotedRegex :
+        normalizedOptions.regex;
+    normalizedOptions.additional = normalizedOptions.additional || '';
+    normalizedOptions.globs = options.globs ? options.globs.slice() : [];
+
+    return normalizedOptions;
+}
+
+function clearCurrentProcess( processRef )
+{
+    if( currentProcess && ( processRef === undefined || currentProcess === processRef ) )
+    {
+        currentProcess = undefined;
+        currentProcessState = undefined;
+    }
+}
+
+function rejectAfterPatternCleanup( options, state, reject, error, beforeCleanup, processRef )
+{
+    if( typeof ( beforeCleanup ) === 'function' )
+    {
+        beforeCleanup();
+    }
+
+    return cleanupPatternFile( options.patternFilePath ).then( function()
+    {
+        clearCurrentProcess( processRef );
+        reject( toRipgrepError( error, state.stderr, false ) );
+    }, function( cleanupError )
+    {
+        clearCurrentProcess( processRef );
+        reject( toRipgrepError( cleanupError, state.stderr, false ) );
+    } );
+}
+
 module.exports.search = function ripGrep( cwd, options, onEvent )
 {
     if( !cwd )
     {
-        return Promise.reject( { error: 'No `cwd` provided' } );
+        return Promise.reject( new RipgrepError( 'No `cwd` provided', '', false ) );
     }
 
-    if( arguments.length < 2 )
+    try
     {
-        return Promise.reject( { error: 'No search term provided' } );
+        options = normalizeSearchOptions( options );
     }
-
-    options.regex = options.regex || '';
-    options.globs = options.globs || [];
+    catch( error )
+    {
+        return Promise.reject( error );
+    }
 
     return Promise.all( [
         fs.promises.access( options.rgPath, fs.constants.X_OK ),
@@ -284,33 +362,48 @@ module.exports.search = function ripGrep( cwd, options, onEvent )
             };
             var eventHandler = typeof ( onEvent ) === 'function' ? onEvent : function() {};
 
-            currentCancellationRequested = false;
-            currentProcess = child_process.spawn( options.rgPath, args, { cwd: cwd, windowsHide: true } );
-
-            currentProcess.stdout.on( 'data', function( data )
+            try
             {
-                processStdoutChunk( data, state, eventHandler );
+                currentProcess = child_process.spawn( options.rgPath, args, { cwd: cwd, windowsHide: true } );
+            }
+            catch( error )
+            {
+                rejectAfterPatternCleanup( options, state, reject, error, undefined, null );
+                return;
+            }
+
+            var searchProcess = currentProcess;
+            currentProcessState = state;
+
+            searchProcess.stdout.on( 'data', function( data )
+            {
+                try
+                {
+                    processStdoutChunk( data, state, eventHandler );
+                }
+                catch( error )
+                {
+                    rejectAfterPatternCleanup( options, state, reject, error, function()
+                    {
+                        if( currentProcess === searchProcess )
+                        {
+                            searchProcess.kill( 'SIGINT' );
+                        }
+                    }, searchProcess );
+                }
             } );
 
-            currentProcess.stderr.on( 'data', function( data )
+            searchProcess.stderr.on( 'data', function( data )
             {
                 state.stderr = appendBoundedText( state.stderr, data.toString(), MAX_DEBUG_TEXT_LENGTH );
             } );
 
-            currentProcess.on( 'error', function( error )
+            searchProcess.on( 'error', function( error )
             {
-                cleanupPatternFile( options.patternFilePath ).finally( function()
-                {
-                    if( currentProcess )
-                    {
-                        currentProcess = undefined;
-                    }
-
-                    reject( new RipgrepError( error.message, state.stderr, false ) );
-                } );
+                rejectAfterPatternCleanup( options, state, reject, error, undefined, searchProcess );
             } );
 
-            currentProcess.on( 'close', function( code, signal )
+            searchProcess.on( 'close', function( code, signal )
             {
                 var completion = Promise.resolve();
 
@@ -338,10 +431,7 @@ module.exports.search = function ripGrep( cwd, options, onEvent )
                     return cleanupPatternFile( options.patternFilePath );
                 } ).then( function()
                 {
-                    if( currentProcess )
-                    {
-                        currentProcess = undefined;
-                    }
+                    clearCurrentProcess( searchProcess );
 
                     if( state.previewLines.length > 0 )
                     {
@@ -350,7 +440,7 @@ module.exports.search = function ripGrep( cwd, options, onEvent )
 
                     debugWithChannel( options, "Search produced " + state.matchCount + " matches from " + state.outputLineCount + " output lines" );
 
-                    if( currentCancellationRequested === true || signal === 'SIGINT' )
+                    if( state.cancellationRequested === true || signal === 'SIGINT' )
                     {
                         reject( new RipgrepError( "Search cancelled", state.stderr, true ) );
                         return;
@@ -365,12 +455,8 @@ module.exports.search = function ripGrep( cwd, options, onEvent )
                     reject( new RipgrepError( "ripgrep failed with exit code " + code, state.stderr, false ) );
                 } ).catch( function( error )
                 {
-                    if( currentProcess )
-                    {
-                        currentProcess = undefined;
-                    }
-
-                    reject( new RipgrepError( error.message, state.stderr, false ) );
+                    clearCurrentProcess( searchProcess );
+                    reject( toRipgrepError( error, state.stderr, false ) );
                 } );
             } );
         } );
@@ -380,12 +466,12 @@ module.exports.search = function ripGrep( cwd, options, onEvent )
         {
             if( error.path === options.rgPath )
             {
-                throw { error: "ripgrep executable not found (" + options.rgPath + ")" };
+                throw new RipgrepError( "ripgrep executable not found (" + options.rgPath + ")", '', false );
             }
 
             if( error.path === cwd )
             {
-                throw { error: "root folder not found (" + cwd + ")" };
+                throw new RipgrepError( "root folder not found (" + cwd + ")", '', false );
             }
         }
 
@@ -397,7 +483,10 @@ module.exports.kill = function()
 {
     if( currentProcess !== undefined )
     {
-        currentCancellationRequested = true;
+        if( currentProcessState )
+        {
+            currentProcessState.cancellationRequested = true;
+        }
         currentProcess.kill( 'SIGINT' );
     }
 };

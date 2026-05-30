@@ -1,9 +1,11 @@
 var fs = require( 'fs' );
 var bufferConstants = require( 'buffer' ).constants;
+var regexRegistry = require( '../regexRegistry.js' );
 
 var DEFAULT_MAX_INMEMORY_SCAN_BYTES = bufferConstants.MAX_STRING_LENGTH;
 var DEFAULT_STREAM_CHUNK_BYTES = 64 * 1024 * 1024;
 var DEFAULT_STREAM_OVERLAP_BYTES = 1 * 1024 * 1024;
+var endOffsetFieldRegex = regexRegistry.createRegExp( 'endOffsetField' );
 
 var STREAM_RESULT_OFFSET_FIELDS = [
     'commentStartOffset',
@@ -338,7 +340,7 @@ function getEntryEndOffset( entry )
 
     STREAM_RESULT_OFFSET_FIELDS.forEach( function( field )
     {
-        if( /EndOffset$/.test( field ) && typeof entry[ field ] === 'number' && ( endOffset === undefined || entry[ field ] > endOffset ) )
+        if( endOffsetFieldRegex.test( field ) && typeof entry[ field ] === 'number' && ( endOffset === undefined || entry[ field ] > endOffset ) )
         {
             endOffset = entry[ field ];
         }

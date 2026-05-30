@@ -40,6 +40,22 @@ function runGit( cwd, args )
     return result.stdout.trim();
 }
 
+function gitStatus( cwd, args )
+{
+    return childProcess.spawnSync( 'git', args, {
+        cwd: cwd,
+        encoding: 'utf8',
+        env: Object.assign( {}, process.env, {
+            GIT_TERMINAL_PROMPT: '0'
+        } )
+    } );
+}
+
+function remoteBranchExists( cwd, branch )
+{
+    return gitStatus( cwd, [ 'ls-remote', '--exit-code', '--heads', 'origin', branch ] ).status === 0;
+}
+
 function createFixtureRepository()
 {
     var root = fs.mkdtempSync( path.join( os.tmpdir(), 'better-todo-tree-issue-branch-' ) );
@@ -232,7 +248,138 @@ QUnit.test( 'issue-branch creates remote base branch before staging source chang
     }
 } );
 
-QUnit.test( 'issue-branch stage refuses unstaged source changes', function( assert )
+QUnit.test( 'issue-branch stage merges source patches onto updated base files', function( assert )
+{
+    var fixture = createFixtureRepository();
+    var fakeGh = createFakeGh( fixture.root );
+    var branch = derivedIssueBranch;
+    var readmePath = path.join( fixture.work, 'README.md' );
+    var result;
+
+    try
+    {
+        fs.writeFileSync( readmePath, 'one\ntwo\n' );
+        runGit( fixture.work, [ 'add', 'README.md' ] );
+        runGit( fixture.work, [ 'commit', '-m', 'expand base fixture' ] );
+        runGit( fixture.work, [ 'push', 'origin', 'master' ] );
+        fs.writeFileSync( readmePath, 'remote one\ntwo\n' );
+        runGit( fixture.work, [ 'add', 'README.md' ] );
+        runGit( fixture.work, [ 'commit', '-m', 'advance remote fixture' ] );
+        runGit( fixture.work, [ 'push', 'origin', 'master' ] );
+        runGit( fixture.work, [ 'reset', '--hard', 'HEAD~1' ] );
+        fs.writeFileSync( readmePath, 'one\nlocal two\n' );
+        runGit( fixture.work, [ 'add', 'README.md' ] );
+
+        result = runScript( fixture.work, [
+            'create',
+            '--remote', 'origin',
+            '--base', 'master',
+            issue28Url,
+            issue36Url
+        ], fakeGh.env );
+        assert.equal( result.status, 0, result.stderr );
+
+        result = runScript( fixture.work, [
+            'stage',
+            '--remote', 'origin',
+            '--source', 'master',
+            issue28Url,
+            issue36Url
+        ], fakeGh.env );
+        assert.equal( result.status, 0, result.stderr );
+        assert.equal( runGit( fixture.work, [ 'branch', '--show-current' ] ), branch );
+        assert.equal( fs.readFileSync( readmePath, 'utf8' ), 'remote one\nlocal two\n' );
+        assert.equal( runGit( fixture.work, [ 'diff', '--cached', '--name-only' ] ), 'README.md' );
+    }
+    finally
+    {
+        fs.rmSync( fixture.root, { recursive: true, force: true } );
+    }
+} );
+
+QUnit.test( 'issue-branch flow stages source snapshot when patch transfer conflicts', function( assert )
+{
+    var fixture = createFixtureRepository();
+    var fakeGh = createFakeGh( fixture.root );
+    var readmePath = path.join( fixture.work, 'README.md' );
+    var result;
+
+    try
+    {
+        fs.writeFileSync( readmePath, 'remote base\n' );
+        runGit( fixture.work, [ 'add', 'README.md' ] );
+        runGit( fixture.work, [ 'commit', '-m', 'advance remote fixture' ] );
+        runGit( fixture.work, [ 'push', 'origin', 'master' ] );
+        runGit( fixture.work, [ 'reset', '--hard', 'HEAD~1' ] );
+        fs.writeFileSync( readmePath, 'local base\n' );
+        runGit( fixture.work, [ 'add', 'README.md' ] );
+
+        result = runScript( fixture.work, [
+            'flow',
+            '--remote', 'origin',
+            '--base', 'master',
+            '--source', 'master',
+            '--no-wait',
+            issue28Url,
+            issue36Url
+        ], fakeGh.env );
+
+        assert.notEqual( result.status, 0 );
+        assert.ok( result.stderr.indexOf( 'has no local commits ahead' ) >= 0, result.stderr );
+        assert.equal( runGit( fixture.work, [ 'branch', '--show-current' ] ), derivedIssueBranch );
+        assert.equal( runGit( fixture.work, [ 'diff', '--cached', '--name-only' ] ), 'README.md' );
+        assert.equal( fs.readFileSync( readmePath, 'utf8' ), 'local base\n' );
+        assert.equal( remoteBranchExists( fixture.work, derivedIssueBranch ), false );
+    }
+    finally
+    {
+        fs.rmSync( fixture.root, { recursive: true, force: true } );
+    }
+} );
+
+QUnit.test( 'issue-branch flow reuses an empty branch at the remote base', function( assert )
+{
+    var fixture = createFixtureRepository();
+    var fakeGh = createFakeGh( fixture.root );
+    var readmePath = path.join( fixture.work, 'README.md' );
+    var result;
+
+    try
+    {
+        result = runScript( fixture.work, [
+            'create',
+            '--remote', 'origin',
+            '--base', 'master',
+            issue28Url,
+            issue36Url
+        ], fakeGh.env );
+        assert.equal( result.status, 0, result.stderr );
+
+        fs.writeFileSync( readmePath, 'base\nlocal change\n' );
+        runGit( fixture.work, [ 'add', 'README.md' ] );
+
+        result = runScript( fixture.work, [
+            'flow',
+            '--remote', 'origin',
+            '--base', 'master',
+            '--source', 'master',
+            '--no-wait',
+            issue28Url,
+            issue36Url
+        ], fakeGh.env );
+
+        assert.notEqual( result.status, 0 );
+        assert.ok( result.stderr.indexOf( 'has no local commits ahead' ) >= 0, result.stderr );
+        assert.equal( runGit( fixture.work, [ 'branch', '--show-current' ] ), derivedIssueBranch );
+        assert.equal( runGit( fixture.work, [ 'diff', '--cached', '--name-only' ] ), 'README.md' );
+    }
+    finally
+    {
+        fs.rmSync( fixture.root, { recursive: true, force: true } );
+    }
+} );
+
+QUnit.test( 'issue-branch stage includes unstaged tracked source changes', function( assert )
 {
     var fixture = createFixtureRepository();
     var fakeGh = createFakeGh( fixture.root );
@@ -262,10 +409,10 @@ QUnit.test( 'issue-branch stage refuses unstaged source changes', function( asse
             issue36Url
         ], fakeGh.env );
 
-        assert.notEqual( result.status, 0 );
-        assert.ok( result.stderr.indexOf( 'unstaged tracked changes are present' ) >= 0, result.stderr );
-        assert.equal( runGit( fixture.work, [ 'branch', '--show-current' ] ), 'master' );
+        assert.equal( result.status, 0, result.stderr );
+        assert.equal( runGit( fixture.work, [ 'branch', '--show-current' ] ), derivedIssueBranch );
         assert.equal( runGit( fixture.work, [ 'diff', '--cached', '--name-only' ] ), 'README.md' );
+        assert.equal( fs.readFileSync( readmePath, 'utf8' ), 'base\nstaged change\nunstaged change\n' );
     }
     finally
     {

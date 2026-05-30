@@ -1,10 +1,12 @@
+var regexRegistry = require( '../src/regexRegistry.js' );
+
 var testConfig = {
     shouldGroupByTagFlag: false,
     shouldBeCaseSensitive: false,
-    regexSource: "($TAGS)",
+    regexSource: regexRegistry.TAG_CAPTURE_PLACEHOLDER,
     enableMultiLineFlag: false,
     tagList: [ "BUG", "HACK", "FIXME", "TODO", "XXX", "[ ]", "[x]" ],
-    subTagRegexString: "(^:\\s*)",
+    subTagRegexString: regexRegistry.pattern( 'subTagPrefixCapture' ),
     globsList: [],
     useColourScheme: false,
     foregroundColours: [],

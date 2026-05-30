@@ -3,6 +3,7 @@
 // applicability(fixture) predicate, and a tolerated*Match predicate.
 
 var path = require( 'path' );
+var regexRegistry = require( '../../src/regexRegistry.js' );
 
 function isVendoredFixture( fixture )
 {
@@ -50,14 +51,15 @@ function indentOrCodeFenceOnly( line )
     {
         return false;
     }
-    var match = line.match( /^([ \t]*)(.*)$/ );
+    var match = line.match( regexRegistry.createRegExp( 'linePrefixRemainder' ) );
     if( !match )
     {
         return false;
     }
     var leading = match[ 1 ];
     var remainder = match[ 2 ];
-    return leading.length > 0 && !/^(\/\/|#|<!--|;|\/\*)/.test( remainder );
+    return leading.length > 0 &&
+        !regexRegistry.createRegExp( 'leadingNonDefaultCommentPrefix' ).test( remainder );
 }
 
 var IMPROVEMENT_INDENTED_NON_COMMENT_REJECTED = Object.freeze( {
@@ -84,7 +86,8 @@ var IMPROVEMENT_MARKDOWN_HEADING_REJECTED = Object.freeze( {
     },
     toleratedUpstreamMatch: function( match )
     {
-        return typeof ( match && match.match ) === 'string' && /^\s*#/.test( match.match );
+        return typeof ( match && match.match ) === 'string' &&
+            regexRegistry.createRegExp( 'leadingMarkdownHeading' ).test( match.match );
     }
 } );
 
@@ -103,11 +106,11 @@ var IMPROVEMENT_MARKDOWN_NON_LIST_PLAIN_TAG_REJECTED = Object.freeze( {
             return false;
         }
         var line = match.match;
-        if( /<!--/.test( line ) )
+        if( regexRegistry.createRegExp( 'htmlCommentStart' ).test( line ) )
         {
             return false;
         }
-        if( /^\s*(?:[-*+]|\d+\.)\s*\[[ xX]\]/.test( line ) )
+        if( regexRegistry.createRegExp( 'markdownTaskCheckboxLine' ).test( line ) )
         {
             return false;
         }
