@@ -3585,6 +3585,7 @@ QUnit.test( "workspace scans publish progress, current target, and clear the tre
             return typeof report.message === 'string' && report.message.indexOf( 'tracked.js' ) >= 0;
         } ), true );
         assert.equal( harness.vscode.treeViews[ 0 ].message.indexOf( 'tracked.js' ) >= 0, true );
+        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '$(sync~spin) Better Todo Tree' ), 0 );
         assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( 'Better Todo Tree' ) >= 0, true );
         assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '100%' ) === -1, true );
 
@@ -3617,6 +3618,7 @@ QUnit.test( "scan progress cancellation interrupts the active scan and surfaces 
     return matrixHelpers.flushAsyncWork().then( function()
     {
         assert.equal( harness.vscode.progressSessions.length, 1 );
+        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '$(sync~spin) Better Todo Tree' ), 0 );
         harness.vscode.progressSessions[ 0 ].cancel();
         return matrixHelpers.flushAsyncWork();
     } ).then( function()

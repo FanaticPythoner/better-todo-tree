@@ -12,6 +12,19 @@ function readPackageNls( fileName )
     return JSON.parse( fs.readFileSync( path.join( __dirname, '..', fileName ), 'utf8' ) );
 }
 
+function readWorkspaceText( relativePath )
+{
+    return fs.readFileSync( path.join( __dirname, '..', relativePath ), 'utf8' );
+}
+
+function findCommandContribution( packageJson, commandId )
+{
+    return packageJson.contributes.commands.find( function( entry )
+    {
+        return entry.command === commandId;
+    } );
+}
+
 function getConfigurationProperty( propertyName )
 {
     return languageMatrix.findConfigurationProperty( propertyName );
@@ -193,24 +206,39 @@ QUnit.test( 'busy and composite tree commands have localization entries in both 
     assert.notOk( chinese[ 'better-todo-tree.command.treeStateBusy.title' ].indexOf( '$(' ) >= 0 );
 } );
 
-QUnit.test( 'busy placeholder commands use static product icons with plain localized titles', function( assert )
+QUnit.test( 'issue #38 busy placeholder commands animate only their svg glyphs', function( assert )
 {
     var packageJson = readPackageJson();
-    var treeStateBusy = packageJson.contributes.commands.find( function( entry )
-    {
-        return entry.command === 'better-todo-tree.treeStateBusy';
-    } );
-    var scanBusy = packageJson.contributes.commands.find( function( entry )
-    {
-        return entry.command === 'better-todo-tree.scanBusy';
-    } );
+    var expectedBusyIcon = {
+        light: 'resources/button-icons/refresh-spin-light.svg',
+        dark: 'resources/button-icons/refresh-spin-dark.svg'
+    };
+    var treeStateBusy = findCommandContribution( packageJson, 'better-todo-tree.treeStateBusy' );
+    var scanBusy = findCommandContribution( packageJson, 'better-todo-tree.scanBusy' );
 
-    assert.equal( treeStateBusy.icon, '$(loading)' );
-    assert.equal( scanBusy.icon, '$(loading)' );
-    assert.equal( treeStateBusy.icon.indexOf( '~spin' ), -1 );
-    assert.equal( scanBusy.icon.indexOf( '~spin' ), -1 );
+    assert.deepEqual( treeStateBusy.icon, expectedBusyIcon );
+    assert.deepEqual( scanBusy.icon, expectedBusyIcon );
+    assert.equal( JSON.stringify( treeStateBusy.icon ).indexOf( '~spin' ), -1 );
+    assert.equal( JSON.stringify( scanBusy.icon ).indexOf( '~spin' ), -1 );
+    assert.equal( JSON.stringify( treeStateBusy.icon ).indexOf( 'loading' ), -1 );
+    assert.equal( JSON.stringify( scanBusy.icon ).indexOf( 'loading' ), -1 );
     assert.equal( treeStateBusy.title, '%better-todo-tree.command.treeStateBusy.title%' );
     assert.equal( scanBusy.title, '%better-todo-tree.command.scanBusy.title%' );
+
+    Object.keys( expectedBusyIcon ).forEach( function( theme )
+    {
+        var svg = readWorkspaceText( expectedBusyIcon[ theme ] );
+        var groupStart = svg.indexOf( '<g>' );
+        var groupEnd = svg.indexOf( '</g>' );
+        var animateTransform = svg.indexOf( '<animateTransform' );
+
+        assert.ok( groupStart >= 0, theme + ' icon has a glyph group' );
+        assert.ok( groupEnd > groupStart, theme + ' icon closes the glyph group' );
+        assert.ok( animateTransform > groupStart, theme + ' icon animates inside the glyph group' );
+        assert.ok( animateTransform < groupEnd, theme + ' icon animation stays inside the glyph group' );
+        assert.equal( svg.substring( 0, groupStart ).indexOf( '<animateTransform' ), -1, theme + ' icon leaves the svg root static' );
+        assert.equal( svg.indexOf( '<rect' ), -1, theme + ' icon has no background rectangle' );
+    } );
 } );
 
 QUnit.test( 'showBadges metadata documents file icon theme coupling', function( assert )

@@ -383,13 +383,19 @@
                 "command": "better-todo-tree.treeStateBusy",
                 "title": "%better-todo-tree.command.treeStateBusy.title%",
                 "category": "%better-todo-tree.command.category%",
-                "icon": "$(loading)"
+                "icon": {
+                    "light": "resources/button-icons/refresh-spin-light.svg",
+                    "dark": "resources/button-icons/refresh-spin-dark.svg"
+                }
             },
             {
                 "command": "better-todo-tree.scanBusy",
                 "title": "%better-todo-tree.command.scanBusy.title%",
                 "category": "%better-todo-tree.command.category%",
-                "icon": "$(loading)"
+                "icon": {
+                    "light": "resources/button-icons/refresh-spin-light.svg",
+                    "dark": "resources/button-icons/refresh-spin-dark.svg"
+                }
             },
             {
                 "command": "better-todo-tree.filter",
