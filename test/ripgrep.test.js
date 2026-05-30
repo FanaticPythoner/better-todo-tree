@@ -54,6 +54,30 @@ QUnit.module( "ripgrep streaming search", function( hooks )
         );
     } );
 
+    QUnit.test( "buildArgs adds PCRE2 for lookaround regexes", function( assert )
+    {
+        var args = ripgrep.buildArgs( {
+            regex: '($TAGS)(?![A-Za-z0-9_])',
+            additional: '--max-columns=1000',
+            globs: []
+        } );
+
+        assert.notEqual( args.indexOf( '--pcre2' ), -1 );
+        assert.ok( args.indexOf( '--pcre2' ) < args.indexOf( '-e' ) );
+    } );
+
+    QUnit.test( "buildArgs preserves explicit ripgrep engine args", function( assert )
+    {
+        var args = ripgrep.buildArgs( {
+            regex: '($TAGS)(?![A-Za-z0-9_])',
+            additional: '--engine=default',
+            globs: []
+        } );
+
+        assert.equal( args.indexOf( '--pcre2' ), -1 );
+        assert.notEqual( args.indexOf( '--engine=default' ), -1 );
+    } );
+
     QUnit.test( "search parses streamed json messages across chunk boundaries", function( assert )
     {
         var seenMessages = [];

@@ -392,9 +392,9 @@ Normally, multiline support is enabled by detecting the use of `\n` in the regex
 **better-todo-tree.regex.regex** (<tt>
 &#x28;&#x2f;&#x2f;&#x7c;&#x23;&#x7c;&#x3c;&#x21;&#x2d;&#x2d;&#x7c;&#x3b;&#x7c;&#x2f;&#x5c;&#x5c;&#x2a;&#x7c;&#x5e;&#x7c;&#x5e;&#x5b;&#x20;&#x5c;&#x5c;&#x74;&#x5d;&#x2a;&#x28;&#x2d;&#x7c;&#x5c;&#x5c;&#x64;&#x2b;&#x2e;&#x29;&#x29;&#x5c;&#x5c;&#x73;&#x2a;&#x28;&#x24;&#x54;&#x41;&#x47;&#x53;&#x29;</tt>)</br>
 
-This defines the regex used to locate TODOs. By default, it searches for tags in comments starting with <tt>&#47;&#47;</tt>, <tt>#</tt>, <tt>;</tt>, <tt>&lt;!--</tt> or <tt>&#47;*</tt>, and markdown todo lists. The <tt>($TAGS)</tt> placeholder is replaced by the expanded tag list. Prefix-only custom regexes that contain <tt>($TAGS)</tt> render text from the detected tag to the end of the physical line.
+This defines the regex used to locate TODOs. By default, it searches for tags in comments starting with <tt>&#47;&#47;</tt>, <tt>#</tt>, <tt>;</tt>, <tt>&lt;!--</tt> or <tt>&#47;*</tt>, and markdown todo lists. The <tt>($TAGS)</tt> placeholder is replaced by the expanded tag list. Prefix-only custom regexes that contain <tt>($TAGS)</tt> render text from the detected tag to the end of the physical line. Workspace searches use PCRE2 automatically when look-around or backreference syntax requires it.
 
-<sup>*Note: This is a [Rust regular expression](https://docs.rs/regex/1.0.0/regex)</a>, not javascript.*</sup>
+<sup>*Regexes use ripgrep's Rust engine unless look-around, backreferences, or explicit ripgrep engine arguments select PCRE2.*</sup>
 
 **better-todo-tree.regex.subTagRegex**
 This is a regular expression for processing the text to the right of the tag, e.g. for extracting a sub tag, or removing unwanted characters. Anything that the regex matches will be removed from the text. If a capture group is included, the contents are extracted into a sub tag, which will be used in the tree to group similar tags. The sub tag can also be used as a placeholder in `better-todo-tree.tree.subTagClickUrl` and `better-todo-tree.tree.labelFormat`. Sub tags can also be highlighted by specifying a section in the `better-todo-tree.highlights.customHighlights` setting. To highlight the sub tag itself, set "type" to "tag-and-subTag" in custom highlights for the tag.
@@ -412,7 +412,7 @@ Set to false to allow tags to be matched regardless of case.
 Empty value uses the packaged ripgrep binary. Set an absolute executable path to override it.
 
 **better-todo-tree.ripgrep.ripgrepArgs** (`"--max-columns=1000"`)</br>
-Use this to pass additional arguments to ripgrep. e.g. `"-i"` to make the search case insensitive. *Use with caution!*
+Pass additional arguments to ripgrep. Engine arguments such as `--pcre2`, `-P`, and `--engine` override automatic engine selection.
 
 **better-todo-tree.ripgrep.ripgrepMaxBuffer** (`200`)</br>
 By default, the ripgrep process will have a buffer of 200KB. However, this is sometimes not enough for all the tags you might want to see. This setting can be used to increase the buffer size accordingly.

@@ -5,6 +5,7 @@
 
 var child_process = require( 'child_process' );
 var fs = require( 'fs' );
+var regexEngine = require( './regexEngine.js' );
 
 var currentProcess;
 var currentCancellationRequested = false;
@@ -126,12 +127,13 @@ function parseArgumentString( input )
 
 function buildArgs( options )
 {
+    var additionalArgs = parseArgumentString( options.additional );
     var args = [
         '--no-messages',
         '--json',
         '--color',
         'never'
-    ].concat( parseArgumentString( options.additional ) );
+    ].concat( regexEngine.buildRegexEngineArgs( options.regex, additionalArgs ) ).concat( additionalArgs );
 
     if( options.multiline )
     {

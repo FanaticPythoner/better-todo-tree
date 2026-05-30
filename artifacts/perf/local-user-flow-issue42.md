@@ -15,7 +15,7 @@
 | Host | OS | Ubuntu 22.04.5 LTS |
 | Host | Kernel | 6.8.0-124-generic |
 | Host | Architecture | x64 |
-| Host | Load Average | 4.47, 4.3, 4.04 |
+| Host | Load Average | 3.76, 3.59, 3.75 |
 | Host | Available Parallelism | - |
 | CPU | Model | Intel(R) Core(TM) i9-14900HX |
 | CPU | Vendor | GenuineIntel |
@@ -23,9 +23,9 @@
 | CPU | Frequency | 800 MHz to 5,800 MHz |
 | CPU | Cache | L1d 384 KiB (8 instances), L1i 256 KiB (8 instances), L2 16 MiB (8 instances), L3 36 MiB (1 instance) |
 | Memory | Total RAM | 62.51 GiB (`67,119,767,552 bytes`) |
-| Memory | Available At Collection | 16.06 GiB (`17,242,337,280 bytes`) |
+| Memory | Available At Collection | 15.95 GiB (`17,127,993,344 bytes`) |
 | Memory | Online Physical RAM | 66.00 GiB (`70,866,960,384 bytes`) |
-| Memory | Swap | total 120 GiB (`128,848,973,824 bytes`); free 106 GiB (`113,448,108,032 bytes`) |
+| Memory | Swap | total 120 GiB (`128,848,973,824 bytes`); free 106 GiB (`113,449,418,752 bytes`) |
 | Memory | DMI / SPD | Unavailable: /sys/firmware/dmi/tables/smbios_entry_point: Permission denied /dev/mem: Permission denied |
 | Storage | Root Device | nvme1n1 (Samsung SSD 9100 PRO 4TB), 3.64 TiB (`4,000,787,030,016 bytes`), transport nvme, rotational=false, readOnly=false |
 
@@ -58,49 +58,49 @@
 
 | Scenario | Kind | Baseline p50 ms | Current p50 ms | Baseline p90 ms | Current p90 ms | Baseline p95 ms | Current p95 ms |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| open-file-default-save-rescan-visible-tree | user-flow | 115.71 | 2.49 | 122.16 | 3.27 | 123.6 | 3.3 |
-| open-file-custom-save-rescan-visible-tree | user-flow | 96.25 | 3.1 | 99.6 | 3.79 | 102.31 | 5.88 |
-| tree-view-cycle-visible-tree | user-flow | 9.86 | 0.37 | 10.86 | 0.44 | 11.43 | 0.62 |
-| tree-group-toggle-tags-view | user-flow | 7.77 | 0.32 | 8.66 | 0.41 | 9.96 | 0.55 |
-| tree-filter-visible-tree | user-flow | 0.37 | 0.33 | 0.59 | 0.47 | 0.64 | 1.07 |
-| tree-view-repeat-click-burst | user-flow | 0.27 | 0.27 | 0.32 | 0.31 | 0.37 | 0.32 |
-| tree-expansion-toggle-visible-tree | user-flow | 7.69 | 0.42 | 9.23 | 0.52 | 9.84 | 0.58 |
-| workspace-default-relative-rebuild-visible-tree | user-flow | 6.91 | 1.62 | 8.73 | 2.51 | 8.9 | 2.6 |
-| workspace-custom-relative-rebuild-visible-tree | user-flow | 48.24 | 4.82 | 51.05 | 5.2 | 51.99 | 5.99 |
-| visible-editor-highlight-open-file | user-flow | 19.64 | 1.72 | 20.6 | 2.51 | 22.6 | 2.51 |
-| visible-editor-highlight-change-open-file | user-flow | 20.14 | 1.74 | 22.3 | 2.02 | 24.41 | 2.07 |
-| visible-editor-custom-highlight-config-open-file | user-flow | 1862.82 | 2.65 | 1890.26 | 2.84 | 1929.71 | 2.96 |
+| open-file-default-save-rescan-visible-tree | user-flow | 106.37 | 2.15 | 108.62 | 2.37 | 116.03 | 2.4 |
+| open-file-custom-save-rescan-visible-tree | user-flow | 93.1 | 3.18 | 94.28 | 3.39 | 97.26 | 3.48 |
+| tree-view-cycle-visible-tree | user-flow | 9.85 | 0.38 | 11.41 | 0.5 | 11.46 | 0.51 |
+| tree-group-toggle-tags-view | user-flow | 7.62 | 0.31 | 9.09 | 0.42 | 10.85 | 0.46 |
+| tree-filter-visible-tree | user-flow | 0.42 | 0.33 | 0.53 | 0.45 | 0.6 | 0.49 |
+| tree-view-repeat-click-burst | user-flow | 0.2 | 0.25 | 0.26 | 0.3 | 0.26 | 0.32 |
+| tree-expansion-toggle-visible-tree | user-flow | 8.02 | 0.44 | 8.48 | 0.52 | 11.3 | 0.54 |
+| workspace-default-relative-rebuild-visible-tree | user-flow | 7.36 | 1.77 | 9.19 | 2.6 | 9.36 | 2.71 |
+| workspace-custom-relative-rebuild-visible-tree | user-flow | 48.07 | 4.83 | 50.77 | 5.58 | 51.2 | 5.6 |
+| visible-editor-highlight-open-file | user-flow | 19.98 | 1.8 | 22.55 | 2.56 | 23.45 | 2.73 |
+| visible-editor-highlight-change-open-file | user-flow | 20.4 | 1.61 | 21.04 | 1.87 | 22.2 | 1.97 |
+| visible-editor-custom-highlight-config-open-file | user-flow | 1866.49 | 2.56 | 1901.63 | 3.75 | 2124.97 | 4.03 |
 
 ## Profiled RSS Burst
 
 | Scenario | Kind | Baseline p50 MiB | Current p50 MiB | Baseline p90 MiB | Current p90 MiB | Baseline p95 MiB | Current p95 MiB | Baseline Max MiB | Current Max MiB |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| open-file-default-save-rescan-visible-tree | user-flow | 26.63 | 24.38 | 27 | 24.63 | 27.25 | 27.25 | 27.25 | 27.25 |
-| open-file-custom-save-rescan-visible-tree | user-flow | 27.13 | 21.13 | 27.5 | 21.38 | 27.63 | 21.5 | 27.63 | 21.5 |
-| tree-view-cycle-visible-tree | user-flow | 17 | 9.25 | 17.38 | 9.5 | 18.38 | 9.63 | 18.38 | 9.63 |
-| tree-group-toggle-tags-view | user-flow | 16.5 | 9 | 18 | 9.38 | 18.13 | 9.38 | 18.13 | 9.38 |
-| tree-filter-visible-tree | user-flow | 17.88 | 11.75 | 19.5 | 11.88 | 19.5 | 12 | 19.5 | 12 |
-| tree-view-repeat-click-burst | user-flow | 1.25 | 1.5 | 1.38 | 1.75 | 1.38 | 1.88 | 1.38 | 1.88 |
-| tree-expansion-toggle-visible-tree | user-flow | 16.38 | 9.25 | 16.88 | 9.63 | 16.88 | 9.63 | 16.88 | 9.63 |
-| workspace-default-relative-rebuild-visible-tree | user-flow | 17.38 | 9.63 | 18 | 9.75 | 18.88 | 9.75 | 18.88 | 9.75 |
-| workspace-custom-relative-rebuild-visible-tree | user-flow | 70.75 | 13.88 | 73 | 14.25 | 74.5 | 14.5 | 74.5 | 14.5 |
-| visible-editor-highlight-open-file | user-flow | 48.38 | 11.75 | 49.25 | 12 | 49.5 | 13.48 | 49.5 | 13.48 |
-| visible-editor-highlight-change-open-file | user-flow | 48.04 | 11.63 | 49.38 | 12.23 | 49.5 | 14 | 49.5 | 14 |
-| visible-editor-custom-highlight-config-open-file | user-flow | 161 | 14.13 | 162.06 | 14.38 | 164.5 | 14.38 | 164.5 | 14.38 |
+| open-file-default-save-rescan-visible-tree | user-flow | 26.25 | 24.25 | 27 | 24.63 | 27.13 | 24.88 | 27.13 | 24.88 |
+| open-file-custom-save-rescan-visible-tree | user-flow | 26.75 | 21 | 27.63 | 21.38 | 27.75 | 21.75 | 27.75 | 21.75 |
+| tree-view-cycle-visible-tree | user-flow | 17 | 9.13 | 17.88 | 9.38 | 17.88 | 9.63 | 17.88 | 9.63 |
+| tree-group-toggle-tags-view | user-flow | 16.38 | 9.13 | 16.88 | 9.5 | 17.25 | 9.5 | 17.25 | 9.5 |
+| tree-filter-visible-tree | user-flow | 18.5 | 11.75 | 19 | 12.13 | 19.5 | 12.13 | 19.5 | 12.13 |
+| tree-view-repeat-click-burst | user-flow | 1.25 | 1.63 | 1.38 | 1.75 | 1.5 | 1.75 | 1.5 | 1.75 |
+| tree-expansion-toggle-visible-tree | user-flow | 16.75 | 9.13 | 18 | 9.25 | 18.25 | 9.63 | 18.25 | 9.63 |
+| workspace-default-relative-rebuild-visible-tree | user-flow | 17.13 | 9.63 | 17.38 | 9.88 | 17.38 | 10.13 | 17.38 | 10.13 |
+| workspace-custom-relative-rebuild-visible-tree | user-flow | 71.5 | 13.88 | 74.25 | 14.13 | 75.63 | 14.13 | 75.63 | 14.13 |
+| visible-editor-highlight-open-file | user-flow | 48.63 | 11.88 | 49.38 | 13.13 | 49.88 | 13.25 | 49.88 | 13.25 |
+| visible-editor-highlight-change-open-file | user-flow | 47.73 | 11.75 | 49.5 | 12 | 49.88 | 12.13 | 49.88 | 12.13 |
+| visible-editor-custom-highlight-config-open-file | user-flow | 159.88 | 14.25 | 162.5 | 14.49 | 163.63 | 14.63 | 163.63 | 14.63 |
 
 ## Profiled Peak RSS
 
 | Scenario | Kind | Baseline p50 RSS MiB | Current p50 RSS MiB | Baseline p90 RSS MiB | Current p90 RSS MiB | Baseline p95 RSS MiB | Current p95 RSS MiB | Baseline Max RSS MiB | Current Max RSS MiB |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| open-file-default-save-rescan-visible-tree | user-flow | 82 | 79.77 | 82.34 | 80.32 | 82.95 | 82.22 | 82.95 | 82.22 |
-| open-file-custom-save-rescan-visible-tree | user-flow | 82.65 | 76.59 | 82.82 | 76.82 | 83.04 | 76.91 | 83.04 | 76.91 |
-| tree-view-cycle-visible-tree | user-flow | 72.63 | 64.8 | 73.04 | 64.87 | 73.59 | 64.96 | 73.59 | 64.96 |
-| tree-group-toggle-tags-view | user-flow | 71.94 | 64.48 | 73.34 | 64.71 | 73.7 | 64.71 | 73.7 | 64.71 |
-| tree-filter-visible-tree | user-flow | 73.21 | 66.73 | 74.86 | 67.44 | 74.86 | 67.52 | 74.86 | 67.52 |
-| tree-view-repeat-click-burst | user-flow | 56.47 | 57.13 | 56.77 | 57.21 | 56.91 | 57.29 | 56.91 | 57.29 |
-| tree-expansion-toggle-visible-tree | user-flow | 71.95 | 64.77 | 72.25 | 64.97 | 72.26 | 65.19 | 72.26 | 65.19 |
-| workspace-default-relative-rebuild-visible-tree | user-flow | 72.64 | 65.09 | 73.39 | 65.4 | 74.23 | 65.44 | 74.23 | 65.44 |
-| workspace-custom-relative-rebuild-visible-tree | user-flow | 126.12 | 69.31 | 128.63 | 69.67 | 129.95 | 69.71 | 129.95 | 69.71 |
-| visible-editor-highlight-open-file | user-flow | 103.85 | 67.17 | 104.78 | 67.55 | 105.05 | 69 | 105.05 | 69 |
-| visible-editor-highlight-change-open-file | user-flow | 103.75 | 67.05 | 104.75 | 67.55 | 104.82 | 69.15 | 104.82 | 69.15 |
-| visible-editor-custom-highlight-config-open-file | user-flow | 216.29 | 69.63 | 217.63 | 69.94 | 219.99 | 70.31 | 219.99 | 70.31 |
+| open-file-default-save-rescan-visible-tree | user-flow | 81.83 | 79.71 | 82.42 | 80.09 | 82.43 | 80.34 | 82.43 | 80.34 |
+| open-file-custom-save-rescan-visible-tree | user-flow | 82.2 | 76.46 | 82.96 | 76.9 | 83.2 | 76.94 | 83.2 | 76.94 |
+| tree-view-cycle-visible-tree | user-flow | 72.55 | 64.64 | 73.09 | 65.07 | 73.39 | 65.23 | 73.39 | 65.23 |
+| tree-group-toggle-tags-view | user-flow | 71.89 | 64.42 | 72.26 | 64.91 | 72.29 | 65.04 | 72.29 | 65.04 |
+| tree-filter-visible-tree | user-flow | 73.81 | 67.27 | 74.63 | 67.42 | 74.88 | 67.46 | 74.88 | 67.46 |
+| tree-view-repeat-click-burst | user-flow | 56.72 | 57.03 | 56.81 | 57.46 | 57.16 | 57.54 | 57.16 | 57.54 |
+| tree-expansion-toggle-visible-tree | user-flow | 72.12 | 64.68 | 73.64 | 64.89 | 73.68 | 64.94 | 73.68 | 64.94 |
+| workspace-default-relative-rebuild-visible-tree | user-flow | 72.51 | 65.09 | 72.97 | 65.21 | 73.01 | 65.3 | 73.01 | 65.3 |
+| workspace-custom-relative-rebuild-visible-tree | user-flow | 126.91 | 69.36 | 129.91 | 69.56 | 131.12 | 69.6 | 131.12 | 69.6 |
+| visible-editor-highlight-open-file | user-flow | 104.12 | 67.45 | 104.94 | 68.59 | 105.26 | 68.66 | 105.26 | 68.66 |
+| visible-editor-highlight-change-open-file | user-flow | 103.36 | 67.13 | 104.87 | 67.45 | 105.2 | 67.89 | 105.2 | 67.89 |
+| visible-editor-custom-highlight-config-open-file | user-flow | 215.43 | 69.78 | 218.03 | 69.93 | 219.25 | 70.08 | 219.25 | 70.08 |
