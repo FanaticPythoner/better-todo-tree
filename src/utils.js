@@ -149,30 +149,42 @@ function getCommentPatternRegex( fileName )
     }
 }
 
+function resolveBlockCommentPattern( fileName )
+{
+    var extension = path.extname( fileName ).toLowerCase();
+    var patternFileName = normaliseCommentPatternFileName( fileName );
+    var pattern = getCommentPattern( fileName );
+
+    if( extension === ".hs" )
+    {
+        patternFileName = ".cpp";
+        pattern = getCommentPattern( patternFileName );
+    }
+    else if( pattern && pattern.name === 'Markdown' )
+    {
+        patternFileName = ".html";
+        pattern = getCommentPattern( patternFileName );
+    }
+
+    return {
+        extension: extension,
+        fileName: patternFileName,
+        pattern: pattern
+    };
+}
+
 function removeBlockComments( text, fileName )
 {
-    var extension = path.extname( fileName );
-    var normalisedFileName = normaliseCommentPatternFileName( fileName );
-    var commentPattern = getCommentPattern( fileName );
-
-    if( extension == ".hs" )
-    {
-        commentPattern = getCommentPattern( ".cpp" );
-        normalisedFileName = ".cpp";
-    }
-    else if( commentPattern && commentPattern.name === 'Markdown' )
-    {
-        commentPattern = getCommentPattern( ".html" );
-        normalisedFileName = ".html";
-    }
+    var blockCommentPattern = resolveBlockCommentPattern( fileName );
+    var commentPattern = blockCommentPattern.pattern;
 
     if( commentPattern && commentPattern.multiLineComment && commentPattern.multiLineComment.length > 0 )
     {
-        commentPattern = getCommentPatternRegex( normalisedFileName );
+        commentPattern = getCommentPatternRegex( blockCommentPattern.fileName );
         if( commentPattern && commentPattern.regex )
         {
             var regex = commentPattern.regex;
-            if( extension == ".hs" )
+            if( blockCommentPattern.extension === ".hs" )
             {
                 var source = regex.source;
                 var flags = regex.flags;
@@ -744,6 +756,7 @@ module.exports.removeBlockComments = removeBlockComments;
 module.exports.removeLineComments = removeLineComments;
 module.exports.getCommentPattern = getCommentPattern;
 module.exports.getCommentPatternRegex = getCommentPatternRegex;
+module.exports.resolveBlockCommentPattern = resolveBlockCommentPattern;
 module.exports.getResourceConfig = getResourceConfig;
 module.exports.getTagRegexSource = getTagRegexSource;
 module.exports.supportsRegExpIndices = supportsRegExpIndices;

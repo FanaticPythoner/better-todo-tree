@@ -77,6 +77,20 @@ QUnit.test( "utils.getCommentPattern and getCommentPatternRegex apply alias mapp
     assert.ok( utils.getCommentPatternRegex( "/tmp/component.vue" ).regex instanceof RegExp );
 } );
 
+QUnit.test( "utils.resolveBlockCommentPattern applies block comment language mappings", function( assert )
+{
+    var markdown = utils.resolveBlockCommentPattern( "/tmp/notes.md" );
+    var haskell = utils.resolveBlockCommentPattern( "/tmp/sample.hs" );
+    var javascript = utils.resolveBlockCommentPattern( "/tmp/sample.js" );
+
+    assert.equal( markdown.fileName, ".html" );
+    assert.equal( markdown.pattern.name, "HTML" );
+    assert.equal( haskell.fileName, ".cpp" );
+    assert.equal( haskell.pattern.name, "C++" );
+    assert.equal( javascript.fileName, "sample.js" );
+    assert.equal( javascript.pattern.name, "JavaScript" );
+} );
+
 QUnit.test( "utils.getCommentPattern returns undefined for unknown languages", function( assert )
 {
     assert.equal( utils.getCommentPattern( "/tmp/file.unknown" ), undefined );

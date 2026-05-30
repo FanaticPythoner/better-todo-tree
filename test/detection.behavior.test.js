@@ -208,6 +208,70 @@ QUnit.module( "behavioral detection", function( hooks )
         assert.equal( result.column, 4 );
     } );
 
+    QUnit.test( "issue #28 legacy prefix regex strips markdown html comment end", function( assert )
+    {
+        utils.init( createConfig( {
+            tagList: [ "TODO", "FIXME", "BUG", "HACK", "[ ]", "[x]" ],
+            regexSource: "(?:(?://|#|<!--|;|/\\*\\*?|\\*)\\s*($TAGS)|^\\s*- \\[ \\])"
+        } ) );
+
+        var results = detection.scanText(
+            createUri( "/tmp/notes.md" ),
+            "<!-- TODO html comment text should appear after TODO -->"
+        );
+
+        assert.equal( results.length, 1 );
+        assert.equal( results[ 0 ].actualTag, "TODO" );
+        assert.equal( results[ 0 ].displayText, "html comment text should appear after TODO" );
+        assert.equal( results[ 0 ].after, "html comment text should appear after TODO" );
+    } );
+
+    QUnit.test( "issue #28 legacy prefix regex strips block comment end", function( assert )
+    {
+        utils.init( createConfig( {
+            tagList: [ "TODO", "FIXME", "BUG", "HACK", "[ ]", "[x]" ],
+            regexSource: "(?:(?://|#|<!--|;|/\\*\\*?|\\*)\\s*($TAGS)|^\\s*- \\[ \\])"
+        } ) );
+
+        var results = detection.scanText(
+            createUri( "/tmp/sample.js" ),
+            "/* TODO block comment text should appear after TODO */"
+        );
+
+        assert.equal( results.length, 1 );
+        assert.equal( results[ 0 ].actualTag, "TODO" );
+        assert.equal( results[ 0 ].displayText, "block comment text should appear after TODO" );
+        assert.equal( results[ 0 ].after, "block comment text should appear after TODO" );
+    } );
+
+    QUnit.test( "issue #28 workspace regex normalization strips markdown html comment end", function( assert )
+    {
+        utils.init( createConfig( {
+            tagList: [ "TODO", "FIXME", "BUG", "HACK", "[ ]", "[x]" ],
+            regexSource: "(?:(?://|#|<!--|;|/\\*\\*?|\\*)\\s*($TAGS)|^\\s*- \\[ \\])"
+        } ) );
+
+        var result = detection.normalizeWorkspaceRegexMatch( createUri( "/tmp/notes.md" ), {
+            line: 5,
+            column: 1,
+            lines: "<!-- TODO html comment text should appear after TODO -->",
+            match: "<!-- TODO",
+            submatches: [
+                {
+                    start: 0,
+                    end: 9
+                }
+            ],
+            absoluteOffset: 0
+        } );
+
+        assert.equal( result.actualTag, "TODO" );
+        assert.equal( result.displayText, "html comment text should appear after TODO" );
+        assert.equal( result.after, "html comment text should appear after TODO" );
+        assert.equal( result.line, 5 );
+        assert.equal( result.column, 6 );
+    } );
+
     QUnit.test( "markdown headings are ignored while html comments and task list items are detected", function( assert )
     {
         utils.init( createConfig( {
