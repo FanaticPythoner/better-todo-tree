@@ -16,4 +16,4 @@ artifacts/vsix/
 artifacts/release-notes/
 artifacts/**/*.log
 artifacts/perf/runtime-benchmarks.json
-artifacts/perf/*.json
+artifacts/**/*.json

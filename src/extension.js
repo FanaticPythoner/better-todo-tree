@@ -193,11 +193,6 @@ function activate( context )
                 return undefined;
             }
 
-            changedEntries.forEach( function( entry )
-            {
-                extensionContextValues[ entry.suffix ] = entry.value;
-            } );
-
             return Promise.all( changedEntries.map( function( entry )
             {
                 var updates = [
@@ -210,7 +205,13 @@ function activate( context )
                 }
 
                 return Promise.all( updates );
-            } ) );
+            } ) ).then( function()
+            {
+                changedEntries.forEach( function( entry )
+                {
+                    extensionContextValues[ entry.suffix ] = entry.value;
+                } );
+            } );
         } );
 
         extensionContextUpdateQueue = scheduled.catch( function( error )
@@ -901,21 +902,25 @@ function activate( context )
         }, 200 );
     }
 
+    function tagCountTotal( counts )
+    {
+        return Object.values( counts ).reduce( function( total, count ) { return total + count; }, 0 );
+    }
+
     function updateInformation()
     {
         var statusBar = getSetting( 'general.statusBar', 'none' );
 
-        var counts = provider.getTagCountsForActivityBar();
-        var total = Object.values( counts ).reduce( function( a, b ) { return a + b; }, 0 );
+        var activityBarCounts = provider.getTagCountsForActivityBar();
+        var activityBarTotal = tagCountTotal( activityBarCounts );
+        var counts = statusBar === STATUS_BAR_CURRENT_FILE ?
+            provider.getTagCountsForStatusBar( getCurrentFileFilter() ) :
+            provider.getTagCountsForStatusBar();
+        var total = tagCountTotal( counts );
+        var titleTotal = statusBar === STATUS_BAR_CURRENT_FILE ? total : activityBarTotal;
 
-        var badgeTotal = config.shouldShowActivityBarBadge() ? total : 0;
+        var badgeTotal = config.shouldShowActivityBarBadge() ? activityBarTotal : 0;
         todoTreeView.badge = { value: badgeTotal };
-
-        if( statusBar === STATUS_BAR_CURRENT_FILE )
-        {
-            counts = provider.getTagCountsForStatusBar( getCurrentFileFilter() );
-            total = Object.values( counts ).reduce( function( a, b ) { return a + b; }, 0 );
-        }
 
         var countRegex = new RegExp( "([^(]*)(\\(\\d+\\))*" );
         var match = countRegex.exec( todoTreeView.title );
@@ -935,9 +940,9 @@ function activate( context )
                 title = "Tree";
             }
 
-            if( total > 0 && getSetting( 'tree.showCountsInTree', false ) === true )
+            if( titleTotal > 0 && getSetting( 'tree.showCountsInTree', false ) === true )
             {
-                title += " (" + total + ")";
+                title += " (" + titleTotal + ")";
             }
             todoTreeView.title = title;
         }
@@ -2891,7 +2896,7 @@ function activate( context )
                 var buttons = [ MORE_INFO_BUTTON, NEVER_SHOW_AGAIN_BUTTON ];
                 if( getSetting( 'regex.regex', '' ) === getCurrentConfiguration().inspect( 'regex.regex' ).defaultValue )
                 {
-                    message += " Would you like to update your settings automatically?";
+                    message += " Update settings automatically?";
                     buttons.unshift( YES_BUTTON );
                 }
                 vscode.window.showInformationMessage( message, ...buttons ).then( function( button )
@@ -3057,7 +3062,7 @@ function activate( context )
                         destinationId: 'workbench.view.explorer'
                     } );
 
-                    vscode.window.showInformationMessage( identity.DISPLAY_NAME + ": 'showInExplorer' has been deprecated. If needed, the view can now be dragged to where you want it.", OPEN_SETTINGS_BUTTON, NEVER_SHOW_AGAIN_BUTTON ).then( function( button )
+                    vscode.window.showInformationMessage( identity.DISPLAY_NAME + ": 'showInExplorer' has been deprecated. View can be dragged to any VS Code location.", OPEN_SETTINGS_BUTTON, NEVER_SHOW_AGAIN_BUTTON ).then( function( button )
                     {
                         if( button === OPEN_SETTINGS_BUTTON )
                         {

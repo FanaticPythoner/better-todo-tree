@@ -253,8 +253,10 @@ function createSearchResultsStub()
     };
 }
 
-function createProviderStub()
+function createProviderStub( options )
 {
+    options = options || {};
+
     return {
         replaceCalls: [],
         latestResultsByUri: new Map(),
@@ -276,8 +278,15 @@ function createProviderStub()
         },
         finalizePendingChanges: function( filter, options ) { this.finalizeCalls.push( { filter: filter, options: options } ); },
         refresh: function() { this.refreshCalls++; },
-        getTagCountsForActivityBar: function() { return {}; },
-        getTagCountsForStatusBar: function() { return {}; },
+        getTagCountsForActivityBar: function()
+        {
+            return Object.assign( {}, options.activityBarCounts || {} );
+        },
+        getTagCountsForStatusBar: function( fileFilter )
+        {
+            var byFile = options.statusBarCountsByFile || {};
+            return Object.assign( {}, fileFilter && byFile[ fileFilter ] ? byFile[ fileFilter ] : options.statusBarCounts || {} );
+        },
         exportTree: function() { return {}; },
         hasSubTags: function() { return false; },
         getChildren: function() { return []; },
@@ -386,7 +395,7 @@ function createVscodeStub( options )
             groupedBySubTag: false,
             hideTreeWhenEmpty: false,
             autoRefresh: true,
-            scanAtStartup: true,
+            scanAtStartup: options.scanAtStartup !== false,
             scanMode: options.scanMode
         },
         filtering: filteringDefaults,
@@ -396,7 +405,7 @@ function createVscodeStub( options )
             periodicRefreshInterval: periodicRefreshInterval,
             rootFolder: "",
             tags: languageMatrix.DEFAULT_TAGS.slice(),
-            statusBar: 'total'
+            statusBar: options.statusBar || 'total'
         },
         ripgrep: {
             ripgrepArgs: '',
@@ -411,9 +420,9 @@ function createVscodeStub( options )
             periodicRefreshInterval: periodicRefreshInterval,
             rootFolder: "",
             exportPath: '/tmp/todo-tree.txt',
-            statusBar: 'total',
+            statusBar: options.statusBar || 'total',
             statusBarClickBehaviour: '',
-            showActivityBarBadge: false,
+            showActivityBarBadge: options.showActivityBarBadge === true,
             tags: languageMatrix.DEFAULT_TAGS.slice(),
             tagGroups: {},
             schemes: [ 'file' ]
@@ -425,7 +434,7 @@ function createVscodeStub( options )
             showBadges: false,
             scanMode: options.scanMode,
             showCurrentScanMode: false,
-            scanAtStartup: true,
+            scanAtStartup: options.scanAtStartup !== false,
             hideTreeWhenEmpty: false,
             buttons: rootSection.get( 'tree.buttons' )
         }, undefined, configurationUpdates );
@@ -615,7 +624,15 @@ function createVscodeStub( options )
         commands: {
             executeCommand: function( command )
             {
-                executedCommands.push( Array.prototype.slice.call( arguments ) );
+                var commandArguments = Array.prototype.slice.call( arguments );
+                executedCommands.push( commandArguments );
+                if( typeof options.executeCommandImpl === 'function' )
+                {
+                    return Promise.resolve().then( function()
+                    {
+                        return options.executeCommandImpl.apply( undefined, commandArguments );
+                    } );
+                }
                 return Promise.resolve();
             },
             registerCommand: function( name, handler )
@@ -703,7 +720,7 @@ function createVscodeStub( options )
 
 function createExtensionHarness( options )
 {
-    var provider = options.useActualTreeProvider === true ? undefined : createProviderStub();
+    var provider = options.useActualTreeProvider === true ? undefined : createProviderStub( options );
     var searchResults = createSearchResultsStub();
     var ripgrepSearchCalls = [];
     var scanDocumentCalls = [];
@@ -833,7 +850,7 @@ function createExtensionHarness( options )
         shouldIgnoreGitSubmodules: function() { return false; },
         shouldUseBuiltInFileExcludes: function() { return false; },
         shouldUseBuiltInSearchExcludes: function() { return false; },
-        shouldShowActivityBarBadge: function() { return false; },
+        shouldShowActivityBarBadge: function() { return options.showActivityBarBadge === true; },
         shouldFlatten: function() { return Object.prototype.hasOwnProperty.call( treeStateOverrides, 'flat' ) ? treeStateOverrides.flat : context.workspaceState.get( 'flat', false ); },
         shouldShowTagsOnly: function() { return Object.prototype.hasOwnProperty.call( treeStateOverrides, 'tagsOnly' ) ? treeStateOverrides.tagsOnly : context.workspaceState.get( 'tagsOnly', false ); },
         clickingStatusBarShouldRevealTree: function() { return false; },
@@ -1358,6 +1375,99 @@ function fireVisibleNotebookEditorsChanged( harness, notebooksToShow, activeNote
 }
 
 QUnit.module( "extension scan parity" );
+
+QUnit.test( "issue #41 total status bar uses status counts and activity badge uses activity counts", function( assert )
+{
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        statusBar: 'total',
+        showActivityBarBadge: true,
+        statusBarCounts: { TODO: 2 },
+        activityBarCounts: { TODO: 2, FIXME: 5 },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.vscode.statusBarItems[ 0 ].text, '$(check) 2 (in open files)' );
+        assert.deepEqual( harness.vscode.treeViews[ 0 ].badge, { value: 7 } );
+    } );
+} );
+
+QUnit.test( "issue #41 tag status bar ignores activity-bar hidden-count domain", function( assert )
+{
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        statusBar: 'tags',
+        statusBarCounts: { TODO: 3, FIXME: 1 },
+        activityBarCounts: { TODO: 3 },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.vscode.statusBarItems[ 0 ].text, '$(check) FIXME: 1  TODO: 3 (in open files)' );
+    } );
+} );
+
+QUnit.test( "command context cache updates only after VS Code accepts every setContext command", function( assert )
+{
+    var flatFailures = 1;
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        fileContents: {},
+        executeCommandImpl: function( command, contextKey )
+        {
+            if( command === 'setContext' && contextKey === 'better-todo-tree-flat' && flatFailures > 0 )
+            {
+                flatFailures--;
+                return Promise.reject( new Error( 'setContext test failure' ) );
+            }
+
+            return Promise.resolve();
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        var beforeRetry = harness.vscode.executedCommands.length;
+
+        assert.equal( flatFailures, 0 );
+        assert.ok( harness.vscode.errorMessages.some( function( message )
+        {
+            return message.indexOf( 'failed to update command contexts' ) >= 0;
+        } ) );
+
+        harness.vscode.workspaceListeners.configuration( {
+            affectsConfiguration: function( section )
+            {
+                return section === 'better-todo-tree' || section === 'todo-tree';
+            }
+        } );
+
+        return matrixHelpers.flushAsyncWork().then( function()
+        {
+            return matrixHelpers.flushAsyncWork();
+        } ).then( function()
+        {
+            var retryCommands = harness.vscode.executedCommands.slice( beforeRetry );
+
+            assert.ok( retryCommands.some( function( commandArguments )
+            {
+                return commandArguments[ 0 ] === 'setContext' &&
+                    commandArguments[ 1 ] === 'better-todo-tree-flat' &&
+                    commandArguments[ 2 ] === false;
+            } ) );
+        } );
+    } );
+} );
 
 QUnit.test( "open-files mode stores canonical document results through the refresh pipeline", function( assert )
 {
