@@ -357,6 +357,46 @@ QUnit.module( "behavioral tree", function()
         assert.deepEqual( provider.getChildren( workspaceRoot ).map( function( node ) { return node.label; } ), [ 'TODO', 'FIXME' ] );
     } );
 
+    QUnit.test( "incremental document updates keep sibling files sorted by path", function( assert )
+    {
+        var configStub = createConfig();
+        var tree = loadTreeModule( configStub );
+        var provider = new tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+        var workspaceFolder = {
+            name: 'workspace',
+            uri: {
+                scheme: 'file',
+                fsPath: '/workspace'
+            }
+        };
+
+        function replaceFile( filePath, tag, text )
+        {
+            var result = createResult( filePath, tag, text );
+            provider.replaceDocument( result.uri, [ result ] );
+        }
+
+        function fileLabels()
+        {
+            var workspaceRoot = provider.getChildren()[ 0 ];
+            var srcFolder = provider.getChildren( workspaceRoot )[ 0 ];
+            return provider.getChildren( srcFolder ).map( function( node ) { return node.label; } );
+        }
+
+        provider.clear( [ workspaceFolder ] );
+        replaceFile( '/workspace/src/c.cbl', 'TODO', 'third' );
+        replaceFile( '/workspace/src/a.cbl', 'TODO', 'first' );
+        replaceFile( '/workspace/src/b.cbl', 'FIXME', 'second' );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+
+        assert.deepEqual( fileLabels(), [ 'a.cbl', 'b.cbl', 'c.cbl' ] );
+
+        replaceFile( '/workspace/src/b.cbl', 'TODO', 'second updated' );
+        provider.finalizePendingChanges( undefined, { fullSort: false } );
+
+        assert.deepEqual( fileLabels(), [ 'a.cbl', 'b.cbl', 'c.cbl' ] );
+    } );
+
     QUnit.test( "forceFullRefresh emits a full tree refresh for in-flight workspace updates", function( assert )
     {
         var configStub = createConfig();
