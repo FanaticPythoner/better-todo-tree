@@ -1,5 +1,18 @@
 var utils = require( '../src/utils.js' );
 var detection = require( '../src/detection.js' );
+var regexRegistry = require( '../src/regexRegistry.js' );
+
+function slashHashTagRegexWithTail( tail )
+{
+    var builder = regexRegistry.createRegexBuilder();
+
+    return builder.sequence( [
+        builder.nonCapture( builder.alternationFragments( [ 'slashCommentPrefix', 'hashCommentPrefix' ] ) ),
+        builder.fragment( 'whitespaceZeroOrMore' ),
+        builder.capture( builder.fragment( 'tagPlaceholder' ) ),
+        tail
+    ] );
+}
 
 function createConfig( overrides )
 {
@@ -8,7 +21,7 @@ function createConfig( overrides )
         regexSource: utils.DEFAULT_REGEX_SOURCE,
         caseSensitive: true,
         multiLine: false,
-        subTagRegexString: "(^:\\s*)",
+        subTagRegexString: regexRegistry.pattern( 'subTagPrefixCapture' ),
         tags()
         {
             return this.tagList;
@@ -166,7 +179,7 @@ QUnit.module( "behavioral detection", function( hooks )
     {
         utils.init( createConfig( {
             tagList: [ "TODO", "FIXME", "BUG", "HACK", "[ ]", "[x]" ],
-            regexSource: "(?:(?://|#|<!--|;|/\\*\\*?|\\*)\\s*($TAGS)|^\\s*- \\[ \\])"
+            regexSource: regexRegistry.pattern( 'legacyMarkdownCompatibilityTodo' )
         } ) );
 
         var results = detection.scanText( createUri( "/tmp/sample.js" ), [
@@ -185,7 +198,7 @@ QUnit.module( "behavioral detection", function( hooks )
     {
         utils.init( createConfig( {
             tagList: [ "TODO", "FIXME", "BUG", "HACK", "[ ]", "[x]" ],
-            regexSource: "(?:(?://|#|<!--|;|/\\*\\*?|\\*)\\s*($TAGS)|^\\s*- \\[ \\])"
+            regexSource: regexRegistry.pattern( 'legacyMarkdownCompatibilityTodo' )
         } ) );
 
         var result = detection.normalizeWorkspaceRegexMatch( createUri( "/tmp/sample.js" ), {
@@ -212,7 +225,7 @@ QUnit.module( "behavioral detection", function( hooks )
     {
         utils.init( createConfig( {
             tagList: [ "TODO", "FIXME", "BUG", "HACK", "[ ]", "[x]" ],
-            regexSource: "(?:(?://|#|<!--|;|/\\*\\*?|\\*)\\s*($TAGS)|^\\s*- \\[ \\])"
+            regexSource: regexRegistry.pattern( 'legacyMarkdownCompatibilityTodo' )
         } ) );
 
         var results = detection.scanText(
@@ -230,7 +243,7 @@ QUnit.module( "behavioral detection", function( hooks )
     {
         utils.init( createConfig( {
             tagList: [ "TODO", "FIXME", "BUG", "HACK", "[ ]", "[x]" ],
-            regexSource: "(?:(?://|#|<!--|;|/\\*\\*?|\\*)\\s*($TAGS)|^\\s*- \\[ \\])"
+            regexSource: regexRegistry.pattern( 'legacyMarkdownCompatibilityTodo' )
         } ) );
 
         var results = detection.scanText(
@@ -248,7 +261,7 @@ QUnit.module( "behavioral detection", function( hooks )
     {
         utils.init( createConfig( {
             tagList: [ "TODO", "FIXME", "BUG", "HACK", "[ ]", "[x]" ],
-            regexSource: "(?:(?://|#|<!--|;|/\\*\\*?|\\*)\\s*($TAGS)|^\\s*- \\[ \\])"
+            regexSource: regexRegistry.pattern( 'legacyMarkdownCompatibilityTodo' )
         } ) );
 
         var result = detection.normalizeWorkspaceRegexMatch( createUri( "/tmp/notes.md" ), {
@@ -409,7 +422,7 @@ QUnit.module( "behavioral detection", function( hooks )
         ].join( '\n' );
         var config = createConfig( {
             tagList: [ 'TODO' ],
-            regexSource: '(?://|#)\\s*($TAGS).*',
+            regexSource: slashHashTagRegexWithTail( regexRegistry.fragment( 'anyTextZeroOrMore' ) ),
             customHighlight: function()
             {
                 return {

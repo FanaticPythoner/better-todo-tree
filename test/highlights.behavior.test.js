@@ -2,6 +2,7 @@ var helpers = require( './moduleHelpers.js' );
 var actualDetection = require( '../src/detection.js' );
 var actualUtils = require( '../src/utils.js' );
 var actualAttributes = require( '../src/attributes.js' );
+var regexRegistry = require( '../src/regexRegistry.js' );
 var issue888Helpers = require( './issue888Helpers.js' );
 
 function createVscodeStub( highlightConfiguration, decorationLog )
@@ -162,7 +163,7 @@ QUnit.module( "behavioral highlights", function( hooks )
             vscode: createVscodeStub( { highlight: 'tag', enabled: true }, decorationLog ),
             './config.js': {
                 customHighlight: function() { return {}; },
-                subTagRegex: function() { return '(^:\\s*)'; }
+                subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); }
             },
             './utils.js': {
                 isHexColour: function() { return false; },
@@ -247,7 +248,7 @@ QUnit.module( "behavioral highlights", function( hooks )
             vscode: createVscodeStub( { enabled: true }, decorationLog ),
             './config.js': {
                 customHighlight: config.customHighlight.bind( config ),
-                subTagRegex: function() { return '(^:\\s*)'; },
+                subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); },
                 tagGroup: function() { return undefined; }
             },
             './utils.js': actualUtils,
@@ -328,7 +329,7 @@ QUnit.module( "behavioral highlights", function( hooks )
             vscode: createVscodeStub( { enabled: true }, decorationLog ),
             './config.js': {
                 customHighlight: config.customHighlight.bind( config ),
-                subTagRegex: function() { return '(^:\\s*)'; },
+                subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); },
                 tagGroup: function() { return undefined; }
             },
             './utils.js': actualUtils,
@@ -372,7 +373,7 @@ QUnit.module( "behavioral highlights", function( hooks )
             vscode: createVscodeStub( { highlight: 'text-and-comment', enabled: true }, [] ),
             './config.js': {
                 customHighlight: function() { return {}; },
-                subTagRegex: function() { return '(^:\\s*)'; },
+                subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); },
                 tagGroup: function() { return undefined; }
             },
             './utils.js': {
@@ -447,7 +448,7 @@ QUnit.module( "behavioral highlights", function( hooks )
             vscode: createVscodeStub( { highlight: 'text', enabled: true }, [] ),
             './config.js': {
                 customHighlight: function() { return {}; },
-                subTagRegex: function() { return '(^:\\s*)'; },
+                subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); },
                 tagGroup: function() { return undefined; }
             },
             './utils.js': {
@@ -528,7 +529,7 @@ QUnit.module( "behavioral highlights", function( hooks )
             vscode: createVscodeStub( { highlight: 'tag', enabled: true }, [] ),
             './config.js': {
                 customHighlight: function() { return {}; },
-                subTagRegex: function() { return '(^:\\s*)'; },
+                subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); },
                 tagGroup: function() { return undefined; }
             },
             './utils.js': actualUtils,
@@ -604,7 +605,7 @@ QUnit.module( "behavioral highlights", function( hooks )
             },
             './config.js': {
                 customHighlight: function() { return {}; },
-                subTagRegex: function() { return '(^:\\s*)'; },
+                subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); },
                 tagGroup: function() { return undefined; }
             },
             './utils.js': {

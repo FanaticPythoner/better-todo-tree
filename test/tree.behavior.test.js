@@ -1,4 +1,5 @@
 var utils = require( '../src/utils.js' );
+var regexRegistry = require( '../src/regexRegistry.js' );
 var helpers = require( './moduleHelpers.js' );
 
 function createWorkspaceState()
@@ -165,8 +166,16 @@ QUnit.module( "behavioral tree", function()
     {
         var vscodeStub = createVscodeStub();
         utils.init( Object.assign( createConfig(), {
-            regex: function() { return { tags: [ 'TODO', 'FIXME' ], regex: '($TAGS)', caseSensitive: true, multiLine: false }; },
-            subTagRegex: function() { return '(^:\\s*)'; },
+            regex: function()
+            {
+                return {
+                    tags: [ 'TODO', 'FIXME' ],
+                    regex: regexRegistry.TAG_CAPTURE_PLACEHOLDER,
+                    caseSensitive: true,
+                    multiLine: false
+                };
+            },
+            subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); },
             isRegexCaseSensitive: function() { return true; },
             globs: function() { return []; },
             shouldUseColourScheme: function() { return false; },

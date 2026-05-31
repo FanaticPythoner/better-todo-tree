@@ -10,6 +10,7 @@ var path = require( 'path' );
 var vm = require( 'vm' );
 var Module = require( 'module' );
 var childProcess = require( 'child_process' );
+var regexRegistry = require( '../../src/regexRegistry.js' );
 var extensionScenarios = require( './extensionScenarios.js' );
 var readmeSummary = require( './readmeSummary.js' );
 
@@ -280,7 +281,7 @@ function createLatencyMeasurementFromSamples( name, latencySamplesMs, lastValue 
 
 function ripgrepExecutableName()
 {
-    return /^win/.test( process.platform ) ? 'rg.exe' : 'rg';
+    return regexRegistry.createRegExp( 'windowsPlatform' ).test( process.platform ) ? 'rg.exe' : 'rg';
 }
 
 function ripgrepPlatformArch()
@@ -717,7 +718,7 @@ function createDetectionConfig( options )
         },
         subTagRegex: function()
         {
-            return options.subTagRegex || '(^:\\s*)';
+            return options.subTagRegex || regexRegistry.pattern( 'subTagPrefixCapture' );
         }
     };
 }
@@ -932,7 +933,7 @@ async function benchmarkScanLargeCustomRegex( baselineLoader )
     var baselineUtils = baselineLoader( 'src/utils.js' );
     var customConfig = createDetectionConfig( {
         tags: [ 'TODO' ],
-        regex: '(TODO):\\s*[^\\n]+',
+        regex: regexRegistry.pattern( 'todoColonLine' ),
         multiLine: false
     } );
     var customText = buildCustomDetectionText( 50000 );
@@ -1123,7 +1124,7 @@ function createTreeResults()
 function extractTagForBaselineTree( text )
 {
     var trimmed = text.trim();
-    var parts = trimmed.split( /\s+/ );
+    var parts = trimmed.split( regexRegistry.createRegExp( 'whitespaceOneOrMore' ) );
     var tag = parts[ 0 ] || 'TODO';
     var remainder = trimmed.slice( tag.length ).trim();
 
@@ -1336,7 +1337,7 @@ function createHighlightModule(relativePath)
         },
         './config.js': {
             customHighlight: function() { return {}; },
-            subTagRegex: function() { return '(^:\\s*)'; },
+            subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); },
             tagGroup: function() { return undefined; }
         },
         './utils.js': {
@@ -1471,7 +1472,7 @@ function createBaselineHighlightModule( baselineLoader )
         },
         './config.js': {
             customHighlight: function() { return {}; },
-            subTagRegex: function() { return '(^:\\s*)'; },
+            subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); },
             tagGroup: function() { return undefined; }
         },
         './utils.js': {
@@ -1484,7 +1485,7 @@ function createBaselineHighlightModule( baselineLoader )
             setRgbAlpha: function( value ) { return value; },
             getRegexForEditorSearch: function()
             {
-                return /TODO/g;
+                return regexRegistry.createRegExp( 'todoLiteral', 'g' );
             },
             extractTag: function( text )
             {
@@ -1738,7 +1739,7 @@ async function benchmarkWorkspaceStreaming( baselineLoader )
     var baselineSearchResults = baselineLoader( 'src/searchResults.js' );
     var config = createDetectionConfig( {
         tags: [ 'TODO' ],
-        regex: '(TODO):\\s*[^\\n]+'
+        regex: regexRegistry.pattern( 'todoColonLine' )
     } );
     var fileCount = 1500;
     var matchesPerFile = 20;
@@ -2155,7 +2156,7 @@ function parseLscpuFields( entries )
 {
     return entries.reduce( function( fields, entry )
     {
-        var key = String( entry.field || '' ).replace( /:$/, '' ).trim();
+        var key = String( entry.field || '' ).replace( regexRegistry.createRegExp( 'colonSuffix' ), '' ).trim();
 
         if( key.length > 0 )
         {
@@ -2168,9 +2169,9 @@ function parseLscpuFields( entries )
 
 function parseMeminfo( text )
 {
-    return String( text ).split( /\n/ ).reduce( function( entries, line )
+    return String( text ).split( '\n' ).reduce( function( entries, line )
     {
-        var match = line.match( /^([^:]+):\s+(\d+)\s+kB$/ );
+        var match = line.match( regexRegistry.createRegExp( 'meminfoLine' ) );
 
         if( match )
         {
@@ -2183,13 +2184,15 @@ function parseMeminfo( text )
 
 function parseOsRelease( text )
 {
-    return String( text ).split( /\n/ ).reduce( function( entries, line )
+    return String( text ).split( '\n' ).reduce( function( entries, line )
     {
-        var match = line.match( /^([A-Z0-9_]+)=(.*)$/ );
+        var match = line.match( regexRegistry.createRegExp( 'environmentAssignment' ) );
 
         if( match )
         {
-            entries[ match[ 1 ] ] = match[ 2 ].replace( /^"/, '' ).replace( /"$/, '' );
+            entries[ match[ 1 ] ] = match[ 2 ]
+                .replace( regexRegistry.createRegExp( 'leadingDoubleQuote' ), '' )
+                .replace( regexRegistry.createRegExp( 'trailingDoubleQuote' ), '' );
         }
 
         return entries;
@@ -2264,7 +2267,7 @@ function formatMHz( value )
 
 function formatInlineText( value )
 {
-    return String( value || '' ).replace( /\s+/g, ' ' ).trim();
+    return String( value || '' ).replace( regexRegistry.createRegExp( 'whitespaceOneOrMore', 'g' ), ' ' ).trim();
 }
 
 function formatUnavailable( value )

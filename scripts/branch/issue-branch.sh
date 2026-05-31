@@ -309,21 +309,89 @@ require_no_branch_collision()
   fi
 }
 
+base_ref()
+{
+  printf 'refs/remotes/%s/%s\n' "$remote_name" "$base_branch"
+}
+
+branch_commit()
+{
+  git rev-parse --verify "$1^{commit}"
+}
+
+require_ref_at_base()
+{
+  local ref="$1"
+  local label="$2"
+  local base_commit=''
+  local ref_commit=''
+
+  base_commit="$(branch_commit "$(base_ref)")"
+  ref_commit="$(branch_commit "$ref")"
+  [[ "$ref_commit" == "$base_commit" ]] || fail "$label '$branch_name' is not at $remote_name/$base_branch."
+}
+
+create_local_branch_from_ref()
+{
+  local start_ref="$1"
+
+  git branch --no-track "$branch_name" "$start_ref"
+}
+
+set_branch_upstream()
+{
+  git branch --set-upstream-to="$remote_name/$branch_name" "$branch_name" >/dev/null
+}
+
+push_branch_ref()
+{
+  git push "$remote_name" "refs/heads/$branch_name:refs/heads/$branch_name"
+  set_branch_upstream
+}
+
 create_branch()
 {
-  local base_ref="refs/remotes/$remote_name/$base_branch"
-
   require_git_repo
   require_target_base
   resolve_branch_name >/dev/null
   fetch_base
   require_no_branch_collision
 
-  git branch --no-track "$branch_name" "$base_ref"
-  git push "$remote_name" "refs/heads/$branch_name:refs/heads/$branch_name"
-  git branch --set-upstream-to="$remote_name/$branch_name" "$branch_name" >/dev/null
+  create_local_branch_from_ref "$(base_ref)"
+  push_branch_ref
 
   printf 'created branch %s from %s/%s\n' "$branch_name" "$remote_name" "$base_branch"
+}
+
+ensure_flow_branch()
+{
+  local local_ref="refs/heads/$branch_name"
+  local remote_ref="refs/remotes/$remote_name/$branch_name"
+
+  require_git_repo
+  require_target_base
+  resolve_branch_name >/dev/null
+  fetch_base
+
+  if git rev-parse --verify "$local_ref" >/dev/null 2>&1; then
+    require_ref_at_base "$local_ref" 'local branch'
+    if remote_branch_exists; then
+      fetch_branch >/dev/null
+      require_ref_at_base "$remote_ref" 'remote branch'
+      set_branch_upstream
+    fi
+    return 0
+  fi
+
+  if remote_branch_exists; then
+    fetch_branch >/dev/null
+    require_ref_at_base "$remote_ref" 'remote branch'
+    create_local_branch_from_ref "$remote_ref"
+    set_branch_upstream
+    return 0
+  fi
+
+  create_local_branch_from_ref "$(base_ref)"
 }
 
 require_clean_merge_state()
@@ -334,58 +402,243 @@ require_clean_merge_state()
   [[ -z "$unmerged" ]] || fail "unmerged paths block branch preparation: $unmerged"
 }
 
-require_staged_source_changes()
+require_source_changes()
 {
   local status=0
 
   set +e
-  git diff --cached --quiet --exit-code
+  git diff --quiet --exit-code HEAD
   status="$?"
   set -e
 
   case "$status" in
     0)
-      fail 'no staged source changes to move.'
+      fail 'no tracked source changes to move.'
       ;;
     1)
       return 0
       ;;
     *)
-      fail 'could not inspect staged source changes.'
+      fail 'could not inspect tracked source changes.'
       ;;
   esac
 }
 
-require_no_unstaged_source_changes()
+require_no_untracked_source_changes()
 {
-  local status=0
   local untracked=''
 
+  untracked="$(git ls-files --others --exclude-standard)"
+  [[ -z "$untracked" ]] || fail "untracked paths are present; only tracked changes can move: $untracked"
+}
+
+apply_patch_mode()
+{
+  local patch_file="$1"
+  local mode="$2"
+
+  case "$mode" in
+    exact)
+      git apply --index "$patch_file"
+      ;;
+    merge)
+      git apply --3way --index "$patch_file"
+      ;;
+    *)
+      fail "unsupported patch mode '$mode'."
+      ;;
+  esac
+}
+
+apply_patch_if_present()
+{
+  local patch_file="$1"
+  local mode="$2"
+
+  [[ -s "$patch_file" ]] || return 0
+
+  apply_patch_mode "$patch_file" "$mode"
+}
+
+write_source_snapshot()
+{
+  local snapshot_dir="$1"
+  local manifest_file="$2"
+  local source_root="$snapshot_dir/files"
+  local base_root="$snapshot_dir/base"
+  local path=''
+
+  mkdir -p "$source_root"
+  mkdir -p "$base_root"
+  : > "$manifest_file"
+
+  while IFS= read -r -d '' path; do
+    if git cat-file -e "HEAD:$path" 2>/dev/null; then
+      mkdir -p "$base_root/$(dirname "$path")"
+      git show "HEAD:$path" > "$base_root/$path"
+    fi
+
+    if [[ -e "$path" || -L "$path" ]]; then
+      mkdir -p "$source_root/$(dirname "$path")"
+      cp -pP "$path" "$source_root/$path"
+      printf 'write\0%s\0' "$path" >> "$manifest_file"
+    else
+      printf 'delete\0%s\0' "$path" >> "$manifest_file"
+    fi
+  done < <(git diff --name-only -z --no-renames HEAD)
+}
+
+merge_snapshot_file()
+{
+  local target_path="$1"
+  local base_path="$2"
+  local source_path="$3"
+  local temp_path=''
+  local status=0
+
+  if [[ ! -f "$target_path" || ! -f "$base_path" || ! -f "$source_path" ]]; then
+    cp -pP "$source_path" "$target_path"
+    return 0
+  fi
+
+  temp_path="$(mktemp "${TMPDIR:-/tmp}/issue-branch-merge.XXXXXX")"
+
   set +e
-  git diff --quiet --exit-code
+  git merge-file -p "$target_path" "$base_path" "$source_path" > "$temp_path"
   status="$?"
   set -e
 
   case "$status" in
     0)
+      mv "$temp_path" "$target_path"
       ;;
     1)
-      fail 'unstaged tracked changes are present; only staged changes can move.'
+      rm -f "$temp_path"
+      cp -pP "$source_path" "$target_path"
       ;;
     *)
-      fail 'could not inspect unstaged source changes.'
+      rm -f "$temp_path"
+      fail "source snapshot merge failed for '$target_path'."
       ;;
   esac
+}
 
-  untracked="$(git ls-files --others --exclude-standard)"
-  [[ -z "$untracked" ]] || fail "untracked paths are present; only staged changes can move: $untracked"
+apply_source_snapshot_to_target()
+{
+  local snapshot_dir="$1"
+  local manifest_file="$2"
+  local source_root="$snapshot_dir/files"
+  local base_root="$snapshot_dir/base"
+  local action=''
+  local path=''
+  local changed_paths=()
+
+  while IFS= read -r -d '' action && IFS= read -r -d '' path; do
+    case "$action" in
+      write)
+        mkdir -p "$(dirname "$path")"
+        merge_snapshot_file "$path" "$base_root/$path" "$source_root/$path"
+        git add -- "$path"
+        changed_paths+=( "$path" )
+        ;;
+      delete)
+        rm -f -- "$path"
+        git rm --cached -q --ignore-unmatch -- "$path" >/dev/null
+        changed_paths+=( "$path" )
+        ;;
+      *)
+        fail "unsupported source snapshot action '$action'."
+        ;;
+    esac
+  done < "$manifest_file"
+
+  git diff --cached --quiet --exit-code && return 1
+
+  printf 'resolved patch conflicts from source snapshot:\n'
+  printf '  %s\n' "${changed_paths[@]}"
+}
+
+apply_source_patch_sequence()
+{
+  local staged_patch_file="$1"
+  local unstaged_patch_file="$2"
+  local mode="$3"
+
+  apply_patch_if_present "$staged_patch_file" "$mode" || return 1
+  apply_patch_if_present "$unstaged_patch_file" "$mode" || return 1
+}
+
+apply_source_patch_to_target()
+{
+  local staged_patch_file="$1"
+  local unstaged_patch_file="$2"
+  local snapshot_dir="$3"
+  local manifest_file="$4"
+
+  if apply_source_patch_sequence "$staged_patch_file" "$unstaged_patch_file" exact; then
+    return 0
+  fi
+
+  git reset --hard HEAD >/dev/null || return 1
+
+  if apply_source_patch_sequence "$staged_patch_file" "$unstaged_patch_file" merge; then
+    return 0
+  fi
+
+  git reset --hard HEAD >/dev/null || return 1
+
+  if apply_source_snapshot_to_target "$snapshot_dir" "$manifest_file"; then
+    return 0
+  fi
+
+  git reset --hard HEAD >/dev/null || return 1
+  return 1
+}
+
+apply_patch_file_if_present()
+{
+  local patch_file="$1"
+  local mode="$2"
+
+  [[ -s "$patch_file" ]] || return 0
+
+  case "$mode" in
+    index)
+      apply_patch_mode "$patch_file" exact
+      ;;
+    worktree)
+      git apply "$patch_file"
+      ;;
+    *)
+      fail "unsupported source restore mode '$mode'."
+      ;;
+  esac
+}
+
+restore_source_changes()
+{
+  local staged_patch_file="$1"
+  local unstaged_patch_file="$2"
+  local retained_patch_file="$3"
+
+  git switch "$source_branch" >/dev/null || fail "tracked patch apply failed on '$branch_name'. Retained patch: $retained_patch_file"
+  git reset --hard HEAD >/dev/null || fail "tracked patch apply failed on '$branch_name'. Source reset failed. Retained patch: $retained_patch_file"
+  apply_patch_file_if_present "$staged_patch_file" index \
+    || fail "tracked patch apply failed on '$branch_name'. Source index restore failed. Retained patch: $retained_patch_file"
+  apply_patch_file_if_present "$unstaged_patch_file" worktree \
+    || fail "tracked patch apply failed on '$branch_name'. Source worktree restore failed. Retained patch: $retained_patch_file"
+  fail "tracked patch apply failed on '$branch_name'. Source changes restored. Retained patch: $retained_patch_file"
 }
 
 stage_branch_changes()
 {
   local apply_status=0
   local active_branch=''
-  local patch_file=''
+  local tracked_patch_file=''
+  local staged_patch_file=''
+  local unstaged_patch_file=''
+  local snapshot_dir=''
+  local manifest_file=''
 
   require_git_repo
   branch_name="$(resolve_branch_name)"
@@ -394,54 +647,81 @@ stage_branch_changes()
   active_branch="$(current_branch)" || fail 'detached HEAD cannot supply source changes.'
   [[ "$active_branch" == "$source_branch" ]] || fail "current branch '$active_branch' does not match source '$source_branch'."
   git rev-parse --verify "refs/heads/$branch_name" >/dev/null 2>&1 || fail "local branch '$branch_name' was not found."
-  require_staged_source_changes
-  require_no_unstaged_source_changes
+  require_source_changes
+  require_no_untracked_source_changes
 
-  patch_file="$(mktemp "${TMPDIR:-/tmp}/issue-branch-staged.XXXXXX.patch")"
-  git diff --cached --binary > "$patch_file"
+  tracked_patch_file="$(mktemp "${TMPDIR:-/tmp}/issue-branch-tracked.XXXXXX.patch")"
+  staged_patch_file="$(mktemp "${TMPDIR:-/tmp}/issue-branch-index.XXXXXX.patch")"
+  unstaged_patch_file="$(mktemp "${TMPDIR:-/tmp}/issue-branch-worktree.XXXXXX.patch")"
+  snapshot_dir="$(mktemp -d "${TMPDIR:-/tmp}/issue-branch-source.XXXXXX")"
+  manifest_file="$snapshot_dir/manifest"
+
+  write_source_snapshot "$snapshot_dir" "$manifest_file"
+  git diff --binary HEAD > "$tracked_patch_file"
+  git diff --cached --binary > "$staged_patch_file"
+  git diff --binary > "$unstaged_patch_file"
   git reset --hard HEAD >/dev/null
   git switch "$branch_name" >/dev/null
 
   set +e
-  git apply --index "$patch_file"
+  apply_source_patch_to_target "$staged_patch_file" "$unstaged_patch_file" "$snapshot_dir" "$manifest_file"
   apply_status="$?"
   set -e
 
   if [[ "$apply_status" -eq 0 ]]; then
-    rm -f "$patch_file"
+    rm -f "$tracked_patch_file" "$staged_patch_file" "$unstaged_patch_file"
+    rm -rf "$snapshot_dir"
   else
-    git switch "$source_branch" >/dev/null || fail "staged patch apply failed on '$branch_name'. Retained patch: $patch_file"
-    if git apply --index "$patch_file"; then
-      fail "staged patch apply failed on '$branch_name'. Source index restored. Retained patch: $patch_file"
-    fi
-    fail "staged patch apply failed on '$branch_name'. Source index restore failed. Retained patch: $patch_file"
+    restore_source_changes "$staged_patch_file" "$unstaged_patch_file" "$tracked_patch_file"
   fi
 
   printf 'staged changes on %s\n' "$branch_name"
 }
 
-commits_ahead()
+commits_ahead_of()
 {
-  git rev-list --count "$remote_name/$branch_name"..HEAD
+  git rev-list --count "$1"..HEAD
+}
+
+remote_branch_ref_exists()
+{
+  if remote_branch_exists; then
+    fetch_branch >/dev/null
+    return 0
+  fi
+
+  return 1
+}
+
+push_current_branch()
+{
+  git push "$remote_name" "HEAD:refs/heads/$branch_name"
+  set_branch_upstream
 }
 
 push_after_commit()
 {
   local active_branch=''
   local ahead_count='0'
+  local compare_ref=''
 
   require_git_repo
   branch_name="$(resolve_branch_name)"
-  git rev-parse --verify "refs/remotes/$remote_name/$branch_name" >/dev/null 2>&1 || fetch_branch >/dev/null
-  git rev-parse --verify "refs/remotes/$remote_name/$branch_name" >/dev/null 2>&1 || fail "remote branch '$remote_name/$branch_name' was not found."
+  fetch_base
 
   while true; do
     active_branch="$(current_branch)" || fail 'detached HEAD cannot be pushed.'
     [[ "$active_branch" == "$branch_name" ]] || fail "current branch '$active_branch' does not match target '$branch_name'."
 
-    ahead_count="$(commits_ahead)"
+    if remote_branch_ref_exists; then
+      compare_ref="$remote_name/$branch_name"
+    else
+      compare_ref="$(base_ref)"
+    fi
+
+    ahead_count="$(commits_ahead_of "$compare_ref")"
     if [[ "$ahead_count" != '0' ]]; then
-      git push "$remote_name" "HEAD:refs/heads/$branch_name"
+      push_current_branch
       printf 'pushed %s commit(s) to %s/%s\n' "$ahead_count" "$remote_name" "$branch_name"
       return 0
     fi
@@ -502,7 +782,7 @@ prompt_pr()
 flow()
 {
   branch_name="$(resolve_branch_name)"
-  create_branch
+  ensure_flow_branch
   stage_branch_changes
   push_after_commit
   prompt_pr

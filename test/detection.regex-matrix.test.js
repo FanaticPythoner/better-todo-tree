@@ -1,10 +1,33 @@
 var utils = require( '../src/utils.js' );
 var detection = require( '../src/detection.js' );
+var regexRegistry = require( '../src/regexRegistry.js' );
 
 var languageMatrix = require( './languageMatrix.js' );
 var issue888Helpers = require( './issue888Helpers.js' );
 var matrixHelpers = require( './matrixHelpers.js' );
 var stubs = require( './stubs.js' );
+
+function tagRegexWithTail( tail )
+{
+    var builder = regexRegistry.createRegexBuilder();
+
+    return builder.sequence( [
+        builder.pattern( 'tagCapturePlaceholder' ),
+        tail
+    ] );
+}
+
+function slashHashTagRegexWithTail( tail )
+{
+    var builder = regexRegistry.createRegexBuilder();
+
+    return builder.sequence( [
+        builder.nonCapture( builder.alternationFragments( [ 'slashCommentPrefix', 'hashCommentPrefix' ] ) ),
+        builder.fragment( 'whitespaceZeroOrMore' ),
+        builder.capture( builder.fragment( 'tagPlaceholder' ) ),
+        tail
+    ] );
+}
 
 QUnit.module( "detection regex matrix", function()
 {
@@ -27,9 +50,11 @@ QUnit.module( "detection regex matrix", function()
         var overriddenUri = matrixHelpers.createUri( '/tmp/override.js' );
         var config = matrixHelpers.createConfig( {
             tagList: [ 'TODO', 'XXX' ],
-            regexSource: '($TAGS)'
+            regexSource: regexRegistry.TAG_CAPTURE_PLACEHOLDER
         } );
-        stubs.setUriOverride( config, overriddenUri, { regexSource: '(XXX)' } );
+        stubs.setUriOverride( config, overriddenUri, {
+            regexSource: regexRegistry.pattern( 'xxxCapture' )
+        } );
 
         utils.init( config );
 
@@ -43,14 +68,14 @@ QUnit.module( "detection regex matrix", function()
         var caseSensitive = scanWithConfig( '/tmp/case.js', 'todo item', function( config )
         {
             config.tagList = [ 'TODO' ];
-            config.regexSource = '($TAGS)';
+            config.regexSource = regexRegistry.TAG_CAPTURE_PLACEHOLDER;
             config.shouldBeCaseSensitive = true;
         } );
 
         var caseInsensitive = scanWithConfig( '/tmp/case.js', 'todo item', function( config )
         {
             config.tagList = [ 'TODO' ];
-            config.regexSource = '($TAGS)';
+            config.regexSource = regexRegistry.TAG_CAPTURE_PLACEHOLDER;
             config.shouldBeCaseSensitive = false;
         } );
 
@@ -64,7 +89,7 @@ QUnit.module( "detection regex matrix", function()
         var results = scanWithConfig( '/tmp/multiline.js', 'TODO\nsecond line', function( config )
         {
             config.tagList = [ 'TODO' ];
-            config.regexSource = '($TAGS)\\nsecond line';
+            config.regexSource = regexRegistry.pattern( 'tagNewlineSecondLine' );
         } );
 
         assert.equal( results.length, 1 );
@@ -73,14 +98,14 @@ QUnit.module( "detection regex matrix", function()
         assert.deepEqual( results[ 0 ].continuationText, [ 'second line' ] );
     } );
 
-    QUnit.test( "enableMultiLine allows [\\\\s\\\\S] regexes to cross line boundaries", function( assert )
+    QUnit.test( "enableMultiLine allows registry multiline regexes to cross line boundaries", function( assert )
     {
         var results = scanWithConfig( '/tmp/multiline.js', 'TODO: first\nsecond\nEND', function( config )
         {
             config.tagList = [ 'TODO' ];
-            config.regexSource = '($TAGS):[\\s\\S]*?END';
+            config.regexSource = regexRegistry.pattern( 'tagColonAnyTextUntilEndLazy' );
             config.enableMultiLineFlag = true;
-            config.subTagRegexString = '^:\\s*';
+            config.subTagRegexString = regexRegistry.pattern( 'subTagPrefix' );
         } );
 
         assert.equal( results.length, 1 );
@@ -94,8 +119,8 @@ QUnit.module( "detection regex matrix", function()
         var results = scanWithConfig( '/tmp/subtag.js', 'TODO: follow up', function( config )
         {
             config.tagList = [ 'TODO' ];
-            config.regexSource = '($TAGS):\\s*follow up';
-            config.subTagRegexString = '^:\\s*';
+            config.regexSource = regexRegistry.pattern( 'tagColonFollowUp' );
+            config.subTagRegexString = regexRegistry.pattern( 'subTagPrefix' );
         } );
 
         assert.equal( results.length, 1 );
@@ -108,8 +133,8 @@ QUnit.module( "detection regex matrix", function()
         var results = scanWithConfig( '/tmp/subtag.js', 'TODO (alice) follow up', function( config )
         {
             config.tagList = [ 'TODO' ];
-            config.regexSource = '($TAGS).*';
-            config.subTagRegexString = '^\\s*\\((.*)\\)';
+            config.regexSource = regexRegistry.pattern( 'tagAnyText' );
+            config.subTagRegexString = regexRegistry.pattern( 'leadingParenthesizedSubTag' );
         } );
 
         assert.equal( results.length, 1 );
@@ -122,7 +147,7 @@ QUnit.module( "detection regex matrix", function()
         var results = scanWithConfig( '/tmp/tags.js', 'TODO(API) first\nA|B second', function( config )
         {
             config.tagList = [ 'TODO(API)', 'TODO', 'A|B' ];
-            config.regexSource = '($TAGS)';
+            config.regexSource = regexRegistry.TAG_CAPTURE_PLACEHOLDER;
         } );
 
         assert.equal( results.length, 2 );
@@ -130,12 +155,12 @@ QUnit.module( "detection regex matrix", function()
         assert.equal( results[ 1 ].actualTag, 'A|B' );
     } );
 
-    QUnit.test( "regexes without $TAGS use the raw match as the actual tag", function( assert )
+    QUnit.test( "regexes without the tag placeholder use the raw match as the actual tag", function( assert )
     {
         var results = scanWithConfig( '/tmp/note.js', 'NOTE relevant', function( config )
         {
             config.tagList = [ 'TODO' ];
-            config.regexSource = '(NOTE)';
+            config.regexSource = regexRegistry.pattern( 'noteCapture' );
         } );
 
         assert.equal( results.length, 1 );
@@ -148,7 +173,7 @@ QUnit.module( "detection regex matrix", function()
         var results = scanWithConfig( '/tmp/capture.js', 'TODO(api)', function( config )
         {
             config.tagList = [ 'TODO' ];
-            config.regexSource = '($TAGS)\\(([^)]+)\\)';
+            config.regexSource = regexRegistry.pattern( 'tagParenSubTagCapture' );
         } );
 
         assert.equal( results.length, 1 );
@@ -165,7 +190,7 @@ QUnit.module( "detection regex matrix", function()
         var results = scanWithConfig( '/tmp/default-tags.js', text, function( config )
         {
             config.tagList = languageMatrix.DEFAULT_TAGS.slice();
-            config.regexSource = '($TAGS)';
+            config.regexSource = regexRegistry.TAG_CAPTURE_PLACEHOLDER;
         } );
 
         assert.equal( results.length, languageMatrix.DEFAULT_TAGS.length );
@@ -191,7 +216,7 @@ QUnit.module( "detection regex matrix", function()
         utils.init( matrixHelpers.createConfig( {
             tagList: [ 'TODO', 'FIXME', 'HACK' ],
             regexSource: utils.DEFAULT_REGEX_SOURCE,
-            subTagRegexString: '^:\\s*'
+            subTagRegexString: regexRegistry.pattern( 'subTagPrefix' )
         } ) );
 
         var results = detection.scanText( uri, text );
@@ -214,8 +239,8 @@ QUnit.module( "detection regex matrix", function()
     {
         var config = matrixHelpers.createConfig( {
             tagList: [ 'TODO' ],
-            regexSource: '(?:(?://|#|<!--|;|/\\*\\*?|\\*)\\s*($TAGS)|^\\s*- \\[ \\])',
-            subTagRegexString: '^:\\s*'
+            regexSource: regexRegistry.pattern( 'legacyMarkdownCompatibilityTodo' ),
+            subTagRegexString: regexRegistry.pattern( 'subTagPrefix' )
         } );
         var uri = matrixHelpers.createUri( '/tmp/issue-36-workspace.js' );
         var text = '// TODO workspace-visible text';
@@ -243,6 +268,121 @@ QUnit.module( "detection regex matrix", function()
         assert.equal( normalized.after, 'workspace-visible text' );
     } );
 
+    QUnit.test( "issue #36 comment-prefix labels match reload labels", function( assert )
+    {
+        function stripCaptureGroupOffsets( results )
+        {
+            return results.map( function( result )
+            {
+                var copy = Object.assign( {}, result );
+                delete copy.captureGroupOffsets;
+                return copy;
+            } );
+        }
+
+        function createRipgrepMatch( uri, text, regex, result )
+        {
+            var lineStartOffset = text.split( '\n' ).slice( 0, result.line - 1 ).join( '\n' ).length;
+            if( result.line > 1 )
+            {
+                lineStartOffset++;
+            }
+
+            var lineEndOffset = text.indexOf( '\n', lineStartOffset );
+            if( lineEndOffset === -1 )
+            {
+                lineEndOffset = text.length;
+            }
+
+            var lineText = text.slice( lineStartOffset, lineEndOffset );
+            var lineRegex = new RegExp( regex.source, regex.flags.replace( 'g', '' ) );
+            var match = lineRegex.exec( lineText );
+
+            return {
+                fsPath: uri.fsPath,
+                line: result.line,
+                column: match.index + 1,
+                match: match[ 0 ],
+                lines: lineText + '\n',
+                absoluteOffset: lineStartOffset,
+                submatches: [ {
+                    match: match[ 0 ],
+                    start: match.index,
+                    end: match.index + match[ 0 ].length
+                } ]
+            };
+        }
+
+        var tagList = [ 'BUG', 'FIXME', 'HACK', 'TODO', '[ ]', '[x]', 'MOMA' ];
+        var regexSource = regexRegistry.pattern( 'commentPrefixTagCapture' );
+        var uri = matrixHelpers.createUri( '/tmp/shared-prefixes.txt' );
+        var text = [
+            '// TODO:   JavaScript TODO',
+            '# FIXME:  Python FIXME',
+            '<!-- HACK: HTML HACK',
+            '; BUG:    Semicolon BUG',
+            '/* MOMA:  Block MOMA',
+            '      *> BUG:   COBOL BUG',
+            '      *> FIXME: COBOL FIXME',
+            '      *> TODO:  COBOL TODO',
+            '      *> MOMA:  COBOL MOMA',
+            '      *> [ ]:   COBOL [ ]',
+            '      *> [x]:   COBOL [x]',
+            '',
+            '       -- BUG:   SQL BUG',
+            '       -- FIXME: SQL FIXME',
+            '       -- TODO:  SQL TODO',
+            '       -- MOMA:  SQL MOMA',
+            '       -- [ ]:   SQL [ ]',
+            '       -- [x]:   SQL [x]'
+        ].join( '\n' );
+        var config = matrixHelpers.createConfig( {
+            tagList: tagList,
+            regexSource: regexSource,
+            shouldBeCaseSensitive: false,
+            subTagRegexString: regexRegistry.pattern( 'subTagPrefix' )
+        } );
+
+        utils.init( config );
+
+        var openResults = detection.scanText( uri, text );
+        var expandedRegex = new RegExp(
+            regexSource.replace( regexRegistry.TAG_PLACEHOLDER, utils.getTagRegexSource( uri, tagList ) ),
+            'i'
+        );
+        var reloadResults = openResults.map( function( result )
+        {
+            return detection.normalizeWorkspaceRegexMatch(
+                uri,
+                createRipgrepMatch( uri, text, expandedRegex, result )
+            );
+        } );
+
+        assert.deepEqual(
+            openResults.map( function( result ) { return result.actualTag + ':' + result.after; } ),
+            [
+                'TODO:JavaScript TODO',
+                'FIXME:Python FIXME',
+                'HACK:HTML HACK',
+                'BUG:Semicolon BUG',
+                'MOMA:Block MOMA',
+                'BUG:COBOL BUG',
+                'FIXME:COBOL FIXME',
+                'TODO:COBOL TODO',
+                'MOMA:COBOL MOMA',
+                '[ ]:COBOL [ ]',
+                '[x]:COBOL [x]',
+                'BUG:SQL BUG',
+                'FIXME:SQL FIXME',
+                'TODO:SQL TODO',
+                'MOMA:SQL MOMA',
+                '[ ]:SQL [ ]',
+                '[x]:SQL [x]'
+            ]
+        );
+        assert.deepEqual( stripCaptureGroupOffsets( reloadResults ), stripCaptureGroupOffsets( openResults ) );
+    } );
+
     QUnit.test( "issue 898 punctuation-heavy custom tags normalize through custom regexes", function( assert )
     {
         var results = scanWithConfig( '/tmp/issue-898-punctuation.js', [
@@ -254,7 +394,7 @@ QUnit.module( "detection regex matrix", function()
         ].join( '\n' ), function( config )
         {
             config.tagList = [ 'TODO:', 'BUG:', 'FIXME:', 'HACK:', '?:' ];
-            config.regexSource = '(?://|#)\\s*($TAGS).*';
+            config.regexSource = slashHashTagRegexWithTail( regexRegistry.fragment( 'anyTextZeroOrMore' ) );
             config.shouldBeCaseSensitive = false;
         } );
 
@@ -273,7 +413,7 @@ QUnit.module( "detection regex matrix", function()
         ].join( '\n' ), function( config )
         {
             config.tagList = [ 'NOTE', 'ChangeNote', 'Change_Note', 'CHANGE NOTE', 'ToTest' ];
-            config.regexSource = '(?://|#)\\s*($TAGS).*';
+            config.regexSource = slashHashTagRegexWithTail( regexRegistry.fragment( 'anyTextZeroOrMore' ) );
         } );
 
         assert.deepEqual(
@@ -297,7 +437,7 @@ QUnit.module( "detection regex matrix", function()
         ].join( '\n' );
         var config = matrixHelpers.createConfig( {
             tagList: [ '#LATER' ],
-            regexSource: '($TAGS).*',
+            regexSource: regexRegistry.pattern( 'tagAnyText' ),
             shouldBeCaseSensitive: true
         } );
 
@@ -344,9 +484,9 @@ QUnit.module( "detection regex matrix", function()
     {
         var config = matrixHelpers.createConfig( {
             tagList: [ 'TODO' ],
-            regexSource: '($TAGS):[\\s\\S]*?END',
+            regexSource: regexRegistry.pattern( 'tagColonAnyTextUntilEndLazy' ),
             enableMultiLineFlag: true,
-            subTagRegexString: '^:\\s*'
+            subTagRegexString: regexRegistry.pattern( 'subTagPrefix' )
         } );
         var uri = matrixHelpers.createUri( '/tmp/workspace.js' );
         var text = 'TODO: first\nsecond\nEND';
@@ -374,7 +514,7 @@ QUnit.module( "detection regex matrix", function()
         var config = matrixHelpers.createConfig( {
             tagList: [ 'TODO' ],
             regexSource: utils.DEFAULT_REGEX_SOURCE,
-            subTagRegexString: '^:\\s*'
+            subTagRegexString: regexRegistry.pattern( 'subTagPrefix' )
         } );
         var uri = matrixHelpers.createUri( '/tmp/index-free.rs' );
         var text = '// TODO restore detection';
@@ -399,9 +539,9 @@ QUnit.module( "detection regex matrix", function()
     {
         var config = matrixHelpers.createConfig( {
             tagList: [ 'TODO' ],
-            regexSource: '($TAGS):[\\s\\S]*?END',
+            regexSource: regexRegistry.pattern( 'tagColonAnyTextUntilEndLazy' ),
             enableMultiLineFlag: true,
-            subTagRegexString: '^:\\s*'
+            subTagRegexString: regexRegistry.pattern( 'subTagPrefix' )
         } );
         var uri = matrixHelpers.createUri( '/tmp/workspace-raw.js' );
         var text = 'TODO: first\nsecond\nEND\n';
@@ -434,11 +574,11 @@ QUnit.module( "detection regex matrix", function()
 
     QUnit.test( "issue #42 PCRE2 markdown task payload keeps display text", function( assert )
     {
-        var regexSource = utils.DEFAULT_REGEX_SOURCE.replace( '|;', '' );
+        var regexSource = regexRegistry.pattern( 'defaultTodoWithoutSemicolon' );
         var config = matrixHelpers.createConfig( {
             tagList: [ 'TODO', '[ ]', '[x]' ],
             regexSource: regexSource,
-            subTagRegexString: '^:\\s*'
+            subTagRegexString: regexRegistry.pattern( 'subTagPrefix' )
         } );
         var uri = matrixHelpers.createUri( '/tmp/issue-42.md' );
         var text = '- [ ] Task 1\n- [ ] Task 2\n';
@@ -471,8 +611,8 @@ QUnit.module( "detection regex matrix", function()
     {
         var config = matrixHelpers.createConfig( {
             tagList: [ 'TODO' ],
-            regexSource: '($TAGS)\\s+\\g{1}',
-            subTagRegexString: '^:\\s*'
+            regexSource: regexRegistry.pattern( 'tagWhitespaceBackreference' ),
+            subTagRegexString: regexRegistry.pattern( 'subTagPrefix' )
         } );
         var uri = matrixHelpers.createUri( '/tmp/pcre2-only.js' );
 

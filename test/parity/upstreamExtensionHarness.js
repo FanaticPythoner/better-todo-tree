@@ -1,4 +1,5 @@
 var upstreamGitLoader = require( './upstreamGitLoader.js' );
+var regexRegistry = require( '../../src/regexRegistry.js' );
 
 function createUpstreamConfig( config )
 {
@@ -17,7 +18,7 @@ function createUpstreamConfig( config )
         },
         subTagRegex: function()
         {
-            return config.subTagRegexString || '(^:\\s*)';
+            return config.subTagRegexString || regexRegistry.pattern( 'subTagPrefixCapture' );
         },
         scanMode: function()
         {

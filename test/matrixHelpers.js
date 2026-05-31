@@ -1,5 +1,6 @@
 var stubs = require( './stubs.js' );
 var utils = require( '../src/utils.js' );
+var regexRegistry = require( '../src/regexRegistry.js' );
 var languageMatrix = require( './languageMatrix.js' );
 
 function uriKey( uri )
@@ -242,12 +243,12 @@ function tagLabel( tag )
         return 'checked-task';
     }
 
-    return tag.toLowerCase().replace( /[^a-z0-9]+/g, '-' );
+    return tag.toLowerCase().replace( regexRegistry.createRegExp( 'slugNoise', 'g' ), '-' );
 }
 
 function languageLabel( languageName )
 {
-    return languageName.toLowerCase().replace( /[^a-z0-9]+/g, '-' );
+    return languageName.toLowerCase().replace( regexRegistry.createRegExp( 'slugNoise', 'g' ), '-' );
 }
 
 function materializeStartToken( startPattern )
@@ -320,7 +321,7 @@ function getClosingLineContentEnd( lineText, startToken, middleToken, endToken )
         }
     }
 
-    var trimmedRight = lineText.replace( /[ \t]+$/, '' );
+    var trimmedRight = lineText.replace( regexRegistry.createRegExp( 'trailingHorizontalWhitespace' ), '' );
     if( endToken && trimmedRight.endsWith( endToken ) )
     {
         contentEnd = lineText.lastIndexOf( endToken );

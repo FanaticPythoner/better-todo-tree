@@ -6,8 +6,10 @@ var attributes = require( './attributes.js' );
 var icons = require( './icons.js' );
 var detection = require( './detection.js' );
 var identity = require( './extensionIdentity.js' );
+var regexRegistry = require( './regexRegistry.js' );
 
 var captureGroupArgument = "capture-groups";
+var themeColourReferenceRegex = regexRegistry.createRegExp( 'themeColourReference', 'i' );
 
 var lanes =
 {
@@ -89,7 +91,7 @@ function createDecoration( tag )
 
     if( foregroundColour )
     {
-        if( foregroundColour.match( /(foreground|background)/i ) )
+        if( foregroundColour.match( themeColourReferenceRegex ) )
         {
             lightForegroundColour = new vscode.ThemeColor( foregroundColour );
             darkForegroundColour = new vscode.ThemeColor( foregroundColour );
@@ -103,7 +105,7 @@ function createDecoration( tag )
 
     if( backgroundColour )
     {
-        if( backgroundColour.match( /(foreground|background)/i ) )
+        if( backgroundColour.match( themeColourReferenceRegex ) )
         {
             lightBackgroundColour = new vscode.ThemeColor( backgroundColour );
             darkBackgroundColour = new vscode.ThemeColor( backgroundColour );

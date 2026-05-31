@@ -14,9 +14,10 @@
  */
 
 var baseLanguages = require( '../../node_modules/comment-patterns/db-generated/base.js' );
+var regexRegistry = require( '../../src/regexRegistry.js' );
 
 var PARITY_TAG_LIST = Object.freeze( [ 'TODO', 'FIXME', 'HACK', 'BUG', 'XXX', '[ ]', '[x]' ] );
-var PARITY_REGEX_SOURCE = '(^|//|#|<!--|;|/\\*|^[ \\t]*(-|\\d+.))\\s*(?=\\[x\\]|\\[ \\]|[A-Za-z0-9_])($TAGS)(?![A-Za-z0-9_])';
+var PARITY_REGEX_SOURCE = regexRegistry.DEFAULT_REGEX_SOURCE;
 var FUZZ_SEED = 0xC0FFEE37;
 var FUZZ_FIXTURES_PER_FAMILY = 8;
 
@@ -647,7 +648,10 @@ function buildFuzzCorpus()
 {
     var fixtures = [];
     var rng = createSeededRng( FUZZ_SEED );
-    var plainTagList = PARITY_TAG_LIST.filter( function( tag ) { return /^[A-Za-z]+$/.test( tag ); } );
+    var plainTagList = PARITY_TAG_LIST.filter( function( tag )
+    {
+        return regexRegistry.createRegExp( 'alphaOnly' ).test( tag );
+    } );
 
     FUZZ_UNVENDORED_EXTENSIONS.forEach( function( extension, extensionIndex )
     {

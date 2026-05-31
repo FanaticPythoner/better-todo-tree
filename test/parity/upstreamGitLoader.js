@@ -27,6 +27,7 @@ var child_process = require( 'child_process' );
 var fs = require( 'fs' );
 var path = require( 'path' );
 var vm = require( 'vm' );
+var regexRegistry = require( '../../src/regexRegistry.js' );
 
 var UPSTREAM_REPO_URL = 'https://github.com/Gruntfuggly/todo-tree.git';
 var UPSTREAM_COMMIT = '7761bd02406a5c5f5bc8da944a561eb3c12a48df';
@@ -201,9 +202,9 @@ function ensureUpstreamBuild()
 
 function normalizeRelativePath( relativePath )
 {
-    var normalized = String( relativePath || '' ).replace( /\\/g, '/' );
+    var normalized = String( relativePath || '' ).replace( regexRegistry.createRegExp( 'pathBackslash', 'g' ), '/' );
 
-    if( /\.[a-z0-9]+$/i.test( path.posix.basename( normalized ) ) !== true )
+    if( regexRegistry.createRegExp( 'pathExtensionSuffix', 'i' ).test( path.posix.basename( normalized ) ) !== true )
     {
         normalized += '.js';
     }

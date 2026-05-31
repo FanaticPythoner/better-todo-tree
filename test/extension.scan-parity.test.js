@@ -7,13 +7,37 @@ var helpers = require( './moduleHelpers.js' );
 var issue888Helpers = require( './issue888Helpers.js' );
 var matrixHelpers = require( './matrixHelpers.js' );
 var languageMatrix = require( './languageMatrix.js' );
+var actualRegexRegistry = require( '../src/regexRegistry.js' );
 var actualUtils = require( '../src/utils.js' );
 var actualDetection = require( '../src/detection.js' );
 var actualNotebooks = require( '../src/notebooks.js' );
 var actualStreamScanner = require( '../src/runtime/streamScanner.js' );
+var actualPackageJson = require( '../package.json' );
+var actualPackageNls = require( '../package.nls.json' );
 
 var DEFAULT_INCLUDE_GLOBS = languageMatrix.findConfigurationProperty( 'better-todo-tree.filtering.includeGlobs' ).default.slice();
 var DEFAULT_EXCLUDE_GLOBS = languageMatrix.findConfigurationProperty( 'better-todo-tree.filtering.excludeGlobs' ).default.slice();
+var LEGACY_MARKDOWN_REGEX_SOURCE = actualRegexRegistry.LEGACY_MARKDOWN_REGEX_SOURCE;
+var HARNESS_CANDIDATE_TAGS = Object.freeze( [ 'TODO', 'FIXME', 'BUG', 'HACK', 'XXX', '[ ]', '[x]' ] );
+var HARNESS_TAG_SOURCE = actualRegexRegistry.buildEscapedAlternationSource( HARNESS_CANDIDATE_TAGS );
+var DEFAULT_TAG_CAPTURE_SOURCE = actualRegexRegistry.captureSource( HARNESS_TAG_SOURCE );
+
+function resolveHarnessRegexSource( options )
+{
+    return options.resourceConfig && options.resourceConfig.isDefaultRegex === true ?
+        actualUtils.DEFAULT_REGEX_SOURCE :
+        ( options.regexSource || actualRegexRegistry.TAG_CAPTURE_PLACEHOLDER );
+}
+
+function tagRegexWithTail( tail )
+{
+    var builder = actualRegexRegistry.createRegexBuilder();
+
+    return builder.sequence( [
+        builder.pattern( 'tagCapturePlaceholder' ),
+        tail
+    ] );
+}
 
 function loadWithStubsAndTimers( modulePath, stubs, timerStubs )
 {
@@ -91,7 +115,7 @@ function createMockReadStream( content, requestedChunkSize )
     return stream;
 }
 
-function createConfigurationSection( values, explicitTarget, updateLog )
+function createConfigurationSection( values, explicitTarget, updateLog, updateImpl )
 {
     function getNestedValue( source, key )
     {
@@ -118,6 +142,15 @@ function createConfigurationSection( values, explicitTarget, updateLog )
                 target: target
             } );
         }
+
+        if( typeof ( updateImpl ) === 'function' )
+        {
+            return Promise.resolve().then( function()
+            {
+                return updateImpl( key, value, target );
+            } );
+        }
+
         return Promise.resolve();
     };
     section.inspect = function( key )
@@ -134,8 +167,10 @@ function createConfigurationSection( values, explicitTarget, updateLog )
     return section;
 }
 
-function createSearchResultsStub()
+function createSearchResultsStub( options )
 {
+    options = options || {};
+
     function createStore()
     {
         var entries = new Map();
@@ -174,7 +209,7 @@ function createSearchResultsStub()
             },
             containsMarkdown: function()
             {
-                return false;
+                return options.containsMarkdown === true;
             },
             count: function()
             {
@@ -349,6 +384,7 @@ function createVscodeStub( options )
     var workspaceListeners = {};
     var windowListeners = {};
     var executedCommands = [];
+    var informationMessages = [];
     var warningMessages = [];
     var errorMessages = [];
     var progressSessions = [];
@@ -373,6 +409,7 @@ function createVscodeStub( options )
         includeHiddenFiles: false,
         useBuiltInExcludes: 'none'
     }, options.filteringOverrides || {} );
+    var regexSource = resolveHarnessRegexSource( options );
 
     var rootSection = createConfigurationSection( {
         tree: {
@@ -411,8 +448,11 @@ function createVscodeStub( options )
             ripgrepArgs: '',
             ripgrepMaxBuffer: 200,
             usePatternFile: false
+        },
+        regex: {
+            regex: regexSource
         }
-    }, undefined, configurationUpdates );
+    }, undefined, configurationUpdates, options.configurationUpdateImpl );
 
     var generalSection = createConfigurationSection( {
             debug: false,
@@ -449,9 +489,7 @@ function createVscodeStub( options )
             scopes: []
         }, undefined, configurationUpdates );
     var regexSection = createConfigurationSection( {
-            regex: options.resourceConfig && options.resourceConfig.isDefaultRegex === true ?
-                actualUtils.DEFAULT_REGEX_SOURCE :
-                ( options.regexSource || '($TAGS)' ),
+            regex: regexSource,
             regexCaseSensitive: true,
             enableMultiLine: false,
             subTagRegex: options.resourceConfig && options.resourceConfig.subTagRegex ? options.resourceConfig.subTagRegex : ''
@@ -619,7 +657,19 @@ function createVscodeStub( options )
             }
         },
         env: {
-            openExternal: function() { return Promise.resolve(); }
+            openExternal: function()
+            {
+                var openArguments = Array.prototype.slice.call( arguments );
+                if( typeof options.openExternalImpl === 'function' )
+                {
+                    return Promise.resolve().then( function()
+                    {
+                        return options.openExternalImpl.apply( undefined, openArguments );
+                    } );
+                }
+
+                return Promise.resolve();
+            }
         },
         commands: {
             executeCommand: function( command )
@@ -633,6 +683,7 @@ function createVscodeStub( options )
                         return options.executeCommandImpl.apply( undefined, commandArguments );
                     } );
                 }
+
                 return Promise.resolve();
             },
             registerCommand: function( name, handler )
@@ -674,7 +725,16 @@ function createVscodeStub( options )
                     dispose: function() {}
                 };
             },
-            showInformationMessage: function() { return Promise.resolve(); },
+            showInformationMessage: function( message )
+            {
+                informationMessages.push( message );
+                if( typeof ( options.showInformationMessageImpl ) === 'function' )
+                {
+                    return Promise.resolve( options.showInformationMessageImpl.apply( undefined, arguments ) );
+                }
+
+                return Promise.resolve( options.showInformationMessageValue );
+            },
             showWarningMessage: function( message )
             {
                 warningMessages.push( message );
@@ -685,12 +745,37 @@ function createVscodeStub( options )
                 errorMessages.push( message );
                 return Promise.resolve();
             },
-            showInputBox: function() { return Promise.resolve(); },
-            showQuickPick: function() { return Promise.resolve(); },
-            showTextDocument: function() { return Promise.resolve(); },
+            showInputBox: function()
+            {
+                if( typeof ( options.showInputBoxImpl ) === 'function' )
+                {
+                    return Promise.resolve( options.showInputBoxImpl.apply( undefined, arguments ) );
+                }
+
+                return Promise.resolve( options.showInputBoxValue );
+            },
+            showQuickPick: function()
+            {
+                if( typeof ( options.showQuickPickImpl ) === 'function' )
+                {
+                    return Promise.resolve( options.showQuickPickImpl.apply( undefined, arguments ) );
+                }
+
+                return Promise.resolve( options.showQuickPickValue );
+            },
+            showTextDocument: function()
+            {
+                if( typeof ( options.showTextDocumentImpl ) === 'function' )
+                {
+                    return Promise.resolve( options.showTextDocumentImpl.apply( undefined, arguments ) );
+                }
+
+                return Promise.resolve();
+            },
             onDidChangeActiveTextEditor: function( listener ) { return registerListener( workspaceListeners, 'activeEditor', listener ); },
             onDidChangeVisibleNotebookEditors: function( listener ) { return registerListener( windowListeners, 'visibleNotebookEditors', listener ); }
         },
+        informationMessages: informationMessages,
         warningMessages: warningMessages,
         errorMessages: errorMessages,
         workspace: {
@@ -713,7 +798,15 @@ function createVscodeStub( options )
             onDidChangeConfiguration: function( listener ) { return registerListener( workspaceListeners, 'configuration', listener ); },
             onDidChangeWorkspaceFolders: function( listener ) { return registerListener( workspaceListeners, 'workspaceFolders', listener ); },
             onDidChangeTextDocument: function( listener ) { return registerListener( workspaceListeners, 'changeText', listener ); },
-            openTextDocument: function() { return Promise.resolve(); }
+            openTextDocument: function()
+            {
+                if( typeof ( options.openTextDocumentImpl ) === 'function' )
+                {
+                    return Promise.resolve( options.openTextDocumentImpl.apply( undefined, arguments ) );
+                }
+
+                return Promise.resolve();
+            }
         }
     };
 }
@@ -721,7 +814,7 @@ function createVscodeStub( options )
 function createExtensionHarness( options )
 {
     var provider = options.useActualTreeProvider === true ? undefined : createProviderStub( options );
-    var searchResults = createSearchResultsStub();
+    var searchResults = createSearchResultsStub( options );
     var ripgrepSearchCalls = [];
     var scanDocumentCalls = [];
     var scanTextCalls = [];
@@ -835,16 +928,16 @@ function createExtensionHarness( options )
         {
             return {
                 tags: languageMatrix.DEFAULT_TAGS.slice(),
-                regex: options.resourceConfig && options.resourceConfig.isDefaultRegex === true ?
-                    actualUtils.DEFAULT_REGEX_SOURCE :
-                    ( options.regexSource || '($TAGS)' ),
+                regex: resolveHarnessRegexSource( options ),
                 caseSensitive: options.resourceConfig && options.resourceConfig.regexCaseSensitive !== false,
                 multiLine: options.resourceConfig && options.resourceConfig.enableMultiLine === true
             };
         },
         subTagRegex: function()
         {
-            return options.resourceConfig && options.resourceConfig.subTagRegex ? options.resourceConfig.subTagRegex : '(^:\\s*)';
+            return options.resourceConfig && options.resourceConfig.subTagRegex ?
+                options.resourceConfig.subTagRegex :
+                actualRegexRegistry.pattern( 'subTagPrefixCapture' );
         },
         scanMode: function() { return options.scanMode; },
         shouldIgnoreGitSubmodules: function() { return false; },
@@ -853,8 +946,8 @@ function createExtensionHarness( options )
         shouldShowActivityBarBadge: function() { return options.showActivityBarBadge === true; },
         shouldFlatten: function() { return Object.prototype.hasOwnProperty.call( treeStateOverrides, 'flat' ) ? treeStateOverrides.flat : context.workspaceState.get( 'flat', false ); },
         shouldShowTagsOnly: function() { return Object.prototype.hasOwnProperty.call( treeStateOverrides, 'tagsOnly' ) ? treeStateOverrides.tagsOnly : context.workspaceState.get( 'tagsOnly', false ); },
-        clickingStatusBarShouldRevealTree: function() { return false; },
-        clickingStatusBarShouldToggleHighlights: function() { return false; },
+        clickingStatusBarShouldRevealTree: function() { return options.statusBarClickBehaviour === 'reveal'; },
+        clickingStatusBarShouldToggleHighlights: function() { return options.statusBarClickBehaviour === 'toggle highlights'; },
         tags: function() { return languageMatrix.DEFAULT_TAGS.slice(); },
         shouldShowIconsInsteadOfTagsInStatusBar: function() { return false; },
         shouldCompactFolders: function() { return false; },
@@ -886,8 +979,11 @@ function createExtensionHarness( options )
         init: function() {},
         isCodicon: function() { return false; },
         getCommentPattern: function( candidate ) { return actualUtils.getCommentPattern( candidate ); },
-        getRegexSource: function() { return options.regexSource || '($TAGS)'; },
-        getTagRegexSource: function() { return 'TODO|FIXME|BUG|HACK|XXX|\\[ \\]|\\[x\\]'; },
+        getRegexSource: function()
+        {
+            return options.regexSource || actualRegexRegistry.TAG_CAPTURE_PLACEHOLDER;
+        },
+        getTagRegexSource: function() { return HARNESS_TAG_SOURCE; },
         isIncluded: function( name, includes, excludes )
         {
             if( typeof ( options.isIncludedImpl ) === 'function' )
@@ -907,11 +1003,14 @@ function createExtensionHarness( options )
             return actualUtils.isHidden( filePath );
         },
         replaceEnvironmentVariables: function( value ) { return value; },
+        formatExportPath: function( value ) { return value; },
         getSubmoduleExcludeGlobs: function() { return []; },
         clearSubmoduleExcludeGlobCache: function() {},
         formatLabel: function( template ) { return template; },
         toGlobArray: function( value ) { return actualUtils.toGlobArray( value ); },
-        createFolderGlob: function() { return '**/*'; }
+        createFolderGlob: function() { return '**/*'; },
+        DEFAULT_REGEX_SOURCE: actualUtils.DEFAULT_REGEX_SOURCE,
+        LEGACY_MARKDOWN_TASK_FRAGMENT: actualUtils.LEGACY_MARKDOWN_TASK_FRAGMENT
     };
     var treeIconsStub = {
         getTreeIcon: function()
@@ -1232,6 +1331,14 @@ function createExtensionHarness( options )
             }
         }
     };
+    if( options.packageJsonStub )
+    {
+        extensionStubs[ '../package.json' ] = options.packageJsonStub;
+    }
+    if( options.packageNlsStub )
+    {
+        extensionStubs[ '../package.nls.json' ] = options.packageNlsStub;
+    }
     var extension = options.timerStubs ?
         loadWithStubsAndTimers( '../src/extension.js', extensionStubs, options.timerStubs ) :
         helpers.loadWithStubs( '../src/extension.js', extensionStubs );
@@ -1498,7 +1605,7 @@ QUnit.test( "open-files mode stores canonical document results through the refre
 
 QUnit.test( "issue #42 default-derived workspace regex uses candidate scan", function( assert )
 {
-    var regexSource = actualUtils.DEFAULT_REGEX_SOURCE.replace( '|;', '' );
+    var regexSource = actualRegexRegistry.pattern( 'defaultTodoWithoutSemicolon' );
     var filePath = '/workspace/todo.md';
     var uri = matrixHelpers.createUri( filePath );
     var fixture = [ {
@@ -1530,16 +1637,94 @@ QUnit.test( "issue #42 default-derived workspace regex uses candidate scan", fun
     return matrixHelpers.flushAsyncWork().then( function()
     {
         assert.equal( harness.ripgrepSearchCalls.length, 1 );
-        assert.equal( harness.ripgrepSearchCalls[ 0 ].regex, '(TODO|FIXME|BUG|HACK|XXX|\\[ \\]|\\[x\\])' );
-        assert.equal( harness.ripgrepSearchCalls[ 0 ].unquotedRegex, '(TODO|FIXME|BUG|HACK|XXX|\\[ \\]|\\[x\\])' );
+        assert.equal( harness.ripgrepSearchCalls[ 0 ].regex, DEFAULT_TAG_CAPTURE_SOURCE );
+        assert.equal( harness.ripgrepSearchCalls[ 0 ].unquotedRegex, DEFAULT_TAG_CAPTURE_SOURCE );
         assert.equal( harness.scanTextCalls.length, 1 );
         assert.equal( harness.scanTextCalls[ 0 ].text, '- [ ] Task 1\n' );
         assert.deepEqual( getLatestReplaceCallForPath( harness, filePath ).results, fixture );
     } );
 } );
 
+QUnit.test( "issue #36 reload uses candidate scan for JavaScript-compatible custom tag regexes", function( assert )
+{
+    var regexSources = [
+        actualRegexRegistry.pattern( 'commentPrefixTagCapture' ),
+        actualRegexRegistry.pattern( 'commentPrefixAnySixColumnTagCapture' )
+    ];
+    var prefixCases = [
+        { filePath: '/workspace/app.js', column: 4, text: '// TODO: JavaScript TODO\n', displayText: 'JavaScript TODO' },
+        { filePath: '/workspace/app.py', column: 3, text: '# TODO: Python TODO\n', displayText: 'Python TODO' },
+        { filePath: '/workspace/template.html', column: 6, text: '<!-- TODO: HTML TODO\n', displayText: 'HTML TODO' },
+        { filePath: '/workspace/app.ini', column: 3, text: '; TODO: Semicolon TODO\n', displayText: 'Semicolon TODO' },
+        { filePath: '/workspace/app.c', column: 4, text: '/* TODO: Block TODO\n', displayText: 'Block TODO' },
+        { filePath: '/workspace/S9TL1B.cbl', column: 10, text: '      *> TODO: COBOL TODO\n', displayText: 'COBOL TODO' },
+        { filePath: '/workspace/query.sql', column: 4, text: '-- TODO: SQL TODO\n', displayText: 'SQL TODO' }
+    ];
+
+    return regexSources.reduce( function( promise, regexSource )
+    {
+        return prefixCases.reduce( function( casePromise, prefixCase )
+        {
+            return casePromise.then( function()
+            {
+                var fileContents = {};
+                var uri = matrixHelpers.createUri( prefixCase.filePath );
+                var fixture = [ {
+                    uri: uri,
+                    actualTag: 'TODO',
+                    displayText: prefixCase.displayText,
+                    continuationText: []
+                } ];
+                var harness;
+
+                fileContents[ prefixCase.filePath ] = prefixCase.text;
+                harness = createExtensionHarness( {
+                    scanMode: 'workspace',
+                    regexSource: regexSource,
+                    resourceConfig: {
+                        isDefaultRegex: false,
+                        enableMultiLine: false,
+                        regexCaseSensitive: false
+                    },
+                    workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+                    fileContents: fileContents,
+                    workspaceResults: fixture,
+                    ripgrepMatches: [ {
+                        fsPath: prefixCase.filePath,
+                        line: 1,
+                        column: prefixCase.column,
+                        match: 'TODO',
+                        lines: prefixCase.text
+                    } ]
+                } );
+
+                harness.extension.activate( harness.context );
+
+                return matrixHelpers.flushAsyncWork().then( function()
+                {
+                    assert.equal( harness.ripgrepSearchCalls.length, 1, prefixCase.filePath );
+                    assert.equal(
+                        harness.ripgrepSearchCalls[ 0 ].regex,
+                        DEFAULT_TAG_CAPTURE_SOURCE,
+                        regexSource + ' ' + prefixCase.filePath
+                    );
+                    assert.equal( harness.scanTextCalls.length, 1, prefixCase.filePath );
+                    assert.equal( harness.normalizeWorkspaceCalls.length, 0, prefixCase.filePath );
+                    assert.equal( harness.scanTextCalls[ 0 ].text, prefixCase.text, prefixCase.filePath );
+                    assert.deepEqual(
+                        getLatestReplaceCallForPath( harness, prefixCase.filePath ).results,
+                        fixture,
+                        prefixCase.filePath
+                    );
+                } );
+            } );
+        }, promise );
+    }, Promise.resolve() );
+} );
+
 QUnit.test( "PCRE2-only workspace tag regex uses raw normalization", function( assert )
 {
+    var regexSource = actualRegexRegistry.pattern( 'tagWhitespaceBackreference' );
     var filePath = '/workspace/repeated.js';
     var uri = matrixHelpers.createUri( filePath );
     var fixture = [ {
@@ -1550,7 +1735,7 @@ QUnit.test( "PCRE2-only workspace tag regex uses raw normalization", function( a
     } ];
     var harness = createExtensionHarness( {
         scanMode: 'workspace',
-        regexSource: '($TAGS)\\s+\\g{1}',
+        regexSource: regexSource,
         resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
         workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
         fileContents: {
@@ -1578,7 +1763,7 @@ QUnit.test( "PCRE2-only workspace tag regex uses raw normalization", function( a
     return matrixHelpers.flushAsyncWork().then( function()
     {
         assert.equal( harness.ripgrepSearchCalls.length, 1 );
-        assert.equal( harness.ripgrepSearchCalls[ 0 ].regex, '($TAGS)\\s+\\g{1}' );
+        assert.equal( harness.ripgrepSearchCalls[ 0 ].regex, regexSource );
         assert.equal( harness.scanTextCalls.length, 0 );
         assert.deepEqual( getLatestReplaceCallForPath( harness, filePath ).results, fixture );
     } );
@@ -3488,6 +3673,314 @@ QUnit.test( "scan mode button commands return the underlying setting write promi
     } );
 } );
 
+QUnit.test( "filter command persists the tree filter before refreshing results", function( assert )
+{
+    var workspaceStateValues = {};
+    var workspaceState = {
+        get: function( key, defaultValue )
+        {
+            return Object.prototype.hasOwnProperty.call( workspaceStateValues, key ) ? workspaceStateValues[ key ] : defaultValue;
+        },
+        update: function( key, value )
+        {
+            workspaceStateValues[ key ] = value;
+            return Promise.resolve();
+        }
+    };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceState: workspaceState,
+        showInputBoxValue: 'TODO',
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.filter' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        var finalization = harness.provider.finalizeCalls[ harness.provider.finalizeCalls.length - 1 ];
+
+        assert.equal( workspaceStateValues.filtered, true );
+        assert.equal( workspaceStateValues.currentFilter, 'TODO' );
+        assert.equal( finalization.filter, 'TODO' );
+        assert.deepEqual( finalization.options, { refilterAll: true } );
+    } );
+} );
+
+QUnit.test( "filterClear reports failed persistence and restores prior workspace state", function( assert )
+{
+    var rejected = false;
+    var updateCalls = [];
+    var workspaceStateValues = {
+        currentFilter: 'TODO',
+        filtered: true
+    };
+    var workspaceState = {
+        get: function( key, defaultValue )
+        {
+            return Object.prototype.hasOwnProperty.call( workspaceStateValues, key ) ? workspaceStateValues[ key ] : defaultValue;
+        },
+        update: function( key, value )
+        {
+            updateCalls.push( { key: key, value: value } );
+            if( key === 'currentFilter' && value === undefined && rejected === false )
+            {
+                rejected = true;
+                return Promise.reject( new Error( 'filter write failed' ) );
+            }
+
+            workspaceStateValues[ key ] = value;
+            return Promise.resolve();
+        }
+    };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceState: workspaceState,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        var baselineFinalizations = harness.provider.finalizeCalls.length;
+
+        return harness.vscode.commandHandlers[ 'better-todo-tree.filterClear' ]().then( function()
+        {
+            assert.ok( false, 'filterClear rejects failed state writes' );
+        }, function( error )
+        {
+            assert.equal( error.message, 'filter write failed' );
+            assert.deepEqual( workspaceStateValues, {
+                currentFilter: 'TODO',
+                filtered: true
+            } );
+            assert.equal( harness.provider.finalizeCalls.length, baselineFinalizations );
+            assert.deepEqual( harness.vscode.errorMessages, [
+                'Better Todo Tree: failed to clear tree filter (filter write failed)'
+            ] );
+            assert.deepEqual( updateCalls, [
+                { key: 'filtered', value: false },
+                { key: 'currentFilter', value: undefined },
+                { key: 'filtered', value: true },
+                { key: 'currentFilter', value: 'TODO' }
+            ] );
+        } );
+    } );
+} );
+
+QUnit.test( "status bar click command returns the settings write before showing the next mode", function( assert )
+{
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        statusBar: 'total',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.onStatusBarClicked' ]();
+    } ).then( function()
+    {
+        assert.deepEqual( harness.vscode.configurationUpdates.slice( -1 ), [
+            { key: 'general.statusBar', value: 'tags', target: harness.vscode.ConfigurationTarget.Global }
+        ] );
+        assert.deepEqual( harness.vscode.informationMessages.slice( -1 ), [
+            'Better Todo Tree: Now showing tag counts'
+        ] );
+    } );
+} );
+
+QUnit.test( "registered command boundary uses manifest titles for operation names", function( assert )
+{
+    var packageJsonStub = JSON.parse( JSON.stringify( actualPackageJson ) );
+    var packageNlsStub = Object.assign( {}, actualPackageNls, {
+        'better-todo-tree.command.toggleItemCounts.title': 'Counts Visibility'
+    } );
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        packageJsonStub: packageJsonStub,
+        packageNlsStub: packageNlsStub,
+        configurationUpdateImpl: function( key )
+        {
+            if( key === 'tree.showCountsInTree' )
+            {
+                return Promise.reject( new Error( 'toggle write failed' ) );
+            }
+
+            return Promise.resolve();
+        },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.toggleItemCounts' ]().then( function()
+        {
+            assert.ok( false, 'expected toggle rejection' );
+        }, function( error )
+        {
+            assert.equal( error.message, 'toggle write failed' );
+            assert.deepEqual( harness.vscode.errorMessages, [
+                'Better Todo Tree: failed to counts visibility (toggle write failed)'
+            ] );
+        } );
+    } );
+} );
+
+QUnit.test( "registered command boundary reports setting write failures once", function( assert )
+{
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        configurationUpdateImpl: function( key )
+        {
+            if( key === 'tree.showCountsInTree' )
+            {
+                return Promise.reject( new Error( 'toggle write failed' ) );
+            }
+
+            return Promise.resolve();
+        },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.toggleItemCounts' ]().then( function()
+        {
+            assert.ok( false, 'expected toggle rejection' );
+        }, function( error )
+        {
+            assert.equal( error.message, 'toggle write failed' );
+            assert.equal( error.reportedToUser, true );
+            assert.deepEqual( harness.vscode.errorMessages, [
+                'Better Todo Tree: failed to toggle item counts (toggle write failed)'
+            ] );
+        } );
+    } );
+} );
+
+QUnit.test( "exportTree reports document open failures through the command boundary", function( assert )
+{
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        openTextDocumentImpl: function()
+        {
+            return Promise.reject( new Error( 'export document failed' ) );
+        },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.exportTree' ]().then( function()
+        {
+            assert.ok( false, 'exportTree rejects failed document opens' );
+        }, function( error )
+        {
+            assert.equal( error.message, 'export document failed' );
+            assert.deepEqual( harness.vscode.errorMessages, [
+                'Better Todo Tree: failed to export tree (export document failed)'
+            ] );
+        } );
+    } );
+} );
+
+QUnit.test( "revealInFile reports VS Code open failures through the command boundary", function( assert )
+{
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        executeCommandImpl: function( command )
+        {
+            if( command === 'vscode.open' )
+            {
+                return Promise.reject( new Error( 'open command failed' ) );
+            }
+
+            return Promise.resolve();
+        },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.revealInFile' ]( matrixHelpers.createUri( '/workspace/file.js' ), undefined ).then( function()
+        {
+            assert.ok( false, 'revealInFile rejects failed open commands' );
+        }, function( error )
+        {
+            assert.equal( error.message, 'open command failed' );
+            assert.deepEqual( harness.vscode.errorMessages, [
+                'Better Todo Tree: failed to reveal todo in file (open command failed)'
+            ] );
+        } );
+    } );
+} );
+
+QUnit.test( "markdown migration writes the shared default regex source", function( assert )
+{
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        containsMarkdown: true,
+        regexSource: LEGACY_MARKDOWN_REGEX_SOURCE,
+        resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
+        showInformationMessageValue: 'Yes',
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.refresh' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.deepEqual( harness.vscode.informationMessages, [
+            'Better Todo Tree: There is now an improved method of locating markdown TODOs. Apply settings automatically?'
+        ] );
+        assert.ok( harness.vscode.configurationUpdates.some( function( update )
+        {
+            return update.key === 'regex.regex' &&
+                update.value === actualUtils.DEFAULT_REGEX_SOURCE &&
+                update.target === harness.vscode.ConfigurationTarget.Global;
+        } ) );
+    } );
+} );
+
 QUnit.test( "toggleTreeExpansion uses live workspace state for deterministic expansion toggles", function( assert )
 {
     var workspaceStateValues = {
@@ -3854,7 +4347,7 @@ QUnit.test( "workspace scan custom-regex path normalizes oversized ripgrep match
     var fakeOversizedSize = 9999999;
     var harness = createExtensionHarness( {
         scanMode: 'workspace',
-        regexSource: '(XXX)',
+        regexSource: actualRegexRegistry.pattern( 'xxxCapture' ),
         resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
         workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
         normalizeWorkspaceResult: function( match, uri )
@@ -3863,7 +4356,10 @@ QUnit.test( "workspace scan custom-regex path normalizes oversized ripgrep match
                 uri: uri,
                 actualTag: 'XXX',
                 tag: 'XXX',
-                displayText: match.lines.trim().split( /\s+/ ).slice( 1 ).join( ' ' ),
+                displayText: match.lines.trim()
+                    .split( actualRegexRegistry.createRegExp( 'whitespaceOneOrMore' ) )
+                    .slice( 1 )
+                    .join( ' ' ),
                 continuationText: [],
                 line: match.line,
                 endLine: match.line,
@@ -4001,8 +4497,8 @@ QUnit.test( "issue #820 workspace mode uses tag-only candidate search before rep
     return matrixHelpers.flushAsyncWork().then( function()
     {
         assert.equal( harness.ripgrepSearchCalls.length, 1 );
-        assert.equal( harness.ripgrepSearchCalls[ 0 ].regex, '(TODO|FIXME|BUG|HACK|XXX|\\[ \\]|\\[x\\])' );
-        assert.equal( harness.ripgrepSearchCalls[ 0 ].unquotedRegex, '(TODO|FIXME|BUG|HACK|XXX|\\[ \\]|\\[x\\])' );
+        assert.equal( harness.ripgrepSearchCalls[ 0 ].regex, DEFAULT_TAG_CAPTURE_SOURCE );
+        assert.equal( harness.ripgrepSearchCalls[ 0 ].unquotedRegex, DEFAULT_TAG_CAPTURE_SOURCE );
         assert.equal( harness.scanTextCalls.length, 1 );
         assert.equal( harness.scanTextCalls[ 0 ].uri.fsPath, '/workspace/app.py' );
         assert.equal( harness.scanTextCalls[ 0 ].text, pythonText );
@@ -4121,7 +4617,7 @@ QUnit.test( "workspace mode keeps workspace-backed results when a workspace docu
     } );
 } );
 
-QUnit.test( "workspace mode custom regex scanning normalizes ripgrep matches into canonical results", function( assert )
+QUnit.test( "workspace mode prefix-only custom tag regex reparses candidate files", function( assert )
 {
     var canonicalFixture = [
         {
@@ -4143,14 +4639,11 @@ QUnit.test( "workspace mode custom regex scanning normalizes ripgrep matches int
     ];
     var harness = createExtensionHarness( {
         scanMode: 'workspace',
-        regexSource: '($TAGS)',
+        regexSource: actualRegexRegistry.TAG_CAPTURE_PLACEHOLDER,
         resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
         workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
         ripgrepMatches: ripgrepMatches,
-        normalizeResult: function( match )
-        {
-            return canonicalFixture[ ripgrepMatches.indexOf( match ) ];
-        },
+        workspaceResults: canonicalFixture,
         fileContents: {
             '/workspace/src/custom.js': 'TODO first custom item\nTODO second custom item'
         }
@@ -4160,13 +4653,14 @@ QUnit.test( "workspace mode custom regex scanning normalizes ripgrep matches int
 
     return matrixHelpers.flushAsyncWork().then( function()
     {
-        assert.equal( harness.normalizeCalls.length, 2 );
-        assert.equal( harness.scanTextCalls.length, 0 );
+        assert.equal( harness.normalizeCalls.length, 0 );
+        assert.equal( harness.scanTextCalls.length, 1 );
+        assert.equal( harness.scanTextCalls[ 0 ].uri.fsPath, '/workspace/src/custom.js' );
         assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, canonicalFixture );
     } );
 } );
 
-QUnit.test( "workspace mode custom regex scanning resolves root-relative ripgrep paths before normalization", function( assert )
+QUnit.test( "workspace mode prefix-only candidate scan resolves root-relative ripgrep paths", function( assert )
 {
     var canonicalFixture = [
         {
@@ -4181,14 +4675,11 @@ QUnit.test( "workspace mode custom regex scanning resolves root-relative ripgrep
     ];
     var harness = createExtensionHarness( {
         scanMode: 'workspace',
-        regexSource: '($TAGS)',
+        regexSource: actualRegexRegistry.TAG_CAPTURE_PLACEHOLDER,
         resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
         workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
         ripgrepMatches: ripgrepMatches,
-        normalizeResult: function()
-        {
-            return canonicalFixture[ 0 ];
-        },
+        workspaceResults: canonicalFixture,
         fileContents: {
             '/workspace/src/relative-custom.js': 'TODO relative custom item'
         }
@@ -4200,9 +4691,9 @@ QUnit.test( "workspace mode custom regex scanning resolves root-relative ripgrep
     {
         assert.equal( harness.readFileCalls.length, 1 );
         assert.equal( harness.readFileCalls[ 0 ], '/workspace/src/relative-custom.js' );
-        assert.equal( harness.normalizeCalls.length, 1 );
-        assert.equal( harness.normalizeCalls[ 0 ].uri.fsPath, '/workspace/src/relative-custom.js' );
-        assert.equal( harness.normalizeCalls[ 0 ].match.fsPath, '/workspace/src/relative-custom.js' );
+        assert.equal( harness.normalizeCalls.length, 0 );
+        assert.equal( harness.scanTextCalls.length, 1 );
+        assert.equal( harness.scanTextCalls[ 0 ].uri.fsPath, '/workspace/src/relative-custom.js' );
         assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, canonicalFixture );
     } );
 } );
@@ -4235,7 +4726,7 @@ QUnit.test( "workspace mode forwards multiline remote-path regex matches through
     ];
     var harness = createExtensionHarness( {
         scanMode: 'workspace',
-        regexSource: '($TAGS):[\\s\\S]*?END',
+        regexSource: actualRegexRegistry.pattern( 'tagColonAnyTextUntilEndLazy' ),
         resourceConfig: { isDefaultRegex: false, enableMultiLine: true, regexCaseSensitive: true },
         workspaceFolders: [ { uri: matrixHelpers.createUri( '/home/azureuser/localfiles/my-project' ), name: 'my-project' } ],
         ripgrepMatches: ripgrepMatches,
@@ -4287,7 +4778,7 @@ QUnit.test( "remote custom-regex workspace results stay in parity with open-file
     var remoteUri = matrixHelpers.createUri( remotePath );
     var actualConfig = matrixHelpers.createConfig( {
         tagList: [ 'TODO', 'FIXME', 'BUG' ],
-        regexSource: '($TAGS).*',
+        regexSource: actualRegexRegistry.pattern( 'tagAnyText' ),
         shouldBeCaseSensitive: true
     } );
     var openDocument = matrixHelpers.createDocument( remotePath, remoteText );
@@ -4311,7 +4802,7 @@ QUnit.test( "remote custom-regex workspace results stay in parity with open-file
 
     var openFilesHarness = createExtensionHarness( {
         scanMode: 'open files',
-        regexSource: '($TAGS).*',
+        regexSource: actualRegexRegistry.pattern( 'tagAnyText' ),
         resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
         visibleTextEditors: [ { document: openDocument } ],
         documentResults: openResults,
@@ -4319,7 +4810,7 @@ QUnit.test( "remote custom-regex workspace results stay in parity with open-file
     } );
     var workspaceHarness = createExtensionHarness( {
         scanMode: 'workspace',
-        regexSource: '($TAGS).*',
+        regexSource: actualRegexRegistry.pattern( 'tagAnyText' ),
         resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
         workspaceFolders: [ { uri: matrixHelpers.createUri( '/home/azureuser/localfiles/my-project' ), name: 'my-project' } ],
         ripgrepMatches: ripgrepMatches,
@@ -4406,7 +4897,7 @@ QUnit.test( "issue #885 workspace and open-file scans keep every repeated hash-p
     var remoteUri = matrixHelpers.createUri( remotePath );
     var actualConfig = matrixHelpers.createConfig( {
         tagList: [ '#LATER' ],
-        regexSource: '($TAGS).*',
+        regexSource: actualRegexRegistry.pattern( 'tagAnyText' ),
         shouldBeCaseSensitive: true
     } );
     var openDocument = matrixHelpers.createDocument( remotePath, remoteText );
@@ -4430,7 +4921,7 @@ QUnit.test( "issue #885 workspace and open-file scans keep every repeated hash-p
 
     var openFilesHarness = createExtensionHarness( {
         scanMode: 'open files',
-        regexSource: '($TAGS).*',
+        regexSource: actualRegexRegistry.pattern( 'tagAnyText' ),
         resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
         visibleTextEditors: [ { document: openDocument } ],
         documentResults: openResults,
@@ -4438,7 +4929,7 @@ QUnit.test( "issue #885 workspace and open-file scans keep every repeated hash-p
     } );
     var workspaceHarness = createExtensionHarness( {
         scanMode: 'workspace',
-        regexSource: '($TAGS).*',
+        regexSource: actualRegexRegistry.pattern( 'tagAnyText' ),
         resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
         workspaceFolders: [ { uri: matrixHelpers.createUri( '/tmp' ), name: 'tmp' } ],
         ripgrepMatches: ripgrepMatches,

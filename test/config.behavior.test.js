@@ -1,6 +1,7 @@
 var path = require( 'path' );
 
 var helpers = require( './moduleHelpers.js' );
+var regexRegistry = require( '../src/regexRegistry.js' );
 
 function createVscodeStub( appRoot )
 {
@@ -76,7 +77,7 @@ function loadConfigModule( options )
 
 function rgExecutableName()
 {
-    return /^win/.test( process.platform ) ? 'rg.exe' : 'rg';
+    return regexRegistry.createRegExp( 'windowsPlatform' ).test( process.platform ) ? 'rg.exe' : 'rg';
 }
 
 function rgPlatformArch()

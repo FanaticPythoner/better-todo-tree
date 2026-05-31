@@ -1,6 +1,7 @@
 var helpers = require( './moduleHelpers.js' );
 var languageMatrix = require( './languageMatrix.js' );
 var matrixHelpers = require( './matrixHelpers.js' );
+var regexRegistry = require( '../src/regexRegistry.js' );
 
 function createVscodeStub( highlightConfiguration, decorationLog )
 {
@@ -85,7 +86,7 @@ function createHarness( options )
         vscode: createVscodeStub( { highlight: options.type, enabled: true, highlightDelay: 0 }, decorationLog ),
         './config.js': {
             customHighlight: function() { return options.customHighlights || {}; },
-            subTagRegex: function() { return '(^:\\s*)'; },
+            subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); },
             tagGroup: function() { return undefined; }
         },
         './utils.js': {

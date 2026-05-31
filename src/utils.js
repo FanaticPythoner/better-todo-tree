@@ -7,22 +7,32 @@ var commentPatterns = require( 'comment-patterns' );
 
 var colourNames = require( './colourNames.js' );
 var themeColourNames = require( './themeColourNames.js' );
+var regexRegistry = require( './regexRegistry.js' );
 
 var config;
 var tagRegexSourceCache = new Map();
 var submoduleExcludeGlobCache = new Map();
 var regExpIndicesSupported;
 
-var DEFAULT_REGEX_SOURCE = '(^|//|#|<!--|;|/\\*|^[ \\t]*(-|\\d+.))\\s*(?=\\[x\\]|\\[ \\]|[A-Za-z0-9_])($TAGS)(?![A-Za-z0-9_])';
+var DEFAULT_REGEX_SOURCE = regexRegistry.DEFAULT_REGEX_SOURCE;
+var TAG_PLACEHOLDER = regexRegistry.TAG_PLACEHOLDER;
+var TAG_CAPTURE_PLACEHOLDER = regexRegistry.TAG_CAPTURE_PLACEHOLDER;
 var COMMENT_PATTERN_FILE_ALIASES = Object.freeze( {
     ".jsonc": ".js",
     ".vue": ".html",
     ".dart": ".js"
 } );
 
-var envRegex = new RegExp( "\\$\\{(.*?)\\}", "g" );
-var rgbRegex = new RegExp( "^rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*(\\d+(?:\\.\\d+)?))?\\)$", "gi" );
-var placeholderRegex = new RegExp( "(\\$\\{.*\\})" );
+var envRegex = regexRegistry.createRegExp( 'environmentVariable', 'g' );
+var rgbRegex = regexRegistry.createRegExp( 'rgbColour', 'gi' );
+var placeholderRegex = regexRegistry.createRegExp( 'labelPlaceholder' );
+var hexColourNoiseRegex = regexRegistry.createRegExp( 'hexColourNoise', 'g' );
+var lineBreakRegex = regexRegistry.createRegExp( 'optionalCarriageReturnLineBreak' );
+var pathBackslashRegex = regexRegistry.createRegExp( 'pathBackslash', 'g' );
+var repeatedSlashRegex = regexRegistry.createRegExp( 'escapedSlashCommentPrefix', 'g' );
+var gitmodulePathLineRegex = regexRegistry.createRegExp( 'gitmodulePathLine' );
+var codiconRegex = regexRegistry.createRegExp( 'codicon', 'i' );
+var commentPatternsMissingDefinitionRegex = regexRegistry.createRegExp( 'commentPatternsMissingDefinition' );
 
 function init( configuration )
 {
@@ -50,7 +60,7 @@ function isHexColour( colour )
         return false;
     }
     var withoutHash = colour.indexOf( '#' ) === 0 ? colour.substring( 1 ) : colour;
-    var hex = withoutHash.split( / / )[ 0 ].replace( /[^\da-fA-F]/g, '' );
+    var hex = withoutHash.split( ' ' )[ 0 ].replace( hexColourNoiseRegex, '' );
     return ( typeof colour === "string" ) && hex.length === withoutHash.length && ( hex.length === 3 || hex.length === 4 || hex.length === 6 || hex.length === 8 ) && !isNaN( parseInt( hex, 16 ) );
 }
 
@@ -121,7 +131,7 @@ function getCommentPattern( fileName )
     }
     catch( error )
     {
-        if( /Cannot find language definition/.test( error.message ) )
+        if( commentPatternsMissingDefinitionRegex.test( error.message ) )
         {
             return undefined;
         }
@@ -140,7 +150,7 @@ function getCommentPatternRegex( fileName )
     }
     catch( error )
     {
-        if( /Cannot find language definition/.test( error.message ) )
+        if( commentPatternsMissingDefinitionRegex.test( error.message ) )
         {
             return undefined;
         }
@@ -248,7 +258,7 @@ function getTagRegex()
 
 function escapeRegexLiteral( value )
 {
-    return value.replace( /[|\\{}()[\]^$+*?.-]/g, '\\$&' );
+    return regexRegistry.escapeRegexLiteral( value );
 }
 
 function getTagRegexSource( uri, tagList )
@@ -295,7 +305,7 @@ function resolveTagRegex( uri, resourceConfig, flags, options )
         return options.tagRegex;
     }
 
-    return new RegExp( '(' + getTagRegexSource( uri, resourceConfig.tags ) + ')', flags );
+    return new RegExp( regexRegistry.captureSource( getTagRegexSource( uri, resourceConfig.tags ) ), flags );
 }
 
 function resolveSubTagRegex( resourceConfig, flags, options )
@@ -320,7 +330,7 @@ function extractTag( text, matchOffset, uri, preferredTagOffset, options )
     var subTag;
     var subTagOffset;
 
-    if( resourceConfig.regex.indexOf( "$TAGS" ) > -1 )
+    if( resourceConfig.regex.indexOf( TAG_PLACEHOLDER ) > -1 )
     {
         var tagRegex = resolveTagRegex( uri, resourceConfig, flags, options );
         var subTagRegex = resolveSubTagRegex( resourceConfig, flags, options );
@@ -452,9 +462,11 @@ function updateBeforeAndAfter( result, text, matchOffset, uri, options )
 function getRegexSource( uri )
 {
     var regex = resolveResourceConfig( uri ).regex;
-    if( regex.indexOf( "($TAGS)" ) > -1 )
+    if( regex.indexOf( TAG_CAPTURE_PLACEHOLDER ) > -1 )
     {
-        regex = regex.split( "($TAGS)" ).join( '(' + getTagRegexSource( uri, resolveResourceConfig( uri ).tags ) + ')' );
+        regex = regex.split( TAG_CAPTURE_PLACEHOLDER ).join(
+            regexRegistry.captureSource( getTagRegexSource( uri, resolveResourceConfig( uri ).tags ) )
+        );
     }
 
     return regex;
@@ -485,9 +497,11 @@ function getRegexForEditorSearch( global, uri, options )
     var source = options.regexSource || ( function()
     {
         var regex = resourceConfig.regex;
-        if( regex.indexOf( "($TAGS)" ) > -1 )
+        if( regex.indexOf( TAG_CAPTURE_PLACEHOLDER ) > -1 )
         {
-            regex = regex.split( "($TAGS)" ).join( '(' + getTagRegexSource( uri, resourceConfig.tags ) + ')' );
+            regex = regex.split( TAG_CAPTURE_PLACEHOLDER ).join(
+                regexRegistry.captureSource( getTagRegexSource( uri, resourceConfig.tags ) )
+            );
         }
         return regex;
     }() );
@@ -509,11 +523,11 @@ function isIncluded( name, includes, excludes )
 {
     var posix_includes = includes.map( function( glob )
     {
-        return glob.replace( /\\/g, '/' );
+        return glob.replace( pathBackslashRegex, '/' );
     } );
     var posix_excludes = excludes.map( function( glob )
     {
-        return glob.replace( /\\/g, '/' );
+        return glob.replace( pathBackslashRegex, '/' );
     } );
 
     var included = posix_includes.length === 0 || micromatch.isMatch( name, posix_includes );
@@ -551,8 +565,7 @@ function formatLabel( template, node, unexpectedPlaceholders )
         "filepath": filepath
     }
 
-    // prepare regex to substitude "${name}" with it's value from map
-    var re = new RegExp( "\\$\\{(" + Object.keys( formatLabelMap ).join( "|" ) + ")\\}", "gi" );
+    var re = new RegExp( regexRegistry.buildFormatLabelSource( Object.keys( formatLabelMap ) ), "gi" );
     result = result.replace( re, function( matched )
     {
         return formatLabelMap[ matched.slice( 2, -1 ).toLowerCase() ];
@@ -574,23 +587,23 @@ function createFolderGlob( folderPath, rootPath, filter )
 {
     if( process.platform === 'win32' )
     {
-        var fp = folderPath.replace( /\\/g, '/' );
-        var rp = rootPath.replace( /\\/g, '/' );
+        var fp = folderPath.replace( pathBackslashRegex, '/' );
+        var rp = rootPath.replace( pathBackslashRegex, '/' );
 
         if( fp.indexOf( rp ) === 0 )
         {
             fp = fp.substring( path.dirname( rp ).length );
         }
 
-        return ( "**/" + fp + filter ).replace( /\/\//g, '/' );
+        return ( "**/" + fp + filter ).replace( repeatedSlashRegex, '/' );
     }
 
-    return ( folderPath + filter ).replace( /\/\//g, '/' );
+    return ( folderPath + filter ).replace( repeatedSlashRegex, '/' );
 }
 
 function normalizeGlobPath( value )
 {
-    return value.replace( /\\/g, '/' );
+    return value.replace( pathBackslashRegex, '/' );
 }
 
 function readGitmodulesPaths( rootPath )
@@ -603,10 +616,10 @@ function readGitmodulesPaths( rootPath )
     }
 
     return fs.readFileSync( gitmodulesPath, 'utf8' )
-        .split( /\r?\n/ )
+        .split( lineBreakRegex )
         .map( function( line )
         {
-            var match = /^\s*path\s*=\s*(.+?)\s*$/.exec( line );
+            var match = gitmodulePathLineRegex.exec( line );
             return match ? match[ 1 ] : undefined;
         } )
         .filter( function( submodulePath )
@@ -673,7 +686,7 @@ function formatExportPath( template, dateTime )
 
 function complementaryColour( colour )
 {
-    var hex = colour.split( / / )[ 0 ].replace( /[^\da-fA-F]/g, '' );
+    var hex = colour.split( ' ' )[ 0 ].replace( hexColourNoiseRegex, '' );
     var digits = hex.length / 3;
     var red = parseInt( hex.substr( 0, digits ), 16 );
     var green = parseInt( hex.substr( 1 * digits, digits ), 16 );
@@ -724,7 +737,7 @@ function getCodiconName( icon )
         return undefined;
     }
 
-    var match = icon.trim().match( /^\$\(([a-z0-9-]+)\)$/i );
+    var match = icon.trim().match( codiconRegex );
     return match ? match[ 1 ] : undefined;
 }
 
@@ -761,6 +774,7 @@ module.exports.getResourceConfig = getResourceConfig;
 module.exports.getTagRegexSource = getTagRegexSource;
 module.exports.supportsRegExpIndices = supportsRegExpIndices;
 module.exports.DEFAULT_REGEX_SOURCE = DEFAULT_REGEX_SOURCE;
+module.exports.LEGACY_MARKDOWN_TASK_FRAGMENT = regexRegistry.LEGACY_MARKDOWN_TASK_FRAGMENT;
 module.exports.extractTag = extractTag;
 module.exports.updateBeforeAndAfter = updateBeforeAndAfter;
 module.exports.getRegexSource = getRegexSource;

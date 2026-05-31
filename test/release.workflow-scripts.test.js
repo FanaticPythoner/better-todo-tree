@@ -3,6 +3,7 @@ var fs = require( 'fs' );
 var http = require( 'http' );
 var os = require( 'os' );
 var path = require( 'path' );
+var regexRegistry = require( '../src/regexRegistry.js' );
 
 function makeExecutable( filePath, contents )
 {
@@ -153,7 +154,7 @@ QUnit.test( 'release-artifacts enumerates release VSIX files in a stable order',
 
     assert.strictEqual( result.status, 0, result.stderr );
     assert.deepEqual(
-        result.stdout.trim().split( /\r?\n/ ),
+        result.stdout.trim().split( regexRegistry.createRegExp( 'optionalCarriageReturnLineBreak' ) ),
         [
             'artifacts/release/better-todo-tree-0.0.225-linux-x64.vsix',
             'artifacts/release/better-todo-tree-0.0.225-web.vsix'
@@ -272,7 +273,10 @@ QUnit.test( 'publish-open-vsx waits on retryable registry failures and retries t
     assert.strictEqual( result.status, 0, result.stderr );
     assert.strictEqual( callLog.split( firstPackage ).length - 1, 3 );
     assert.strictEqual( callLog.split( secondPackage ).length - 1, 1 );
-    assert.deepEqual( sleepLog.trim().split( /\r?\n/ ), [ '300', '300' ] );
+    assert.deepEqual(
+        sleepLog.trim().split( regexRegistry.createRegExp( 'optionalCarriageReturnLineBreak' ) ),
+        [ '300', '300' ]
+    );
     assert.ok( result.stdout.indexOf( 'Open VSX publish retryable: package=' + firstPackage ) !== -1 );
     assert.ok( result.stdout.indexOf( 'The server responded with status 503: Service Unavailable' ) !== -1 );
     assert.ok( result.stdout.indexOf( 'Open VSX publish succeeded: package=' + firstPackage + ' attempts=3' ) !== -1 );
@@ -311,7 +315,10 @@ QUnit.test( 'publish-open-vsx fails non-read-only registry errors without retryi
     var sleepLog = fs.existsSync( sleepLogPath ) ? fs.readFileSync( sleepLogPath, 'utf8' ) : '';
 
     assert.strictEqual( result.status, 2 );
-    assert.strictEqual( callLog.trim().split( /\r?\n/ ).length, 1 );
+    assert.strictEqual(
+        callLog.trim().split( regexRegistry.createRegExp( 'optionalCarriageReturnLineBreak' ) ).length,
+        1
+    );
     assert.strictEqual( sleepLog, '' );
     assert.ok( result.stderr.indexOf( 'Open VSX publish failed: package=artifacts/release/better-todo-tree-0.0.225-linux-x64.vsix exit_code=2' ) !== -1 );
 } );
@@ -630,7 +637,7 @@ QUnit.test( 'write-release-notes lists included commits in chronological order',
     assert.ok( notes.indexOf( '- previous release: `v0.0.225`' ) !== -1 );
     assert.ok( notes.indexOf( '- [`') !== -1 );
     assert.ok( notes.indexOf( '/commit/' ) !== -1 );
-    assert.notOk( /\n- \[`?\s*\n/.test( notes ), notes );
+    assert.notOk( regexRegistry.createRegExp( 'releaseNotesBlankBullet' ).test( notes ), notes );
     assert.ok( notes.indexOf( '  > first detail line' ) !== -1 );
     assert.ok( notes.indexOf( '  > second detail line' ) !== -1 );
     assert.ok( notes.indexOf( '  > final detail line' ) !== -1 );
@@ -668,7 +675,7 @@ QUnit.test( 'write-release-notes excludes upstream history when no stable releas
     assert.ok( notes.indexOf( '- target commit: [`') !== -1 );
     assert.ok( notes.indexOf( '- fork point: [`') !== -1 );
     assert.ok( notes.indexOf( '## Included commits since fork point' ) !== -1 );
-    assert.notOk( /\n- \[`?\s*\n/.test( notes ), notes );
+    assert.notOk( regexRegistry.createRegExp( 'releaseNotesBlankBullet' ).test( notes ), notes );
     assert.ok( notes.indexOf( 'fork change one' ) !== -1 );
     assert.ok( notes.indexOf( 'fork change two' ) !== -1 );
     assert.ok( notes.indexOf( '  > fork detail one' ) !== -1 );
@@ -703,7 +710,7 @@ QUnit.test( 'release-versioning resolves latest and previous tags without pipefa
     assert.strictEqual( result.status, 0, result.stderr );
     assert.strictEqual( result.stderr, '' );
     assert.deepEqual(
-        result.stdout.trim().split( /\r?\n/ ),
+        result.stdout.trim().split( regexRegistry.createRegExp( 'optionalCarriageReturnLineBreak' ) ),
         [ 'v0.0.226', 'v0.0.225' ]
     );
 } );
@@ -1070,5 +1077,5 @@ QUnit.test( 'resolve-release-metadata validates the tag and emits release output
     assert.ok( result.stdout.indexOf( 'tag=v0.0.225' ) !== -1 );
     assert.ok( result.stdout.indexOf( 'prerelease=false' ) !== -1 );
     assert.ok( result.stdout.indexOf( 'release_ref=v0.0.225' ) !== -1 );
-    assert.ok( /^release_sha=[0-9a-f]{40}$/m.test( result.stdout ) );
+    assert.ok( regexRegistry.createRegExp( 'releaseShaOutput', 'm' ).test( result.stdout ) );
 } );

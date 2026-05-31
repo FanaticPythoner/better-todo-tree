@@ -4,6 +4,7 @@ var path = require( 'path' );
 var Readable = require( 'stream' ).Readable;
 var utils = require( '../src/utils.js' );
 var detection = require( '../src/detection.js' );
+var regexRegistry = require( '../src/regexRegistry.js' );
 var streamScanner = require( '../src/runtime/streamScanner.js' );
 
 function createMockFs( content, statOverrides, chunkSize )
@@ -60,7 +61,7 @@ function createDetectionConfig( overrides )
         regexSource: utils.DEFAULT_REGEX_SOURCE,
         caseSensitive: true,
         multiLine: false,
-        subTagRegexString: '(^:\\s*)',
+        subTagRegexString: regexRegistry.pattern( 'subTagPrefixCapture' ),
         tags: function() { return this.tagList; },
         regex: function()
         {
@@ -151,7 +152,7 @@ QUnit.module( "streamScanner", function()
             chunkCalls.push( { length: text.length, info: info } );
             var matches = [];
             var match;
-            var regex = /\/\/ TODO line(\d+)/g;
+            var regex = regexRegistry.createRegExp( 'slashTodoLineNumber', 'g' );
             while( ( match = regex.exec( text ) ) !== null )
             {
                 matches.push( {
@@ -403,7 +404,7 @@ QUnit.module( "streamScanner", function()
                 fs: createMockFs( "" ),
                 chunkBytes: 0
             } );
-        }, /chunkBytes/ );
+        }, regexRegistry.createRegExp( 'chunkBytesLiteral' ) );
 
         assert.throws( function()
         {
@@ -412,14 +413,14 @@ QUnit.module( "streamScanner", function()
                 chunkBytes: 100,
                 overlapBytes: 100
             } );
-        }, /overlapBytes/ );
+        }, regexRegistry.createRegExp( 'overlapBytesLiteral' ) );
 
         assert.throws( function()
         {
             streamScanner.streamFileChunks( '/tmp/x.js', function() {}, {
                 fs: { stat: function() {}, readFile: function() {} }
             } );
-        }, /createReadStream/ );
+        }, regexRegistry.createRegExp( 'createReadStreamLiteral' ) );
     } );
 
     QUnit.test( "lineOffset advances by exact newline count of the consumed prefix", function( assert )
@@ -531,7 +532,7 @@ QUnit.module( "streamScanner", function()
         function findTags( text )
         {
             var matches = [];
-            var regex = /\/\/ (TODO|FIXME) (\S+)/g;
+            var regex = regexRegistry.createRegExp( 'slashTodoFixmeWord', 'g' );
             var match;
             while( ( match = regex.exec( text ) ) !== null )
             {
@@ -584,14 +585,7 @@ QUnit.module( "streamScanner", function()
             assert.notOk( error, error && error.stack ? error.stack : String( error ) );
         } ).then( function()
         {
-            try
-            {
-                fs.rmSync( tempRoot, { recursive: true, force: true } );
-            }
-            catch( cleanupError )
-            {
-                /* ignore cleanup errors */
-            }
+            fs.rmSync( tempRoot, { recursive: true, force: true } );
             done();
         } );
     } );

@@ -9,20 +9,21 @@ var path = require( 'path' );
 var performance = require( 'perf_hooks' ).performance;
 
 var detection = require( '../../src/detection.js' );
+var regexRegistry = require( '../../src/regexRegistry.js' );
 var utils = require( '../../src/utils.js' );
 
 var TAGS = Object.freeze( [ 'BUG', 'HACK', 'FIXME', 'TODO', 'XXX', '[ ]', '[x]' ] );
 var FILE_COUNT = 160;
 var TASKS_PER_FILE = 8;
 var ITERATIONS = 31;
-var DEFAULT_DERIVED_REGEX = utils.DEFAULT_REGEX_SOURCE.replace( '|;', '' );
+var DEFAULT_DERIVED_REGEX = regexRegistry.pattern( 'defaultTodoWithoutSemicolon' );
 
 var resourceConfig = {
     tags: TAGS.slice(),
     regex: DEFAULT_DERIVED_REGEX,
     regexCaseSensitive: true,
     enableMultiLine: false,
-    subTagRegex: '^:\\s*',
+    subTagRegex: regexRegistry.pattern( 'subTagPrefix' ),
     isDefaultRegex: false
 };
 var config = {
@@ -36,7 +37,7 @@ var config = {
             multiLine: false
         };
     },
-    subTagRegex: function() { return '^:\\s*'; }
+    subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefix' ); }
 };
 var snapshot = {
     getResourceConfig: function() { return resourceConfig; }
@@ -295,8 +296,11 @@ function run()
 
     utils.init( config );
     createCorpus( root );
-    fullRegex = DEFAULT_DERIVED_REGEX.replace( '($TAGS)', '(' + utils.getTagRegexSource( undefined, TAGS ) + ')' );
-    candidateRegex = '(' + utils.getTagRegexSource( undefined, TAGS ) + ')';
+    fullRegex = DEFAULT_DERIVED_REGEX.replace(
+        regexRegistry.TAG_CAPTURE_PLACEHOLDER,
+        regexRegistry.captureSource( utils.getTagRegexSource( undefined, TAGS ) )
+    );
+    candidateRegex = regexRegistry.captureSource( utils.getTagRegexSource( undefined, TAGS ) );
 
     try
     {
@@ -309,7 +313,9 @@ function run()
                 expectedMatches: expectedMatches
             },
             brokenRawExit: brokenRaw.status,
-            brokenRawHasLookaroundError: /look-around/.test( brokenRaw.stderr ),
+            brokenRawHasLookaroundError: regexRegistry
+                .createRegExp( 'lookAroundDiagnostic' )
+                .test( brokenRaw.stderr ),
             pcre2Raw: measure( 'pcre2Raw', expectedMatches, function()
             {
                 return pcre2RawStrategy( rgPath, root, fullRegex );

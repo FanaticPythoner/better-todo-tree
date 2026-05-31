@@ -6,6 +6,7 @@
  */
 
 var detection = require( '../../src/detection.js' );
+var regexRegistry = require( '../../src/regexRegistry.js' );
 var upstreamDetector = require( './upstreamDetector.js' );
 var corpus = require( './corpus.js' );
 
@@ -16,7 +17,7 @@ function makeBetterTodoTreeConfig()
         regexSource: corpus.PARITY_REGEX_SOURCE,
         caseSensitive: true,
         multiLine: false,
-        subTagRegexString: '',
+        subTagRegexString: regexRegistry.fragment( 'empty' ),
         tags: function() { return this.tagList; },
         regex: function()
         {
@@ -39,7 +40,7 @@ function makeUpstreamConfig()
         regexSource: corpus.PARITY_REGEX_SOURCE,
         caseSensitive: true,
         multiLine: false,
-        subTagRegexString: ''
+        subTagRegexString: regexRegistry.fragment( 'empty' )
     };
 }
 

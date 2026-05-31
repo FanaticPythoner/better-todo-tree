@@ -9,9 +9,11 @@ var themeColourNames = require( './themeColourNames.js' );
 var codiconNames = require( './codiconNames.js' );
 var productIconNames = require( './productIconNames.js' );
 var identity = require( './extensionIdentity.js' );
+var regexRegistry = require( './regexRegistry.js' );
 var ensuredStorageDirectories = new Set();
 var generatedIconFiles = new Set();
 var fileBackedIconCache = new Map();
+var iconNameNoiseRegex = regexRegistry.createRegExp( 'iconNameNoise', 'gi' );
 
 function ensureStorageDirectory( context, debug )
 {
@@ -36,7 +38,7 @@ function ensureStorageDirectory( context, debug )
 
 function compactColourName( colour )
 {
-    return colour.replace( /[^0-9a-zA-Z]/g, '' );
+    return colour.replace( iconNameNoiseRegex, '' );
 }
 
 function normaliseColour( colour )
@@ -105,7 +107,7 @@ function createColourIconFile( context, colour )
 function createCodiconFile( context, iconName, colour )
 {
     var filePath = path.join( context.globalStorageUri.fsPath, "todo-codicon-" + iconName + "-" + compactColourName( colour ) + ".svg" );
-    var glyph = iconName.replace( /[^a-z0-9]/gi, '' ).charAt( 0 ).toUpperCase() || '?';
+    var glyph = iconName.replace( iconNameNoiseRegex, '' ).charAt( 0 ).toUpperCase() || '?';
     var foreground = utils.complementaryColour( colour );
     var svg =
         "<svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" xmlns=\"http://www.w3.org/2000/svg\">" +

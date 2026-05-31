@@ -8,6 +8,7 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
     var matrixHelpers = require( path.join( deps.repoRoot, 'test', 'matrixHelpers.js' ) );
     var languageMatrix = require( path.join( deps.repoRoot, 'test', 'languageMatrix.js' ) );
     var actualUtils = require( path.join( deps.repoRoot, 'src', 'utils.js' ) );
+    var regexRegistry = require( path.join( deps.repoRoot, 'src', 'regexRegistry.js' ) );
     var USER_FLOW_ITERATIONS = Object.freeze( {
         openFileRefresh: 10,
         treeMutation: 10,
@@ -154,12 +155,12 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
     function extractLegacyTodoTag( text )
     {
         var trimmed = String( text || '' ).trim();
-        var parts = trimmed.split( /\s+/ );
+        var parts = trimmed.split( regexRegistry.createRegExp( 'whitespaceOneOrMore' ) );
         var tag = parts[ 0 ] || 'TODO';
         var remainder = trimmed.slice( tag.length ).trim();
 
         return {
-            tag: tag.replace( /:$/, '' ),
+            tag: tag.replace( regexRegistry.createRegExp( 'colonSuffix' ), '' ),
             withoutTag: remainder,
             before: '',
             after: remainder,
@@ -378,7 +379,8 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
             {
                 return legacyResults.some( function( result )
                 {
-                    return result.uri && /\.md$/i.test( result.uri.fsPath || '' );
+                    return result.uri &&
+                        regexRegistry.createRegExp( 'markdownFileExtension', 'i' ).test( result.uri.fsPath || '' );
                 } );
             },
             count: function()
@@ -756,7 +758,7 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
         sections[ 'todo-tree.regex' ] = createConfigurationSection( {
             regex: options.resourceConfig && options.resourceConfig.isDefaultRegex === true ?
                 actualUtils.DEFAULT_REGEX_SOURCE :
-                ( options.regexSource || '($TAGS)' ),
+                ( options.regexSource || regexRegistry.TAG_CAPTURE_PLACEHOLDER ),
             regexCaseSensitive: true,
             enableMultiLine: false,
             subTagRegex: options.resourceConfig && options.resourceConfig.subTagRegex ? options.resourceConfig.subTagRegex : ''
@@ -1119,14 +1121,16 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
                     tags: languageMatrix.DEFAULT_TAGS.slice(),
                     regex: options.resourceConfig && options.resourceConfig.isDefaultRegex === true ?
                         actualUtils.DEFAULT_REGEX_SOURCE :
-                        ( options.regexSource || '($TAGS)' ),
+                        ( options.regexSource || regexRegistry.TAG_CAPTURE_PLACEHOLDER ),
                     caseSensitive: options.resourceConfig && options.resourceConfig.regexCaseSensitive !== false,
                     multiLine: options.resourceConfig && options.resourceConfig.enableMultiLine === true
                 };
             },
             subTagRegex: function()
             {
-                return options.resourceConfig && options.resourceConfig.subTagRegex ? options.resourceConfig.subTagRegex : '(^:\\s*)';
+                return options.resourceConfig && options.resourceConfig.subTagRegex ?
+                    options.resourceConfig.subTagRegex :
+                    regexRegistry.pattern( 'subTagPrefixCapture' );
             },
             scanMode: function() { return options.scanMode; },
             shouldIgnoreGitSubmodules: function() { return false; },
@@ -1168,8 +1172,11 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
             init: function() {},
             isCodicon: function() { return false; },
             getCommentPattern: function( candidate ) { return actualUtils.getCommentPattern( candidate ); },
-            getRegexSource: function() { return options.regexSource || '($TAGS)'; },
-            getTagRegexSource: function() { return 'TODO|FIXME|BUG|HACK|XXX|\\[ \\]|\\[x\\]'; },
+            getRegexSource: function() { return options.regexSource || regexRegistry.TAG_CAPTURE_PLACEHOLDER; },
+            getTagRegexSource: function()
+            {
+                return actualUtils.getTagRegexSource( undefined, languageMatrix.DEFAULT_TAGS );
+            },
             removeBlockComments: function( text, fileName ) { return actualUtils.removeBlockComments( text, fileName ); },
             extractTag: function( text ) { return extractLegacyTodoTag( text ); },
             isIncluded: function( name, includes, excludes )
@@ -1607,7 +1614,7 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
             ripgrepMatches: ripgrepMatches,
             normalizeResult: function( match )
             {
-                var displayText = match.match.replace( /^TODO:\s*/, '' );
+                var displayText = match.match.replace( regexRegistry.createRegExp( 'todoLinePrefix' ), '' );
                 return {
                     uri: deps.createUri( match.fsPath ),
                     line: match.line,
@@ -1987,7 +1994,7 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
                 return activateHarness( createExtensionHarness( moduleLoader, createOpenFileRefreshHarnessOptions( fixture, {
                     useActualDetectionModule: moduleLoader === deps.loadCurrentModule,
                     resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
-                    regexSource: 'TODO\\([^)]*\\):\\s*[^\\n]+'
+                    regexSource: regexRegistry.pattern( 'todoFunctionLine' )
                 } ) ) ).then( async function( harness )
                 {
                     harness.vscode.workspaceListeners.save( fixture.initialDocument );
@@ -2234,7 +2241,7 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
             {
                 return {
                     resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
-                    regexSource: '(TODO):\\s*[^\\n]+'
+                    regexSource: regexRegistry.pattern( 'todoColonLine' )
                 };
             }
         } ),
