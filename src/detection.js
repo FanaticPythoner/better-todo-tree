@@ -87,6 +87,101 @@ function offsetFromLineAndColumn( text, lineOffsets, line, column )
     return Math.min( offset, text.length );
 }
 
+function utf8ByteOffsetToStringOffset( text, byteOffset )
+{
+    if( typeof ( byteOffset ) !== 'number' || byteOffset <= 0 )
+    {
+        return 0;
+    }
+
+    var bytesSeen = 0;
+    var stringOffset = 0;
+
+    while( stringOffset < text.length && bytesSeen < byteOffset )
+    {
+        var codePoint = text.codePointAt( stringOffset );
+        var nextStringOffset = stringOffset + ( codePoint > 0xFFFF ? 2 : 1 );
+        var nextBytesSeen = bytesSeen + utf8ByteLengthOfCodePoint( codePoint );
+
+        if( nextBytesSeen > byteOffset )
+        {
+            break;
+        }
+
+        bytesSeen = nextBytesSeen;
+        stringOffset = nextStringOffset;
+    }
+
+    return stringOffset;
+}
+
+function utf8ByteLengthOfCodePoint( codePoint )
+{
+    if( codePoint <= 0x7F )
+    {
+        return 1;
+    }
+
+    if( codePoint <= 0x7FF )
+    {
+        return 2;
+    }
+
+    if( codePoint <= 0xFFFF )
+    {
+        return 3;
+    }
+
+    return 4;
+}
+
+function getLineTextAtNumber( text, lineOffsets, lineNumber )
+{
+    var lineIndex = Math.min( Math.max( lineNumber - 1, 0 ), lineOffsets.length - 1 );
+    var startOffset = lineOffsets[ lineIndex ] || 0;
+    var endOffset = lineIndex + 1 < lineOffsets.length ? lineOffsets[ lineIndex + 1 ] - 1 : text.length;
+
+    if( endOffset > startOffset && text[ endOffset - 1 ] === '\r' )
+    {
+        endOffset--;
+    }
+
+    return {
+        text: text.slice( startOffset, endOffset ),
+        startOffset: startOffset,
+        endOffset: endOffset
+    };
+}
+
+function resolveRipgrepLocalStringOffset( lineText, byteOffset, column )
+{
+    if( typeof ( byteOffset ) === 'number' )
+    {
+        return utf8ByteOffsetToStringOffset( lineText, byteOffset );
+    }
+
+    return Math.max( ( column || 1 ) - 1, 0 );
+}
+
+function resolveRipgrepMatchStartOffset( context, match )
+{
+    var firstSubmatch = match.submatches && match.submatches.length > 0 ? match.submatches[ 0 ] : undefined;
+    var byteOffset = firstSubmatch && typeof ( firstSubmatch.start ) === 'number' ? firstSubmatch.start : undefined;
+
+    if( typeof ( match.line ) === 'number' && match.line >= 1 )
+    {
+        var line = getLineTextAtNumber( context.text, context.lineOffsets, match.line );
+        return line.startOffset + resolveRipgrepLocalStringOffset( line.text, byteOffset, match.column );
+    }
+
+    if( typeof ( match.absoluteOffset ) === 'number' )
+    {
+        return utf8ByteOffsetToStringOffset( context.text, match.absoluteOffset + ( byteOffset || 0 ) );
+    }
+
+    return offsetFromLineAndColumn( context.text, context.lineOffsets, match.line, match.column );
+}
+
 function splitPhysicalLines( text, startOffset )
 {
     var lines = [];
@@ -1215,16 +1310,7 @@ function normalizeRipgrepMatch( uri, text, match )
     }
 
     var context = createScanContext( uri, text );
-    var rawStartOffset;
-
-    if( match.absoluteOffset !== undefined && match.submatches && match.submatches.length > 0 )
-    {
-        rawStartOffset = match.absoluteOffset + match.submatches[ 0 ].start;
-    }
-    else
-    {
-        rawStartOffset = offsetFromLineAndColumn( text, context.lineOffsets, match.line, match.column );
-    }
+    var rawStartOffset = resolveRipgrepMatchStartOffset( context, match );
 
     var exactMatch = findExactRegexExecMatch( context, rawStartOffset );
 
@@ -1290,7 +1376,7 @@ function normalizeWorkspaceRegexMatch( uri, match, snapshot )
     var contextText = typeof match.lines === 'string' && match.lines.length > 0 ? match.lines : ( match.match || "" );
     var localMatchText = typeof match.match === 'string' && match.match.length > 0 ? match.match : contextText;
     var localMatchStart = match.submatches && match.submatches.length > 0 && typeof match.submatches[ 0 ].start === 'number' ?
-        match.submatches[ 0 ].start :
+        resolveRipgrepLocalStringOffset( contextText, match.submatches[ 0 ].start, match.column ) :
         Math.max( ( match.column || 1 ) - 1, 0 );
     var resourceConfig = snapshot && typeof ( snapshot.getResourceConfig ) === 'function' ?
         snapshot.getResourceConfig( uri ) :

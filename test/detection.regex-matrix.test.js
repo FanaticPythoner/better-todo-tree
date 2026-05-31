@@ -383,6 +383,112 @@ QUnit.module( "detection regex matrix", function()
         assert.deepEqual( stripCaptureGroupOffsets( reloadResults ), stripCaptureGroupOffsets( openResults ) );
     } );
 
+    QUnit.test( "issue #53 raw ripgrep byte offsets match editor normalization", function( assert )
+    {
+        function byteLength( value )
+        {
+            return Buffer.byteLength( value, 'utf8' );
+        }
+
+        function resultSnapshot( result )
+        {
+            return {
+                line: result.line,
+                column: result.column,
+                actualTag: result.actualTag,
+                displayText: result.displayText,
+                after: result.after,
+                match: result.match
+            };
+        }
+
+        function createRipgrepMatches( fsPath, text, regex )
+        {
+            var lines = text.split( '\n' );
+            var matches = [];
+            var charOffset = 0;
+            var lineIndex;
+
+            for( lineIndex = 0; lineIndex < lines.length; lineIndex++ )
+            {
+                var line = lines[ lineIndex ];
+                var lineRegex = new RegExp( regex.source, regex.flags.replace( 'g', '' ) );
+                var match = lineRegex.exec( line );
+
+                if( match )
+                {
+                    matches.push( {
+                        fsPath: fsPath,
+                        line: lineIndex + 1,
+                        column: match.index + 1,
+                        match: match[ 0 ],
+                        lines: line + '\n',
+                        absoluteOffset: byteLength( text.slice( 0, charOffset ) ),
+                        submatches: [ {
+                            match: match[ 0 ],
+                            start: byteLength( line.slice( 0, match.index ) ),
+                            end: byteLength( line.slice( 0, match.index + match[ 0 ].length ) )
+                        } ]
+                    } );
+                }
+
+                charOffset += line.length + 1;
+            }
+
+            return matches;
+        }
+
+        var tagList = [ 'BUG', 'FIXME', 'HACK', 'TODO', '[ ]', '[x]', 'MOMA' ];
+        var regexSource = '(//|#|<!--|;|/\\*|\\*>|^......\\*|\\-\\-)\\s*($TAGS)';
+        var uri = matrixHelpers.createUri( '/tmp/issue-53.cbl' );
+        var text = [
+            '000001* Préfixe accentué',
+            '000002* déjà accès créé',
+            '      *> BUG:   COBOL BUG',
+            '      *> FIXME: COBOL FIXME',
+            '      *> TODO:  COBOL TODO',
+            '      *> MOMA:  COBOL MOMA',
+            '      *> [ ]:   COBOL [ ]',
+            '      *> [x]:   COBOL [x]',
+            '',
+            '       -- BUG:   SQL BUG',
+            '       -- FIXME: SQL FIXME',
+            '       -- TODO:  SQL TODO',
+            '       -- MOMA:  SQL MOMA',
+            '       -- [ ]:   SQL [ ]',
+            '       -- [x]:   SQL [x]',
+            'éé -- TODO: unicode prefix SQL',
+            'cdDM00*> --- Gestion Accès DM'
+        ].join( '\n' );
+        var config = matrixHelpers.createConfig( {
+            tagList: tagList,
+            regexSource: regexSource,
+            shouldBeCaseSensitive: false,
+            subTagRegexString: regexRegistry.pattern( 'subTagPrefix' )
+        } );
+        var expandedRegex = new RegExp(
+            regexSource.replace( regexRegistry.TAG_PLACEHOLDER, utils.getTagRegexSource( uri, tagList ) ),
+            'i'
+        );
+
+        utils.init( config );
+
+        var openResults = detection.scanText( uri, text );
+        var reloadResults = createRipgrepMatches( uri.fsPath, text, expandedRegex ).map( function( match )
+        {
+            return detection.normalizeRegexMatch( uri, text, match );
+        } ).filter( function( result )
+        {
+            return result !== undefined;
+        } );
+
+        assert.deepEqual( reloadResults.map( resultSnapshot ), openResults.map( resultSnapshot ) );
+        assert.deepEqual(
+            reloadResults.map( function( result ) { return result.line; } ),
+            [ 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16 ]
+        );
+    } );
+
     QUnit.test( "issue 898 punctuation-heavy custom tags normalize through custom regexes", function( assert )
     {
         var results = scanWithConfig( '/tmp/issue-898-punctuation.js', [

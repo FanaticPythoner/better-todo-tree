@@ -93,7 +93,7 @@ var sortByLineAndColumn = function( a, b )
 
 var tagSortIndex = function( node )
 {
-    if( node && node.tag !== undefined )
+    if( node && node.isRootTagNode === true && node.isGroupNode === true && node.tag !== undefined )
     {
         var tags = config.tags();
         var index = tags.indexOf( node.tag );
