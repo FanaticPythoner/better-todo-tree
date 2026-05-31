@@ -102,9 +102,38 @@ function baselineRefCandidates()
     return candidates;
 }
 
+function expandFirstParentCandidates( ref )
+{
+    if( gitRefExists( ref ) !== true )
+    {
+        return [];
+    }
+
+    return splitLines( runGit( [ 'rev-list', '--first-parent', ref ] ) ).filter( function( candidate )
+    {
+        return candidate !== '';
+    } );
+}
+
+function expandBaselineRefCandidates( seeds )
+{
+    var candidates = [];
+
+    seeds.forEach( function( seed )
+    {
+        expandFirstParentCandidates( seed ).forEach( function( candidate )
+        {
+            pushUniqueCandidate( candidates, candidate );
+        } );
+    } );
+
+    return candidates;
+}
+
 function resolveBaselineRef( requestedRef )
 {
     var candidates;
+    var entriesByRef = new Map();
     var selected = null;
 
     if( requestedRef !== DEFAULT_BASELINE_REF )
@@ -115,10 +144,16 @@ function resolveBaselineRef( requestedRef )
         };
     }
 
-    candidates = baselineRefCandidates().filter( gitRefExists );
+    candidates = expandBaselineRefCandidates( baselineRefCandidates() );
     candidates.some( function( candidate )
     {
-        var entries = collectBaselineRegexEntries( candidate );
+        var entries = entriesByRef.get( candidate );
+
+        if( entries === undefined )
+        {
+            entries = collectBaselineRegexEntries( candidate );
+            entriesByRef.set( candidate, entries );
+        }
 
         if( entries.length > 0 )
         {
