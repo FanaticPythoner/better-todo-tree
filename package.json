@@ -2047,7 +2047,7 @@
         "@vscode/vsce": "^3.9.2",
         "ovsx": "^1.0.0",
         "parse-code-context": "^1.0.0",
-        "qunit": "^2.25.0",
+        "qunit": "^2.26.0",
         "webpack": "^5.107.2",
         "webpack-cli": "^7.0.3"
     },
