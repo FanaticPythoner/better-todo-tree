@@ -10,7 +10,7 @@
 | Source coverage | 83/83 |
 | Behavior parity | 73/73 |
 | Compiled baseline regexes | 83/83 |
-| Elapsed ms | 138.482 |
+| Elapsed ms | 147.762 |
 
 ## Behavior Matrix
 

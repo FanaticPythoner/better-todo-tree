@@ -1,0 +1,93 @@
+[
+    {
+        "id": "html-single-file-component",
+        "parser": "html-like-element-regions",
+        "match": {
+            "extensions": [
+                ".vue",
+                ".svelte"
+            ],
+            "languageIds": [
+                "vue",
+                "svelte"
+            ]
+        },
+        "baseLanguage": "html",
+        "regions": [
+            {
+                "element": "script",
+                "defaultLanguage": "javascript",
+                "languageAttribute": "lang",
+                "typeAttribute": "type",
+                "rawText": true,
+                "maskWhenUnresolved": true,
+                "typeAliases": {
+                    "module": "javascript"
+                }
+            },
+            {
+                "element": "style",
+                "defaultLanguage": "css",
+                "languageAttribute": "lang",
+                "typeAttribute": "type",
+                "rawText": true,
+                "maskWhenUnresolved": true
+            },
+            {
+                "element": "template",
+                "languageAttribute": "lang"
+            }
+        ]
+    },
+    {
+        "id": "astro-component",
+        "parser": "html-like-element-regions",
+        "match": {
+            "extensions": [
+                ".astro"
+            ],
+            "languageIds": [
+                "astro"
+            ]
+        },
+        "baseLanguage": "html",
+        "leadingFences": [
+            {
+                "element": "frontmatter",
+                "start": "---",
+                "end": "---",
+                "defaultLanguage": "typescript",
+                "maskWhenUnresolved": true
+            }
+        ],
+        "wrappedRegions": [
+            {
+                "element": "astro-template-expression-comment",
+                "start": "{/*",
+                "end": "*/}",
+                "defaultLanguage": "javascript"
+            }
+        ],
+        "regions": [
+            {
+                "element": "script",
+                "defaultLanguage": "javascript",
+                "languageAttribute": "lang",
+                "typeAttribute": "type",
+                "rawText": true,
+                "maskWhenUnresolved": true,
+                "typeAliases": {
+                    "module": "javascript"
+                }
+            },
+            {
+                "element": "style",
+                "defaultLanguage": "css",
+                "languageAttribute": "lang",
+                "typeAttribute": "type",
+                "rawText": true,
+                "maskWhenUnresolved": true
+            }
+        ]
+    }
+]

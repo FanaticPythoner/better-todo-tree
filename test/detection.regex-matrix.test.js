@@ -641,6 +641,81 @@ QUnit.module( "detection regex matrix", function()
         assert.equal( normalized.matchEndOffset, text.length );
     } );
 
+    QUnit.test( "context normalization reuses snapshot resource config for raw ripgrep matches", function( assert )
+    {
+        var config = matrixHelpers.createConfig( {
+            tagList: [ 'TODO' ],
+            regexSource: regexRegistry.TAG_CAPTURE_PLACEHOLDER,
+            subTagRegexString: regexRegistry.pattern( 'subTagPrefix' )
+        } );
+        var uri = matrixHelpers.createUri( '/tmp/context-snapshot.js' );
+        var text = '// FIXME via snapshot';
+        var snapshot = {
+            getResourceConfig: function()
+            {
+                return {
+                    tags: [ 'FIXME' ],
+                    regex: regexRegistry.TAG_CAPTURE_PLACEHOLDER,
+                    regexCaseSensitive: true,
+                    isDefaultRegex: false,
+                    subTagRegex: regexRegistry.pattern( 'subTagPrefix' )
+                };
+            }
+        };
+        var context;
+        var normalized;
+
+        utils.init( config );
+
+        context = detection.createScanContext( uri, text, snapshot, {
+            regexSource: regexRegistry.TAG_CAPTURE_PLACEHOLDER,
+            skipExactRegex: true
+        } );
+        normalized = detection.normalizeRegexMatchWithContext( context, {
+            fsPath: uri.fsPath,
+            line: 1,
+            column: 4,
+            match: 'FIXME via snapshot'
+        } );
+
+        assert.equal( normalized.actualTag, 'FIXME' );
+        assert.equal( normalized.displayText, 'via snapshot' );
+        assert.equal( normalized.column, 4 );
+    } );
+
+    QUnit.test( "no-capture raw ripgrep normalization avoids exact regex execution", function( assert )
+    {
+        var config = matrixHelpers.createConfig( {
+            tagList: [ 'TODO' ],
+            regexSource: 'TODO: [^\\n]+',
+            subTagRegexString: regexRegistry.pattern( 'subTagPrefix' )
+        } );
+        var uri = matrixHelpers.createUri( '/tmp/no-capture-fast-path.js' );
+        var text = 'TODO: fast path';
+        var context;
+        var normalized;
+
+        utils.init( config );
+
+        context = detection.createScanContext( uri, text );
+        context.exactRegex = {
+            exec: function()
+            {
+                throw new Error( 'exact regex execution disabled for no-capture raw matches' );
+            }
+        };
+        normalized = detection.normalizeRegexMatchWithContext( context, {
+            fsPath: uri.fsPath,
+            line: 1,
+            column: 1,
+            match: text
+        } );
+
+        assert.equal( normalized.actualTag, text );
+        assert.equal( normalized.displayText, text );
+        assert.equal( normalized.column, 1 );
+    } );
+
     QUnit.test( "raw workspace regex normalization matches the editor path for multiline ripgrep payloads", function( assert )
     {
         var config = matrixHelpers.createConfig( {

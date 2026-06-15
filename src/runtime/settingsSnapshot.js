@@ -63,6 +63,8 @@ function buildSettingsSnapshot( context, identity, config, vscode )
         useColourScheme: identity.getSetting( 'highlights.useColourScheme', false ),
         foregroundColourScheme: identity.getSetting( 'highlights.foregroundColourScheme', [] ),
         backgroundColourScheme: identity.getSetting( 'highlights.backgroundColourScheme', [] ),
+        customCommentPatterns: identity.getSetting( 'languages.customPatterns', [] ),
+        customEmbeddedDocuments: identity.getSetting( 'languages.embeddedDocuments', [] ),
         scanMode: config.scanMode(),
         trackFile: identity.getSetting( 'tree.trackFile', true ),
         autoRefresh: identity.getSetting( 'tree.autoRefresh', true )

@@ -74,8 +74,11 @@ QUnit.test( "utils.getCommentPattern and getCommentPatternRegex apply alias mapp
     assert.equal( utils.getCommentPattern( "/tmp/file.jsonc" ).name, "JavaScript" );
     assert.equal( utils.getCommentPattern( "/tmp/sample.dart" ).name, "JavaScript" );
     assert.equal( utils.getCommentPattern( "/tmp/component.vue" ).name, "HTML" );
+    assert.equal( utils.getCommentPattern( "/tmp/component.jsx" ).name, "JavaScript" );
+    assert.equal( utils.getCommentPattern( "/tmp/component.tsx" ).name, "TypeScript" );
     assert.ok( utils.getCommentPatternRegex( "/tmp/sample.dart" ).regex instanceof RegExp );
     assert.ok( utils.getCommentPatternRegex( "/tmp/component.vue" ).regex instanceof RegExp );
+    assert.ok( utils.getCommentPatternRegex( "/tmp/component.tsx" ).regex instanceof RegExp );
 } );
 
 QUnit.test( "utils.resolveBlockCommentPattern applies block comment language mappings", function( assert )

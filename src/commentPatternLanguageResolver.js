@@ -1,10 +1,78 @@
+var commentPatternCatalog = require( './commentPatternCatalog.js' );
+
 function createCommentPatternLanguageResolver( vscode, utils )
 {
     var cachedMappings;
+    var cachedSignature;
+
+    validateUtils( utils );
+
+    function toMappingKeys( value )
+    {
+        var normalized = commentPatternCatalog.normalizeToken( value );
+        var compact = commentPatternCatalog.compactIdentifier( value );
+        var keys = [];
+
+        if( normalized.length > 0 )
+        {
+            keys.push( normalized );
+        }
+
+        if( compact.length > 0 && compact !== normalized )
+        {
+            keys.push( compact );
+        }
+
+        return keys;
+    }
+
+    function addMapping( mappings, token, patternFileName )
+    {
+        toMappingKeys( token ).forEach( function( key )
+        {
+            if( mappings.has( key ) !== true )
+            {
+                mappings.set( key, patternFileName );
+            }
+        } );
+    }
+
+    function getMapping( mappings, token )
+    {
+        var keys = toMappingKeys( token );
+        var index;
+
+        for( index = 0; index < keys.length; index++ )
+        {
+            if( mappings.has( keys[ index ] ) )
+            {
+                return mappings.get( keys[ index ] );
+            }
+        }
+
+        return undefined;
+    }
+
+    function hasNormalizedMapping( mappings, token )
+    {
+        var normalized = commentPatternCatalog.normalizeToken( token );
+
+        return normalized.length > 0 && mappings.has( normalized );
+    }
 
     function toCandidateList( contribution )
     {
         return []
+            .concat( Array.isArray( contribution.extensions ) ? contribution.extensions : [] )
+            .concat( Array.isArray( contribution.filenames ) ? contribution.filenames : [] )
+            .concat( typeof ( contribution.id ) === 'string' ? [ contribution.id ] : [] )
+            .concat( Array.isArray( contribution.aliases ) ? contribution.aliases : [] );
+    }
+
+    function toLanguageTokens( contribution )
+    {
+        return [ contribution.id ]
+            .concat( Array.isArray( contribution.aliases ) ? contribution.aliases : [] )
             .concat( Array.isArray( contribution.extensions ) ? contribution.extensions : [] )
             .concat( Array.isArray( contribution.filenames ) ? contribution.filenames : [] );
     }
@@ -25,7 +93,7 @@ function createCommentPatternLanguageResolver( vscode, utils )
 
             contributions.forEach( function( contribution )
             {
-                if( typeof ( contribution.id ) !== 'string' || contribution.id.length === 0 || mappings.has( contribution.id ) )
+                if( typeof ( contribution.id ) !== 'string' || contribution.id.length === 0 || hasNormalizedMapping( mappings, contribution.id ) )
                 {
                     return;
                 }
@@ -37,7 +105,13 @@ function createCommentPatternLanguageResolver( vscode, utils )
 
                 if( patternFileName )
                 {
-                    mappings.set( contribution.id, patternFileName );
+                    toLanguageTokens( contribution ).forEach( function( token )
+                    {
+                        if( typeof ( token ) === 'string' && token.length > 0 )
+                        {
+                            addMapping( mappings, token, patternFileName );
+                        }
+                    } );
                 }
             } );
         } );
@@ -47,13 +121,34 @@ function createCommentPatternLanguageResolver( vscode, utils )
 
     return function resolveCommentPatternFileNameForLanguage( languageId )
     {
-        if( cachedMappings === undefined )
+        var signature = utils.getLanguageConfigurationSignature();
+
+        if( cachedMappings === undefined || cachedSignature !== signature )
         {
             cachedMappings = buildMappings();
+            cachedSignature = signature;
         }
 
-        return cachedMappings.get( languageId );
+        return getMapping( cachedMappings, languageId ) || utils.resolveCommentPatternFileName( languageId );
     };
+}
+
+function validateUtils( utils )
+{
+    if( !utils || typeof ( utils.getCommentPattern ) !== 'function' )
+    {
+        throw new Error( 'commentPatternLanguageResolver: utils.getCommentPattern is required.' );
+    }
+
+    if( typeof ( utils.resolveCommentPatternFileName ) !== 'function' )
+    {
+        throw new Error( 'commentPatternLanguageResolver: utils.resolveCommentPatternFileName is required.' );
+    }
+
+    if( typeof ( utils.getLanguageConfigurationSignature ) !== 'function' )
+    {
+        throw new Error( 'commentPatternLanguageResolver: utils.getLanguageConfigurationSignature is required.' );
+    }
 }
 
 module.exports.createCommentPatternLanguageResolver = createCommentPatternLanguageResolver;

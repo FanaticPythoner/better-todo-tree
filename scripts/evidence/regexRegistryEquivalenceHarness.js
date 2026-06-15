@@ -558,6 +558,12 @@ function createSourceModuleLoader( sourceReader, suffix )
         localModule.paths = Module._nodeModulePaths( path.dirname( path.join( REPO_ROOT, normalized ) ) );
         cache.set( normalized, localModule );
 
+        if( path.posix.extname( normalized ) === '.json' )
+        {
+            localModule.exports = JSON.parse( source );
+            return localModule.exports;
+        }
+
         function localRequire( request )
         {
             if( request.indexOf( './' ) === 0 || request.indexOf( '../' ) === 0 )
