@@ -395,6 +395,16 @@ function customHighlight()
     return identity.getSetting( 'highlights.customHighlight', {} );
 }
 
+function customCommentPatterns()
+{
+    return identity.getSetting( 'languages.customPatterns', [] );
+}
+
+function customEmbeddedDocuments()
+{
+    return identity.getSetting( 'languages.embeddedDocuments', [] );
+}
+
 function subTagClickUrl()
 {
     return identity.getSetting( 'tree.subTagClickUrl', "" );
@@ -448,6 +458,8 @@ module.exports.foregroundColourScheme = foregroundColourScheme;
 module.exports.backgroundColourScheme = backgroundColourScheme;
 module.exports.defaultHighlight = defaultHighlight;
 module.exports.customHighlight = customHighlight;
+module.exports.customCommentPatterns = customCommentPatterns;
+module.exports.customEmbeddedDocuments = customEmbeddedDocuments;
 module.exports.subTagClickUrl = subTagClickUrl;
 module.exports.shouldShowIconsInsteadOfTagsInStatusBar = shouldShowIconsInsteadOfTagsInStatusBar;
 module.exports.shouldShowActivityBarBadge = shouldShowActivityBarBadge;

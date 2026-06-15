@@ -2095,7 +2095,8 @@ function activate( context )
         }
 
         var scanContext = detection.createScanContext( document.uri, document.getText(), currentSettingsSnapshot, {
-            patternFileName: patternFileName
+            patternFileName: patternFileName,
+            languageId: document.languageId
         } );
         var results = detection.scanDocumentWithContext( scanContext );
 
@@ -4241,17 +4242,26 @@ function activate( context )
 
         context.subscriptions.push( vscode.workspace.onDidChangeConfiguration( function( e )
         {
+            var languageConfigurationChanged =
+                identity.affectsNamespace( e, identity.CURRENT_NAMESPACE + '.languages' ) ||
+                identity.affectsNamespace( e, identity.LEGACY_NAMESPACE + '.languages' );
+
             if( identity.affectsNamespace( e, identity.CURRENT_NAMESPACE ) ||
                 identity.affectsNamespace( e, identity.LEGACY_NAMESPACE ) ||
                 e.affectsConfiguration( 'files.exclude' ) ||
                 e.affectsConfiguration( 'explorer.compactFolders' ) )
             {
+                if( languageConfigurationChanged === true )
+                {
+                    utils.init( config );
+                }
+
                 rebuildSettingsSnapshot();
                 documentScanCache.clear();
                 utils.clearSubmoduleExcludeGlobCache();
                 highlights.resetCaches();
 
-                if( identity.affectsSetting( e, 'regex.regex' ) )
+                if( identity.affectsSetting( e, 'regex.regex' ) && languageConfigurationChanged !== true )
                 {
                     return;
                 }
@@ -4299,6 +4309,7 @@ function activate( context )
                     identity.affectsNamespace( e, identity.LEGACY_NAMESPACE + '.filtering' ) ||
                     identity.affectsNamespace( e, identity.CURRENT_NAMESPACE + '.regex' ) ||
                     identity.affectsNamespace( e, identity.LEGACY_NAMESPACE + '.regex' ) ||
+                    languageConfigurationChanged === true ||
                     identity.affectsNamespace( e, identity.CURRENT_NAMESPACE + '.ripgrep' ) ||
                     identity.affectsNamespace( e, identity.LEGACY_NAMESPACE + '.ripgrep' ) ||
                     identity.affectsNamespace( e, identity.CURRENT_NAMESPACE + '.tree' ) ||

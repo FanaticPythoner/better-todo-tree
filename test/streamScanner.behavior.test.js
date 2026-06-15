@@ -373,6 +373,80 @@ QUnit.module( "streamScanner", function()
         } );
     } );
 
+    QUnit.test( "detector-backed streaming preserves embedded Vue regions until the closing tag arrives", function( assert )
+    {
+        var done = assert.async();
+        var uri = createUri( '/tmp/component.vue' );
+        var content = [
+            '<script setup>',
+            '/*',
+            'TODO streamed embedded block',
+            '*/',
+            '</script>',
+            '<template><!-- FIXME base markup --></template>'
+        ].join( '\n' ) + '\n';
+        var fsImpl = createMockFs( content, undefined, 11 );
+
+        utils.init( createDetectionConfig() );
+
+        streamScanner.scanWorkspaceFileWithText( uri.fsPath, function( text )
+        {
+            return detection.scanTextWithStreamingContext( detection.createScanContext( uri, text ) );
+        }, { fs: fsImpl, maxInMemoryBytes: 1, chunkBytes: 18, overlapBytes: 8 } ).then( function( results )
+        {
+            assert.deepEqual(
+                results.map( function( result ) { return result.displayText; } ),
+                [ 'streamed embedded block', 'base markup' ]
+            );
+            assert.deepEqual(
+                results.map( function( result ) { return result.line; } ),
+                [ 3, 6 ]
+            );
+            done();
+        } ).catch( function( error )
+        {
+            assert.notOk( error, error && error.stack ? error.stack : String( error ) );
+            done();
+        } );
+    } );
+
+    QUnit.test( "detector-backed streaming preserves Astro frontmatter until the closing fence arrives", function( assert )
+    {
+        var done = assert.async();
+        var uri = createUri( '/tmp/component.astro' );
+        var content = [
+            '---',
+            '/*',
+            'TODO streamed frontmatter block',
+            '*/',
+            '---',
+            '<!-- FIXME base markup -->'
+        ].join( '\n' ) + '\n';
+        var fsImpl = createMockFs( content, undefined, 11 );
+
+        utils.init( createDetectionConfig() );
+
+        streamScanner.scanWorkspaceFileWithText( uri.fsPath, function( text )
+        {
+            return detection.scanTextWithStreamingContext( detection.createScanContext( uri, text ) );
+        }, { fs: fsImpl, maxInMemoryBytes: 1, chunkBytes: 18, overlapBytes: 8 } ).then( function( results )
+        {
+            assert.deepEqual(
+                results.map( function( result ) { return result.displayText; } ),
+                [ 'streamed frontmatter block', 'base markup' ]
+            );
+            assert.deepEqual(
+                results.map( function( result ) { return result.line; } ),
+                [ 3, 6 ]
+            );
+            done();
+        } ).catch( function( error )
+        {
+            assert.notOk( error, error && error.stack ? error.stack : String( error ) );
+            done();
+        } );
+    } );
+
     QUnit.test( "scanFn errors abort streaming immediately", function( assert )
     {
         var done = assert.async();

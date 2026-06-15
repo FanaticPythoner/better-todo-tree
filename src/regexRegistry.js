@@ -960,6 +960,7 @@ var DEFAULT_DEFINITION = Object.freeze( {
         },
         regexSyntaxCharacter: REGEX_SYNTAX_CHARACTER_SOURCE,
         regexSyntaxCharacterWithoutBackslash: '[|{}()[\\]^$+*?.-]',
+        globMagicCharacter: '[*?\\[\\]{}()!+@]',
         hexColourNoise: '[^\\da-fA-F]',
         iconNameNoise: '[^0-9a-zA-Z]',
         octiconNameNoise: '[^a-z0-9]',

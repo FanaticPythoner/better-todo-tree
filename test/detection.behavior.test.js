@@ -413,6 +413,215 @@ QUnit.module( "behavioral detection", function( hooks )
         assert.equal( markdownResults[ 0 ].displayText, 'notebook markdown task' );
     } );
 
+    QUnit.test( "issue #19 detects JavaScript comments inside Vue script blocks", function( assert )
+    {
+        var results = detection.scanText( createUri( "/tmp/packages/frontend/src/components/NavBar.vue" ), [
+            "<script setup>",
+            "// TODO This is a todo",
+            "/*",
+            "TODO This is another todo",
+            "*/",
+            "</script>",
+            "<template>",
+            "  hello",
+            "</template>"
+        ].join( "\n" ) );
+
+        assert.deepEqual(
+            results.map( function( result )
+            {
+                return {
+                    line: result.line,
+                    column: result.column,
+                    tag: result.actualTag,
+                    text: result.displayText
+                };
+            } ),
+            [
+                { line: 2, column: 4, tag: "TODO", text: "This is a todo" },
+                { line: 4, column: 1, tag: "TODO", text: "This is another todo" }
+            ]
+        );
+    } );
+
+    QUnit.test( "issue #19 supports Vue documents matched by language id", function( assert )
+    {
+        var results = detection.scanDocument( {
+            uri: createUri( "/tmp/untitled" ),
+            languageId: "vue",
+            commentPatternFileName: ".html",
+            getText: function()
+            {
+                return [
+                    "<script setup>",
+                    "// TODO language id",
+                    "</script>"
+                ].join( "\n" );
+            }
+        } );
+
+        assert.equal( results.length, 1 );
+        assert.equal( results[ 0 ].actualTag, "TODO" );
+        assert.equal( results[ 0 ].displayText, "language id" );
+    } );
+
+    QUnit.test( "issue #19 resolves Vue embedded language attributes through comment-pattern metadata", function( assert )
+    {
+        var results = detection.scanText( createUri( "/tmp/component.vue" ), [
+            "<script lang=\"ts\">",
+            "/* TODO typed */",
+            "</script>",
+            "<style lang=\"scss\">",
+            "// FIXME style line",
+            "</style>"
+        ].join( "\n" ) );
+
+        assert.deepEqual(
+            results.map( function( result ) { return result.displayText; } ),
+            [ "typed", "style line" ]
+        );
+    } );
+
+    QUnit.test( "issue #19 keeps JSON script blocks commentless", function( assert )
+    {
+        var results = detection.scanText( createUri( "/tmp/component.vue" ), [
+            "<script type=\"application/json\">",
+            "{ \"message\": \"// TODO not a comment\" }",
+            "</script>"
+        ].join( "\n" ) );
+
+        assert.equal( results.length, 0 );
+    } );
+
+    QUnit.test( "issue #19 masks unsupported script blocks without scanning them", function( assert )
+    {
+        var results = detection.scanText( createUri( "/tmp/component.vue" ), [
+            "<script lang=\"fixture-unknown\">",
+            "<!-- TODO not markup -->",
+            "// FIXME not script",
+            "</script>",
+            "<template>",
+            "<!-- TODO markup -->",
+            "</template>"
+        ].join( "\n" ) );
+
+        assert.equal( results.length, 1 );
+        assert.equal( results[ 0 ].actualTag, "TODO" );
+        assert.equal( results[ 0 ].displayText, "markup" );
+    } );
+
+    QUnit.test( "issue #19 masks embedded ranges before scanning base markup comments", function( assert )
+    {
+        var results = detection.scanText( createUri( "/tmp/component.vue" ), [
+            "<script>",
+            "const marker = '<!-- TODO not markup -->';",
+            "</script>",
+            "<template>",
+            "<!-- TODO markup -->",
+            "</template>"
+        ].join( "\n" ) );
+
+        assert.equal( results.length, 1 );
+        assert.equal( results[ 0 ].actualTag, "TODO" );
+        assert.equal( results[ 0 ].displayText, "markup" );
+    } );
+
+    QUnit.test( "issue #19 raw text blocks ignore nested opener text", function( assert )
+    {
+        var results = detection.scanText( createUri( "/tmp/component.vue" ), [
+            "<script>",
+            "const opener = '<script>';",
+            "// TODO before close",
+            "</script>"
+        ].join( "\n" ) );
+
+        assert.equal( results.length, 1 );
+        assert.equal( results[ 0 ].actualTag, "TODO" );
+        assert.equal( results[ 0 ].displayText, "before close" );
+    } );
+
+    QUnit.test( "issue #19 self-closing embedded tags do not mask following markup", function( assert )
+    {
+        var results = detection.scanText( createUri( "/tmp/component.vue" ), [
+            "<script src=\"/app.js\" />",
+            "<template>",
+            "<!-- TODO markup -->",
+            "</template>"
+        ].join( "\n" ) );
+
+        assert.equal( results.length, 1 );
+        assert.equal( results[ 0 ].actualTag, "TODO" );
+        assert.equal( results[ 0 ].displayText, "markup" );
+    } );
+
+    QUnit.test( "Svelte files scan script, style, and markup comments without configuration", function( assert )
+    {
+        var results = detection.scanText( createUri( "/tmp/component.svelte" ), [
+            "<script module>",
+            "// TODO module",
+            "</script>",
+            "<script lang=\"ts\">",
+            "// FIXME instance",
+            "</script>",
+            "<style lang=\"scss\">",
+            "// TODO style",
+            "</style>",
+            "<!-- TODO markup -->"
+        ].join( "\n" ) );
+
+        assert.deepEqual(
+            results.map( function( result )
+            {
+                return {
+                    line: result.line,
+                    tag: result.actualTag,
+                    text: result.displayText
+                };
+            } ),
+            [
+                { line: 2, tag: "TODO", text: "module" },
+                { line: 5, tag: "FIXME", text: "instance" },
+                { line: 8, tag: "TODO", text: "style" },
+                { line: 10, tag: "TODO", text: "markup" }
+            ]
+        );
+    } );
+
+    QUnit.test( "Astro files scan frontmatter, template comments, scripts, and styles without configuration", function( assert )
+    {
+        var results = detection.scanText( createUri( "/tmp/component.astro" ), [
+            "---",
+            "// TODO frontmatter",
+            "---",
+            "<script>",
+            "// FIXME browser",
+            "</script>",
+            "<style>",
+            "/* TODO styled */",
+            "</style>",
+            "{/* TODO expression */}",
+            "<!-- TODO markup -->"
+        ].join( "\n" ) );
+
+        assert.deepEqual(
+            results.map( function( result )
+            {
+                return {
+                    line: result.line,
+                    tag: result.actualTag,
+                    text: result.displayText
+                };
+            } ),
+            [
+                { line: 2, tag: "TODO", text: "frontmatter" },
+                { line: 5, tag: "FIXME", text: "browser" },
+                { line: 8, tag: "TODO", text: "styled" },
+                { line: 10, tag: "TODO", text: "expression" },
+                { line: 11, tag: "TODO", text: "markup" }
+            ]
+        );
+    } );
+
     QUnit.test( "customHighlight entries do not register new tags until general.tags includes them", function( assert )
     {
         var uri = createUri( '/tmp/issue-898.js' );

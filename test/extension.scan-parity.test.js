@@ -979,6 +979,14 @@ function createExtensionHarness( options )
         init: function() {},
         isCodicon: function() { return false; },
         getCommentPattern: function( candidate ) { return actualUtils.getCommentPattern( candidate ); },
+        resolveCommentPatternFileName: function( languageId )
+        {
+            return actualUtils.resolveCommentPatternFileName( languageId );
+        },
+        getLanguageConfigurationSignature: function()
+        {
+            return actualUtils.getLanguageConfigurationSignature();
+        },
         getRegexSource: function()
         {
             return options.regexSource || actualRegexRegistry.TAG_CAPTURE_PLACEHOLDER;
@@ -2480,6 +2488,149 @@ QUnit.test( "issue #905 workspace mode keeps Go files in scope without adding fi
         assert.deepEqual( harness.ripgrepSearchCalls[ 0 ].globs, [ '!**/node_modules/*/**' ] );
         assert.ok( harness.ripgrepSearchCalls[ 0 ].globs.every( function( glob ) { return glob.indexOf( '.go' ) === -1; } ) );
         assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, fixture );
+    } );
+} );
+
+QUnit.test( "issue #19 workspace includeGlobs scan detects Vue embedded TODOs", function( assert )
+{
+    var vuePath = '/workspace/packages/frontend/src/components/NavBar.vue';
+    var vueText = [
+        '<script setup>',
+        '// TODO This is a todo',
+        '/*',
+        'TODO This is another todo',
+        '*/',
+        '</script>',
+        '<template>',
+        '  hello',
+        '</template>'
+    ].join( '\n' );
+    var harness;
+
+    actualUtils.init( matrixHelpers.createConfig() );
+
+    harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        filteringOverrides: {
+            includeGlobs: [ '**/*.*' ]
+        },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [ { fsPath: vuePath } ],
+        fileContents: {
+            '/workspace/packages/frontend/src/components/NavBar.vue': vueText
+        },
+        scanTextWithStreamingImpl: function( context )
+        {
+            return actualDetection.scanTextWithStreamingContext(
+                actualDetection.createScanContext( context.uri, context.text )
+            );
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        var results = harness.provider.replaceCalls[ 0 ].results;
+
+        assert.equal( harness.ripgrepSearchCalls.length, 1 );
+        assert.deepEqual( harness.ripgrepSearchCalls[ 0 ].globs, [ '**/*.*', '!**/node_modules/*/**' ] );
+        assert.equal( harness.readFileCalls.length, 1 );
+        assert.equal( harness.readFileCalls[ 0 ], vuePath );
+        assert.deepEqual(
+            results.map( function( result )
+            {
+                return {
+                    line: result.line,
+                    column: result.column,
+                    tag: result.actualTag,
+                    text: result.displayText
+                };
+            } ),
+            [
+                { line: 2, column: 4, tag: 'TODO', text: 'This is a todo' },
+                { line: 4, column: 1, tag: 'TODO', text: 'This is another todo' }
+            ]
+        );
+    } );
+} );
+
+QUnit.test( "workspace includeGlobs scan detects Svelte and Astro embedded TODOs", function( assert )
+{
+    var sveltePath = '/workspace/src/components/Panel.svelte';
+    var astroPath = '/workspace/src/components/Hero.astro';
+    var svelteText = [
+        '<script lang="ts">',
+        '// TODO svelte script',
+        '</script>',
+        '<style lang="scss">',
+        '// FIXME svelte style',
+        '</style>',
+        '<!-- TODO svelte markup -->'
+    ].join( '\n' );
+    var astroText = [
+        '---',
+        '// TODO astro frontmatter',
+        '---',
+        '<script>',
+        '// FIXME astro script',
+        '</script>',
+        '{/* TODO astro expression */}',
+        '<!-- TODO astro markup -->'
+    ].join( '\n' );
+    var harness;
+
+    actualUtils.init( matrixHelpers.createConfig() );
+
+    harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        filteringOverrides: {
+            includeGlobs: [ '**/*.*' ]
+        },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [ { fsPath: sveltePath }, { fsPath: astroPath } ],
+        fileContents: {
+            '/workspace/src/components/Panel.svelte': svelteText,
+            '/workspace/src/components/Hero.astro': astroText
+        },
+        scanTextWithStreamingImpl: function( context )
+        {
+            return actualDetection.scanTextWithStreamingContext(
+                actualDetection.createScanContext( context.uri, context.text )
+            );
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        var texts = [ sveltePath, astroPath ].reduce( function( collected, fsPath )
+        {
+            var entry = harness.provider.latestResultsByUri.get( fsPath );
+            return collected.concat( entry ? entry.results : [] );
+        }, [] ).map( function( result )
+        {
+            return result.displayText;
+        } ).sort();
+
+        assert.equal( harness.ripgrepSearchCalls.length, 1 );
+        assert.deepEqual( harness.ripgrepSearchCalls[ 0 ].globs, [ '**/*.*', '!**/node_modules/*/**' ] );
+        assert.deepEqual( harness.readFileCalls.slice().sort(), [ astroPath, sveltePath ] );
+        assert.deepEqual(
+            texts,
+            [
+                'astro frontmatter',
+                'astro expression',
+                'astro markup',
+                'astro script',
+                'svelte markup',
+                'svelte script',
+                'svelte style'
+            ].sort()
+        );
     } );
 } );
 

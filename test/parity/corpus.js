@@ -365,8 +365,49 @@ function buildUnvendoredCorpus()
         } );
     } );
 
+    fixtures.push( {
+        id: 'unvendored::framework-sfc::fixture.svelte',
+        fsPath: '/tmp/fixture.svelte',
+        text: [
+            '<script>',
+            '// TODO fixture.svelte-script-todo',
+            '</script>',
+            '<style>',
+            '/* FIXME fixture.svelte-style-fixme */',
+            '</style>',
+            '<!-- TODO fixture.svelte-markup-todo -->'
+        ].join( '\n' ),
+        tier: 'unvendored',
+        commentFamily: 'framework-sfc'
+    } );
+
+    fixtures.push( {
+        id: 'unvendored::framework-sfc::fixture.astro',
+        fsPath: '/tmp/fixture.astro',
+        text: [
+            '---',
+            '// TODO fixture.astro-frontmatter-todo',
+            '---',
+            '{/* FIXME fixture.astro-expression-fixme */}',
+            '<!-- TODO fixture.astro-markup-todo -->'
+        ].join( '\n' ),
+        tier: 'unvendored',
+        commentFamily: 'framework-sfc'
+    } );
+
     UNVENDORED_FRAMEWORK_FAMILY.forEach( function( fileName )
     {
+        if( fileName === 'fixture.svelte' || fileName === 'fixture.astro' )
+        {
+            return;
+        }
+
+        if( fileName === 'fixture.graphql' || fileName === 'fixture.gql' )
+        {
+            fixtures.push( createUnvendoredFixture( fileName, { prefix: '#', family: 'framework-hash' } ) );
+            return;
+        }
+
         fixtures.push( createUnvendoredFixture( fileName, { prefix: '//', family: 'framework-slash' } ) );
     } );
 

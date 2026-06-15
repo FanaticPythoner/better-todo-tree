@@ -3,6 +3,7 @@ var path = require( 'path' );
 var regexEngine = require( './regexEngine.js' );
 var utils = require( './utils.js' );
 var regexRegistry = require( './regexRegistry.js' );
+var embeddedDocuments = require( './embeddedDocuments.js' );
 
 var TAG_PLACEHOLDER = regexRegistry.TAG_PLACEHOLDER;
 var TAG_CAPTURE_PLACEHOLDER = regexRegistry.TAG_CAPTURE_PLACEHOLDER;
@@ -452,6 +453,22 @@ function getTagCaptureGroupIndex( regexSource )
     return captureGroupIndex;
 }
 
+function regexHasCapturingGroups( regexSource )
+{
+    return countCapturingGroups( regexSource, regexSource.length ) > 0;
+}
+
+function requiresExactRipgrepMatch( context )
+{
+    if( !context.exactRegex )
+    {
+        return false;
+    }
+
+    return context.resourceConfig.regex.indexOf( TAG_CAPTURE_PLACEHOLDER ) > -1 ||
+        regexHasCapturingGroups( context.resourceConfig.regex ) === true;
+}
+
 function findTokenStart( text, startPattern, cursor )
 {
     if( typeof ( startPattern ) === 'string' )
@@ -796,7 +813,8 @@ function createScanContext( uri, text, snapshot, options )
         tagRegex: tagRegex,
         subTagRegex: new RegExp( resourceConfig.subTagRegex, flags ),
         tagMatcher: createAnchoredTagMatcher( resourceConfig.tags, resourceConfig.regexCaseSensitive === true ),
-        patternFileName: options.patternFileName
+        patternFileName: options.patternFileName,
+        languageId: options.languageId
     };
 }
 
@@ -1137,38 +1155,145 @@ function collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resour
     return results;
 }
 
-function scanCommentPatternText( uri, text, resourceConfig, patternFileName )
+function createTextWithMaskedRanges( text, ranges )
 {
+    if( !Array.isArray( ranges ) || ranges.length === 0 )
+    {
+        return text;
+    }
+
+    var chars = text.split( '' );
+
+    ranges.forEach( function( range )
+    {
+        var start = Math.max( 0, range.startOffset || 0 );
+        var end = Math.min( text.length, range.endOffset || 0 );
+        var index;
+
+        for( index = start; index < end; index++ )
+        {
+            if( chars[ index ] !== '\n' && chars[ index ] !== '\r' )
+            {
+                chars[ index ] = ' ';
+            }
+        }
+    } );
+
+    return chars.join( '' );
+}
+
+function createShiftedNestedResult( result, charOffset, lineOffsets )
+{
+    var shifted = Object.assign( {}, result );
+
+    [ 'commentStartOffset', 'commentEndOffset', 'matchStartOffset', 'matchEndOffset', 'tagStartOffset', 'tagEndOffset', 'subTagStartOffset', 'subTagEndOffset' ].forEach( function( field )
+    {
+        if( typeof shifted[ field ] === 'number' )
+        {
+            shifted[ field ] += charOffset;
+        }
+    } );
+
+    if( Array.isArray( shifted.captureGroupOffsets ) )
+    {
+        shifted.captureGroupOffsets = shifted.captureGroupOffsets.map( function( range )
+        {
+            if( !range )
+            {
+                return undefined;
+            }
+
+            return [ range[ 0 ] + charOffset, range[ 1 ] + charOffset ];
+        } );
+    }
+
+    var startPosition = offsetToPosition( lineOffsets, shifted.tagStartOffset );
+    var endPosition = offsetToPosition( lineOffsets, shifted.matchEndOffset );
+    shifted.line = startPosition.line + 1;
+    shifted.column = startPosition.character + 1;
+    shifted.endLine = endPosition.line + 1;
+    shifted.endColumn = endPosition.character + 1;
+
+    return shifted;
+}
+
+function scanEmbeddedDocumentRegions( uri, text, resourceConfig, lineOffsets, embeddedDocument )
+{
+    if( !embeddedDocument || !Array.isArray( embeddedDocument.regions ) )
+    {
+        return [];
+    }
+
+    var results = [];
+
+    embeddedDocument.regions.forEach( function( region )
+    {
+        if( typeof ( region.patternFileName ) !== 'string' )
+        {
+            return;
+        }
+
+        var regionResults = scanCommentPatternText( uri, region.text, resourceConfig, region.patternFileName, {
+            skipEmbeddedDocuments: true
+        } );
+
+        results = results.concat( regionResults.map( function( result )
+        {
+            return createShiftedNestedResult( result, region.startOffset, lineOffsets );
+        } ) );
+    } );
+
+    return results;
+}
+
+function scanCommentPatternText( uri, text, resourceConfig, patternFileName, options )
+{
+    options = options || {};
+
     var fsPath = getUriFsPath( uri );
-    var patternLookupName = patternFileName || fsPath;
+    var embeddedDocument = options.skipEmbeddedDocuments === true ? undefined : embeddedDocuments.resolveEmbeddedDocument( fsPath, text, {
+        languageId: options.languageId,
+        patternFileName: patternFileName
+    } );
+    var patternLookupName = patternFileName || ( embeddedDocument && embeddedDocument.basePatternFileName ) || fsPath;
     var pattern = utils.getCommentPattern( patternLookupName );
     var lineOffsets = createLineOffsets( text );
     var context = createScanContext( uri, text, undefined, {
         patternFileName: patternFileName,
-        regexSource: resourceConfig.regex
+        regexSource: resourceConfig.regex,
+        languageId: options.languageId
     } );
+    var scanText = embeddedDocument ? createTextWithMaskedRanges( text, embeddedDocument.ranges ) : text;
+    var results;
+
     context.resourceConfig = resourceConfig;
     context.lineOffsets = lineOffsets;
+    context.text = scanText;
 
     if( pattern === undefined )
     {
-        return runRegexScan( context );
+        results = runRegexScan( context );
     }
-
-    if( pattern.commentsOnly === true )
+    else if( pattern.commentsOnly === true )
     {
         if( path.extname( patternLookupName ).toLowerCase() === '.md' || pattern.name === 'Markdown' )
         {
-            return scanMarkdownText( uri, text, pattern, lineOffsets, resourceConfig );
+            results = scanMarkdownText( uri, scanText, pattern, lineOffsets, resourceConfig );
         }
-
-        return [];
+        else
+        {
+            results = [];
+        }
+    }
+    else
+    {
+        results = collectCommentPatternMatches( uri, scanText, pattern, lineOffsets, resourceConfig, {
+            context: context,
+            patternFileName: patternFileName
+        } );
     }
 
-    return collectCommentPatternMatches( uri, text, pattern, lineOffsets, resourceConfig, {
-        context: context,
-        patternFileName: patternFileName
-    } );
+    return sortResultsByLocation( results.concat( scanEmbeddedDocumentRegions( uri, text, resourceConfig, lineOffsets, embeddedDocument ) ) );
 }
 
 function normalizeRegexExecMatchWithContext( context, match )
@@ -1302,17 +1427,18 @@ function normalizeRegexExecMatchWithContext( context, match )
     return result;
 }
 
-function normalizeRipgrepMatch( uri, text, match )
+function normalizeRipgrepMatchWithContext( context, match )
 {
     if( !match || !match.match )
     {
         return undefined;
     }
 
-    var context = createScanContext( uri, text );
     var rawStartOffset = resolveRipgrepMatchStartOffset( context, match );
 
-    var exactMatch = findExactRegexExecMatch( context, rawStartOffset );
+    var exactMatch = requiresExactRipgrepMatch( context ) === true ?
+        findExactRegexExecMatch( context, rawStartOffset ) :
+        undefined;
 
     if( exactMatch )
     {
@@ -1329,6 +1455,11 @@ function normalizeRipgrepMatch( uri, text, match )
         0: logicalText,
         index: rawStartOffset
     } );
+}
+
+function normalizeRipgrepMatch( uri, text, match )
+{
+    return normalizeRipgrepMatchWithContext( createScanContext( uri, text ), match );
 }
 
 function shiftNormalizedResult( result, charOffset, lineOffset )
@@ -1429,7 +1560,8 @@ function scanText( uri, text, options )
 function scanDocument( document )
 {
     return scanDocumentWithContext( createScanContext( document.uri, document.getText(), undefined, {
-        patternFileName: resolveDocumentPatternFileName( document )
+        patternFileName: resolveDocumentPatternFileName( document ),
+        languageId: document.languageId
     } ) );
 }
 
@@ -1606,6 +1738,20 @@ function resolveStreamingRetainOffset( context, results )
         }
     }
 
+    var openEmbeddedRegionOffset = embeddedDocuments.findTrailingOpenRegionStart(
+        getUriFsPath( context.uri ),
+        context.text || "",
+        { languageId: context.languageId, patternFileName: context.patternFileName }
+    );
+
+    if( typeof openEmbeddedRegionOffset === 'number' )
+    {
+        if( retainOffset === undefined || openEmbeddedRegionOffset < retainOffset )
+        {
+            retainOffset = openEmbeddedRegionOffset;
+        }
+    }
+
     ( results || [] ).forEach( function( result )
     {
         var resultStart = getStreamingResultStartOffset( result );
@@ -1632,7 +1778,9 @@ function scanTextWithContext( context )
 {
     if( context.resourceConfig.isDefaultRegex === true )
     {
-        return scanCommentPatternText( context.uri, context.text, context.resourceConfig, context.patternFileName );
+        return scanCommentPatternText( context.uri, context.text, context.resourceConfig, context.patternFileName, {
+            languageId: context.languageId
+        } );
     }
 
     return runRegexScan( context );
@@ -1657,7 +1805,7 @@ function normalizeRegexMatchWithContext( context, match )
 {
     if( match && Object.prototype.hasOwnProperty.call( match, 'fsPath' ) )
     {
-        return normalizeRipgrepMatch( context.uri, context.text, match );
+        return normalizeRipgrepMatchWithContext( context, match );
     }
 
     return normalizeRegexExecMatchWithContext( context, match );

@@ -8,6 +8,8 @@ var commentPatterns = require( 'comment-patterns' );
 var colourNames = require( './colourNames.js' );
 var themeColourNames = require( './themeColourNames.js' );
 var regexRegistry = require( './regexRegistry.js' );
+var commentPatternAliases = require( './commentPatternAliases.json' );
+var customLanguageConfiguration = require( './customLanguageConfiguration.js' );
 
 var config;
 var tagRegexSourceCache = new Map();
@@ -17,11 +19,7 @@ var regExpIndicesSupported;
 var DEFAULT_REGEX_SOURCE = regexRegistry.DEFAULT_REGEX_SOURCE;
 var TAG_PLACEHOLDER = regexRegistry.TAG_PLACEHOLDER;
 var TAG_CAPTURE_PLACEHOLDER = regexRegistry.TAG_CAPTURE_PLACEHOLDER;
-var COMMENT_PATTERN_FILE_ALIASES = Object.freeze( {
-    ".jsonc": ".js",
-    ".vue": ".html",
-    ".dart": ".js"
-} );
+var COMMENT_PATTERN_FILE_ALIASES = Object.freeze( commentPatternAliases );
 
 var envRegex = regexRegistry.createRegExp( 'environmentVariable', 'g' );
 var rgbRegex = regexRegistry.createRegExp( 'rgbColour', 'gi' );
@@ -39,6 +37,7 @@ function init( configuration )
     config = configuration;
     tagRegexSourceCache = new Map();
     submoduleExcludeGlobCache = new Map();
+    customLanguageConfiguration.init( configuration );
 }
 
 function supportsRegExpIndices()
@@ -123,6 +122,13 @@ function normaliseCommentPatternFileName( fileName )
 
 function getCommentPattern( fileName )
 {
+    var customPattern = customLanguageConfiguration.getCommentPattern( fileName );
+
+    if( customPattern )
+    {
+        return customPattern;
+    }
+
     var normalisedFileName = normaliseCommentPatternFileName( fileName );
 
     try
@@ -142,6 +148,13 @@ function getCommentPattern( fileName )
 
 function getCommentPatternRegex( fileName )
 {
+    var customPatternRegex = customLanguageConfiguration.getCommentPatternRegex( fileName );
+
+    if( customPatternRegex )
+    {
+        return customPatternRegex;
+    }
+
     var normalisedFileName = normaliseCommentPatternFileName( fileName );
 
     try
@@ -181,6 +194,21 @@ function resolveBlockCommentPattern( fileName )
         fileName: patternFileName,
         pattern: pattern
     };
+}
+
+function createCommentPatternCatalog()
+{
+    return customLanguageConfiguration.createCommentPatternCatalog();
+}
+
+function resolveCommentPatternFileName( value )
+{
+    return customLanguageConfiguration.resolveCommentPatternFileName( value );
+}
+
+function getLanguageConfigurationSignature()
+{
+    return customLanguageConfiguration.getSignature();
 }
 
 function removeBlockComments( text, fileName )
@@ -770,6 +798,9 @@ module.exports.removeLineComments = removeLineComments;
 module.exports.getCommentPattern = getCommentPattern;
 module.exports.getCommentPatternRegex = getCommentPatternRegex;
 module.exports.resolveBlockCommentPattern = resolveBlockCommentPattern;
+module.exports.createCommentPatternCatalog = createCommentPatternCatalog;
+module.exports.resolveCommentPatternFileName = resolveCommentPatternFileName;
+module.exports.getLanguageConfigurationSignature = getLanguageConfigurationSignature;
 module.exports.getResourceConfig = getResourceConfig;
 module.exports.getTagRegexSource = getTagRegexSource;
 module.exports.supportsRegExpIndices = supportsRegExpIndices;

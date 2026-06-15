@@ -845,8 +845,308 @@
                 }
             },
             {
-                "title": "%better-todo-tree.configuration.highlights%",
+                "title": "%better-todo-tree.configuration.languages%",
                 "order": 2,
+                "type": "object",
+                "properties": {
+                    "better-todo-tree.languages.customPatterns": {
+                        "default": [],
+                        "markdownDescription": "%better-todo-tree.configuration.languages.customPatterns.markdownDescription%",
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": [
+                                "id"
+                            ],
+                            "properties": {
+                                "id": {
+                                    "type": "string"
+                                },
+                                "name": {
+                                    "type": "string"
+                                },
+                                "aliases": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                },
+                                "languageIds": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                },
+                                "extensions": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                },
+                                "filenames": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                },
+                                "filenameGlobs": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                },
+                                "singleLineComments": {
+                                    "type": "array",
+                                    "items": {
+                                        "anyOf": [
+                                            {
+                                                "type": "string"
+                                            },
+                                            {
+                                                "type": "object",
+                                                "required": [
+                                                    "start"
+                                                ],
+                                                "properties": {
+                                                    "start": {
+                                                        "type": "string"
+                                                    }
+                                                }
+                                            }
+                                        ]
+                                    }
+                                },
+                                "multiLineComments": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "required": [
+                                            "end"
+                                        ],
+                                        "properties": {
+                                            "start": {
+                                                "type": "string"
+                                            },
+                                            "startRegex": {
+                                                "type": "object",
+                                                "required": [
+                                                    "source"
+                                                ],
+                                                "properties": {
+                                                    "source": {
+                                                        "type": "string"
+                                                    },
+                                                    "flags": {
+                                                        "type": "string"
+                                                    }
+                                                }
+                                            },
+                                            "end": {
+                                                "type": "string"
+                                            },
+                                            "middle": {
+                                                "type": "string"
+                                            },
+                                            "apidoc": {
+                                                "type": "boolean"
+                                            }
+                                        }
+                                    }
+                                },
+                                "commentsOnly": {
+                                    "type": "boolean"
+                                }
+                            }
+                        }
+                    },
+                    "todo-tree.languages.customPatterns": {
+                        "default": [],
+                        "markdownDescription": "%better-todo-tree.configuration.languages.customPatterns.markdownDescription%",
+                        "type": "array",
+                        "items": {
+                            "type": "object"
+                        },
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
+                    "better-todo-tree.languages.embeddedDocuments": {
+                        "default": [],
+                        "markdownDescription": "%better-todo-tree.configuration.languages.embeddedDocuments.markdownDescription%",
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": [
+                                "id",
+                                "parser",
+                                "regions"
+                            ],
+                            "properties": {
+                                "id": {
+                                    "type": "string"
+                                },
+                                "parser": {
+                                    "enum": [
+                                        "html-like-element-regions"
+                                    ],
+                                    "type": "string"
+                                },
+                                "match": {
+                                    "type": "object",
+                                    "properties": {
+                                        "extensions": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "string"
+                                            }
+                                        },
+                                        "filenames": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "string"
+                                            }
+                                        },
+                                        "filenameGlobs": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "string"
+                                            }
+                                        },
+                                        "languageIds": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    }
+                                },
+                                "baseLanguage": {
+                                    "type": "string"
+                                },
+                                "regions": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "required": [
+                                            "element"
+                                        ],
+                                        "properties": {
+                                            "element": {
+                                                "type": "string"
+                                            },
+                                            "defaultLanguage": {
+                                                "type": "string"
+                                            },
+                                            "languageAttribute": {
+                                                "type": "string"
+                                            },
+                                            "typeAttribute": {
+                                                "type": "string"
+                                            },
+                                            "typeAliases": {
+                                                "type": "object",
+                                                "additionalProperties": {
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "rawText": {
+                                                "type": "boolean"
+                                            },
+                                            "maskWhenUnresolved": {
+                                                "type": "boolean"
+                                            },
+                                            "attributes": {
+                                                "type": "object"
+                                            },
+                                            "attributePresent": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "attributeAbsent": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "attributeMatches": {
+                                                "type": "object"
+                                            }
+                                        }
+                                    }
+                                },
+                                "leadingFences": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "required": [
+                                            "start",
+                                            "end"
+                                        ],
+                                        "properties": {
+                                            "element": {
+                                                "type": "string"
+                                            },
+                                            "start": {
+                                                "type": "string"
+                                            },
+                                            "end": {
+                                                "type": "string"
+                                            },
+                                            "defaultLanguage": {
+                                                "type": "string"
+                                            },
+                                            "maskWhenUnresolved": {
+                                                "type": "boolean"
+                                            }
+                                        }
+                                    }
+                                },
+                                "wrappedRegions": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "required": [
+                                            "start",
+                                            "end"
+                                        ],
+                                        "properties": {
+                                            "element": {
+                                                "type": "string"
+                                            },
+                                            "start": {
+                                                "type": "string"
+                                            },
+                                            "end": {
+                                                "type": "string"
+                                            },
+                                            "defaultLanguage": {
+                                                "type": "string"
+                                            },
+                                            "maskWhenUnresolved": {
+                                                "type": "boolean"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "todo-tree.languages.embeddedDocuments": {
+                        "default": [],
+                        "markdownDescription": "%better-todo-tree.configuration.languages.embeddedDocuments.markdownDescription%",
+                        "type": "array",
+                        "items": {
+                            "type": "object"
+                        },
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    }
+                }
+            },
+            {
+                "title": "%better-todo-tree.configuration.highlights%",
+                "order": 3,
                 "type": "object",
                 "properties": {
                     "better-todo-tree.highlights.customHighlight": {
@@ -1321,7 +1621,7 @@
             },
             {
                 "title": "%better-todo-tree.configuration.filtering%",
-                "order": 3,
+                "order": 4,
                 "type": "object",
                 "properties": {
                     "better-todo-tree.filtering.excludedWorkspaces": {
@@ -1488,7 +1788,7 @@
             },
             {
                 "title": "%better-todo-tree.configuration.tree%",
-                "order": 4,
+                "order": 5,
                 "type": "object",
                 "properties": {
                     "better-todo-tree.tree.autoRefresh": {
@@ -1804,7 +2104,7 @@
             },
             {
                 "title": "%better-todo-tree.configuration.buttons%",
-                "order": 5,
+                "order": 6,
                 "type": "object",
                 "properties": {
                     "better-todo-tree.tree.buttons.reveal": {
@@ -1919,7 +2219,7 @@
             },
             {
                 "title": "%better-todo-tree.configuration.regex%",
-                "order": 6,
+                "order": 7,
                 "type": "object",
                 "properties": {
                     "better-todo-tree.regex.regex": {
@@ -2002,7 +2302,7 @@
             },
             {
                 "title": "%better-todo-tree.configuration.ripgrep%",
-                "order": 7,
+                "order": 8,
                 "type": "object",
                 "properties": {
                     "better-todo-tree.ripgrep.ripgrepMaxBuffer": {

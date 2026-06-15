@@ -1172,6 +1172,14 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
             init: function() {},
             isCodicon: function() { return false; },
             getCommentPattern: function( candidate ) { return actualUtils.getCommentPattern( candidate ); },
+            resolveCommentPatternFileName: function( languageId )
+            {
+                return actualUtils.resolveCommentPatternFileName( languageId );
+            },
+            getLanguageConfigurationSignature: function()
+            {
+                return actualUtils.getLanguageConfigurationSignature();
+            },
             getRegexSource: function() { return options.regexSource || regexRegistry.TAG_CAPTURE_PLACEHOLDER; },
             getTagRegexSource: function()
             {

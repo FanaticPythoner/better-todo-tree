@@ -1,0 +1,13 @@
+{
+    ".cjs": ".js",
+    ".dart": ".js",
+    ".json5": ".js",
+    ".jsonc": ".js",
+    ".jsx": ".js",
+    ".mjs": ".js",
+    ".mts": ".ts",
+    ".cts": ".ts",
+    ".styl": ".scss",
+    ".tsx": ".ts",
+    ".vue": ".html"
+}

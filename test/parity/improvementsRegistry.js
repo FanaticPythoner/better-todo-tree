@@ -32,6 +32,81 @@ function isJsonFixture( fixture )
     return path.extname( fixture.fsPath || '' ).toLowerCase() === '.json';
 }
 
+function extensionOfFixture( fixture )
+{
+    return path.extname( fixture && fixture.fsPath || '' ).toLowerCase();
+}
+
+function isNewCommentAwareAliasFixture( fixture )
+{
+    return Object.prototype.hasOwnProperty.call( {
+        '.astro': true,
+        '.jsx': true,
+        '.svelte': true,
+        '.tsx': true
+    }, extensionOfFixture( fixture ) );
+}
+
+function lineForMatch( fixture, match )
+{
+    var lines = String( fixture && fixture.text || '' ).split( '\n' );
+    var line = match && typeof ( match.line ) === 'number' ? match.line : 0;
+
+    return lines[ line - 1 ] || '';
+}
+
+function characterBeforeMatch( fixture, match )
+{
+    var line = lineForMatch( fixture, match );
+    var column = match && typeof ( match.column ) === 'number' ? match.column : 0;
+    var index = column - 2;
+
+    return index >= 0 ? line[ index ] : '';
+}
+
+function offsetFromLineColumn( text, line, column )
+{
+    var offset = 0;
+    var currentLine = 1;
+
+    while( currentLine < line && offset < text.length )
+    {
+        if( text[ offset ] === '\n' )
+        {
+            currentLine += 1;
+        }
+        offset += 1;
+    }
+
+    return offset + Math.max( column - 1, 0 );
+}
+
+function offsetForMatch( fixture, match )
+{
+    if( match && typeof ( match.tagStartOffset ) === 'number' )
+    {
+        return match.tagStartOffset;
+    }
+
+    return offsetFromLineColumn(
+        String( fixture && fixture.text || '' ),
+        match && typeof ( match.line ) === 'number' ? match.line : 1,
+        match && typeof ( match.column ) === 'number' ? match.column : 1
+    );
+}
+
+function insideDelimitedRegion( fixture, match, start, end )
+{
+    var text = String( fixture && fixture.text || '' );
+    var offset = offsetForMatch( fixture, match );
+    var before = text.slice( 0, offset );
+    var after = text.slice( offset );
+    var openIndex = before.lastIndexOf( start );
+    var closeBeforeIndex = before.lastIndexOf( end );
+
+    return openIndex !== -1 && openIndex > closeBeforeIndex && after.indexOf( end ) !== -1;
+}
+
 function isInlineBlockCommentMatch( match )
 {
     if( !match || typeof ( match.match ) !== 'string' )
@@ -60,6 +135,24 @@ function indentOrCodeFenceOnly( line )
     var remainder = match[ 2 ];
     return leading.length > 0 &&
         !regexRegistry.createRegExp( 'leadingNonDefaultCommentPrefix' ).test( remainder );
+}
+
+function matchPrefixToken( match )
+{
+    var matched;
+
+    if( !match || typeof ( match.match ) !== 'string' )
+    {
+        return undefined;
+    }
+
+    matched = match.match.match( regexRegistry.createRegExp( 'linePrefixRemainder' ) );
+    if( !matched )
+    {
+        return undefined;
+    }
+
+    return ( matched[ 2 ].match( regexRegistry.createRegExp( 'leadingNonDefaultCommentPrefix' ) ) || [] )[ 1 ];
 }
 
 var IMPROVEMENT_INDENTED_NON_COMMENT_REJECTED = Object.freeze( {
@@ -147,12 +240,45 @@ var IMPROVEMENT_JSON_NO_COMMENTS = Object.freeze( {
     }
 } );
 
+var IMPROVEMENT_COMMENT_AWARE_NEW_LANGUAGE_ALIASES = Object.freeze( {
+    id: 'IMPROVEMENT_COMMENT_AWARE_NEW_LANGUAGE_ALIASES',
+    description: 'New language aliases use comment-aware scanners and reject upstream default-regex prefixes outside the target syntax.',
+    upstreamReferences: Object.freeze( [ 'better-todo-tree#19', 'comment-patterns/db-generated' ] ),
+    applicability: function( fixture )
+    {
+        return isNewCommentAwareAliasFixture( fixture );
+    },
+    toleratedUpstreamMatch: function( match, fixture )
+    {
+        var extension = extensionOfFixture( fixture );
+        var token = matchPrefixToken( match );
+
+        if( extension === '.jsx' || extension === '.tsx' )
+        {
+            return [ '//', '/*' ].indexOf( token ) === -1;
+        }
+
+        if( extension === '.svelte' )
+        {
+            return token !== '<!--';
+        }
+
+        if( extension === '.astro' )
+        {
+            return token !== '<!--' && ( token !== '/*' || characterBeforeMatch( fixture, match ) !== '{' );
+        }
+
+        return false;
+    }
+} );
+
 var IMPROVEMENTS = Object.freeze( [
     IMPROVEMENT_INDENTED_NON_COMMENT_REJECTED,
     IMPROVEMENT_MARKDOWN_HEADING_REJECTED,
     IMPROVEMENT_MARKDOWN_NON_LIST_PLAIN_TAG_REJECTED,
     IMPROVEMENT_INLINE_BLOCK_COMMENT_BOUNDS,
-    IMPROVEMENT_JSON_NO_COMMENTS
+    IMPROVEMENT_JSON_NO_COMMENTS,
+    IMPROVEMENT_COMMENT_AWARE_NEW_LANGUAGE_ALIASES
 ] );
 
 var DEFAULT_REGEX_PREFIX_TOKENS = Object.freeze( [ '//', '#', '<!--', ';', '/*' ] );
@@ -195,12 +321,13 @@ var ENHANCEMENT_COMMENT_AWARE_PREFIXES = Object.freeze( {
     upstreamReferences: Object.freeze( [ 'comment-patterns/db-generated', 'better-todo-tree::efcf972' ] ),
     applicability: function( fixture )
     {
-        return isVendoredFixture( fixture );
+        return isVendoredFixture( fixture ) || isNewCommentAwareAliasFixture( fixture );
     },
     toleratedBetterTodoTreeMatch: function( match, fixture )
     {
         var token = commentFamilyStartToken( fixture );
-        return token !== undefined && !upstreamPrefixTokenRecognised( token );
+        return ( token !== undefined && !upstreamPrefixTokenRecognised( token ) ) ||
+            ( isNewCommentAwareAliasFixture( fixture ) && insideDelimitedRegion( fixture, match, '/*', '*/' ) );
     }
 } );
 

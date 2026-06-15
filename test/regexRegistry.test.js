@@ -358,6 +358,8 @@ QUnit.test( 'shared fixture regexes preserve benchmark and parser contracts', fu
     assert.equal( regexRegistry.createRegExp( 'digitsOnly' ).test( '12345' ), true );
     assert.equal( regexRegistry.createRegExp( 'digitsOnly' ).test( '12a45' ), false );
     assert.equal( regexRegistry.createRegExp( 'markdownFileExtension', 'i' ).test( 'README.MD' ), true );
+    assert.equal( regexRegistry.createRegExp( 'globMagicCharacter' ).test( '*' ), true );
+    assert.equal( regexRegistry.createRegExp( 'globMagicCharacter' ).test( 'a' ), false );
     assert.equal( regexRegistry.createRegExp( 'slashTodoLineNumber', 'g' ).exec( '// TODO line27' )[ 1 ], '27' );
     assert.deepEqual(
         regexRegistry.createRegExp( 'slashTodoFixmeWord', 'g' ).exec( '// FIXME real-73' ).slice( 1 ),
