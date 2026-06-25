@@ -35,11 +35,15 @@ jobs:
       contents: read
       security-events: write
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
-        language:
-          - javascript-typescript
-          - actions
+        include:
+          - language: javascript-typescript
+            category: /language:javascript-typescript
+            setup-node: true
+          - language: actions
+            category: /language:actions
+            setup-node: false
 
     steps:
       - name: Check out repository
@@ -51,7 +55,7 @@ jobs:
           languages: ${{ matrix.language }}
 
       - name: Set up Node.js
-        if: matrix.language == 'javascript-typescript'
+        if: matrix.setup-node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version-file: .nvmrc
@@ -59,14 +63,14 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        if: matrix.language == 'javascript-typescript'
+        if: matrix.setup-node
         run: npm ci
 
       - name: Build extension bundle
-        if: matrix.language == 'javascript-typescript'
+        if: matrix.setup-node
         run: npm run vscode:prepublish
 
       - name: Analyze
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e
         with:
-          category: /language:${{ matrix.language }}
+          category: ${{ matrix.category }}

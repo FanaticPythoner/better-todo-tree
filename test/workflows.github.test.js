@@ -160,6 +160,11 @@ function assertSecurityWorkflowContract( assert, securityWorkflow, label )
         codeqlAnalyze.ref,
         workflowAssertionMessage( label, 'CodeQL init and analyze use the same action revision' )
     );
+    assert.equal(
+        codeqlInit.ref,
+        '8aad20d150bbac5944a9f9d289da16a4b0d87c1e',
+        workflowAssertionMessage( label, 'CodeQL action uses v4.36.2 release SHA' )
+    );
     assert.ok(
         dependencyReviewJob.indexOf( "if: github.event_name == 'pull_request'" ) !== -1,
         workflowAssertionMessage( label, 'dependency review runs only on pull requests' )
@@ -173,20 +178,30 @@ function assertSecurityWorkflowContract( assert, securityWorkflow, label )
         workflowAssertionMessage( label, 'CodeQL job can write code scanning results' )
     );
     assert.ok(
-        codeqlJob.indexOf( codeqlInit.text ) !== -1,
-        workflowAssertionMessage( label, 'CodeQL job uses the pinned init reference' )
+        codeqlJob.indexOf( 'fail-fast: true' ) !== -1,
+        workflowAssertionMessage( label, 'CodeQL matrix fails fast' )
     );
     assert.ok(
-        codeqlJob.indexOf( codeqlAnalyze.text ) !== -1,
-        workflowAssertionMessage( label, 'CodeQL job uses the pinned analyze reference' )
+        codeqlJob.indexOf( 'fail-fast: false' ) === -1,
+        workflowAssertionMessage( label, 'CodeQL matrix does not disable fail-fast' )
     );
     assert.ok(
-        codeqlJob.indexOf( '- javascript-typescript' ) !== -1,
-        workflowAssertionMessage( label, 'CodeQL matrix scans JavaScript and TypeScript' )
+        codeqlJob.indexOf( '- language: javascript-typescript' ) !== -1 &&
+            codeqlJob.indexOf( 'category: /language:javascript-typescript' ) !== -1,
+        workflowAssertionMessage( label, 'CodeQL matrix scans JavaScript and TypeScript with a stable category' )
     );
     assert.ok(
-        codeqlJob.indexOf( '- actions' ) !== -1,
-        workflowAssertionMessage( label, 'CodeQL matrix scans GitHub Actions' )
+        codeqlJob.indexOf( '- language: actions' ) !== -1 &&
+            codeqlJob.indexOf( 'category: /language:actions' ) !== -1,
+        workflowAssertionMessage( label, 'CodeQL matrix scans GitHub Actions with a stable category' )
+    );
+    assert.ok(
+        codeqlJob.indexOf( 'category: ${{ matrix.category }}' ) !== -1,
+        workflowAssertionMessage( label, 'CodeQL analyze reads explicit matrix category values' )
+    );
+    assert.ok(
+        codeqlJob.indexOf( 'if: matrix.setup-node' ) !== -1,
+        workflowAssertionMessage( label, 'Node setup is scoped to JavaScript analysis' )
     );
 }
 
@@ -314,7 +329,7 @@ QUnit.test( 'security workflow keeps dependency review and CodeQL coverage pinne
     assertSecurityWorkflowContract( assert, readWorkflow( 'security.yml' ) );
 } );
 
-QUnit.test( 'PR 20 and PR 31 action revisions satisfy security workflow contract', function( assert )
+QUnit.test( 'dependency review and latest CodeQL action revisions satisfy security workflow contract', function( assert )
 {
     var securityWorkflow = readWorkflow( 'security.yml' );
     var regressionFixtures = [
@@ -328,15 +343,15 @@ QUnit.test( 'PR 20 and PR 31 action revisions satisfy security workflow contract
             ]
         },
         {
-            name: 'PR 31 CodeQL',
+            name: 'CodeQL v4.36.2',
             revisions: [
                 {
                     action: 'github/codeql-action/init',
-                    ref: '7211b7c8077ea37d8641b6271f6a365a22a5fbfa'
+                    ref: '8aad20d150bbac5944a9f9d289da16a4b0d87c1e'
                 },
                 {
                     action: 'github/codeql-action/analyze',
-                    ref: '7211b7c8077ea37d8641b6271f6a365a22a5fbfa'
+                    ref: '8aad20d150bbac5944a9f9d289da16a4b0d87c1e'
                 }
             ]
         }
