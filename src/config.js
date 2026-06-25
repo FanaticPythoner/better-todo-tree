@@ -295,6 +295,11 @@ function clickingStatusBarShouldToggleHighlights()
     return identity.getSetting( 'general.statusBarClickBehaviour', "reveal" ) === "toggle highlights";
 }
 
+function showScanningProgress()
+{
+    return identity.getSetting( 'general.showScanningProgress', "status bar" );
+}
+
 function isValidScheme( uri )
 {
     var schemes = identity.getSetting( 'general.schemes', [] );
@@ -440,6 +445,7 @@ module.exports.labelFormat = labelFormat;
 module.exports.tooltipFormat = tooltipFormat;
 module.exports.clickingStatusBarShouldRevealTree = clickingStatusBarShouldRevealTree;
 module.exports.clickingStatusBarShouldToggleHighlights = clickingStatusBarShouldToggleHighlights;
+module.exports.showScanningProgress = showScanningProgress;
 module.exports.isValidScheme = isValidScheme;
 module.exports.shouldIgnoreGitSubmodules = shouldIgnoreGitSubmodules;
 module.exports.refreshTagGroupLookup = refreshTagGroupLookup;
