@@ -442,7 +442,8 @@ function createVscodeStub( options )
             periodicRefreshInterval: periodicRefreshInterval,
             rootFolder: "",
             tags: languageMatrix.DEFAULT_TAGS.slice(),
-            statusBar: options.statusBar || 'total'
+            statusBar: options.statusBar || 'total',
+            showScanningProgress: options.showScanningProgress || 'status bar'
         },
         ripgrep: {
             ripgrepArgs: '',
@@ -462,6 +463,7 @@ function createVscodeStub( options )
             exportPath: '/tmp/todo-tree.txt',
             statusBar: options.statusBar || 'total',
             statusBarClickBehaviour: '',
+            showScanningProgress: options.showScanningProgress || 'status bar',
             showActivityBarBadge: options.showActivityBarBadge === true,
             tags: languageMatrix.DEFAULT_TAGS.slice(),
             tagGroups: {},
@@ -948,6 +950,7 @@ function createExtensionHarness( options )
         shouldShowTagsOnly: function() { return Object.prototype.hasOwnProperty.call( treeStateOverrides, 'tagsOnly' ) ? treeStateOverrides.tagsOnly : context.workspaceState.get( 'tagsOnly', false ); },
         clickingStatusBarShouldRevealTree: function() { return options.statusBarClickBehaviour === 'reveal'; },
         clickingStatusBarShouldToggleHighlights: function() { return options.statusBarClickBehaviour === 'toggle highlights'; },
+        showScanningProgress: function() { return options.showScanningProgress || 'status bar'; },
         tags: function() { return languageMatrix.DEFAULT_TAGS.slice(); },
         shouldShowIconsInsteadOfTagsInStatusBar: function() { return false; },
         shouldCompactFolders: function() { return false; },
@@ -1354,6 +1357,7 @@ function createExtensionHarness( options )
     return {
         extension: extension,
         context: context,
+        options: options,
         get provider()
         {
             return provider;
@@ -4176,11 +4180,19 @@ QUnit.test( "toggleTreeExpansion uses live workspace state for deterministic exp
     } );
 } );
 
-QUnit.test( "workspace scans publish progress, current target, and clear the tree message when complete", function( assert )
+function createWorkspaceScanProgressHarness( options )
 {
     var releaseSearch = createDeferred();
+    var scanOptions = Object.assign( {
+        showScanningProgress: 'status bar',
+        emitMatch: true
+    }, options || {} );
+    var trackedPath = scanOptions.trackedPath || './tracked.js';
+    var trackedRelativePath = trackedPath.indexOf( './' ) === 0 ? trackedPath.substring( 2 ) : trackedPath;
+    var trackedFile = '/workspace/' + trackedRelativePath;
     var harness = createExtensionHarness( {
         scanMode: 'workspace',
+        showScanningProgress: scanOptions.showScanningProgress,
         resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
         workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
         scanTextImpl: function( uri )
@@ -4194,34 +4206,104 @@ QUnit.test( "workspace scans publish progress, current target, and clear the tre
         },
         ripgrepSearchImpl: function( root, searchOptions, onEvent )
         {
-            onEvent( {
-                type: 'match',
-                data: {
-                    path: { text: './tracked.js' }
-                }
-            } );
-            onEvent( {
-                type: 'end',
-                data: {
-                    path: { text: './tracked.js' }
-                }
-            } );
+            if( scanOptions.emitMatch === true )
+            {
+                onEvent( {
+                    type: 'match',
+                    data: {
+                        path: { text: trackedPath }
+                    }
+                } );
+                onEvent( {
+                    type: 'end',
+                    data: {
+                        path: { text: trackedPath }
+                    }
+                } );
+            }
 
             return releaseSearch.promise.then( function()
             {
-                return { stats: { matches: 1 } };
+                return { stats: { matches: scanOptions.emitMatch === true ? 1 : 0 } };
             } );
         },
-        fileContents: {
-            '/workspace/tracked.js': '# TODO tracked'
+        fileContents: scanOptions.emitMatch === true ? Object.assign( {}, {
+            [ trackedFile ]: '# TODO tracked'
+        } ) : {}
+    } );
+
+    return {
+        harness: harness,
+        releaseSearch: releaseSearch
+    };
+}
+
+function scanProgressSurfaceState( harness )
+{
+    return {
+        notification: harness.vscode.progressSessions.some( function( session )
+        {
+            return session.completed !== true;
+        } ),
+        tree: harness.vscode.treeViews[ 0 ].message !== '',
+        statusBar: harness.vscode.statusBarItems[ 0 ].command === 'better-todo-tree.stopScan'
+    };
+}
+
+function assertScanProgressSurfaceState( assert, harness, expected )
+{
+    assert.deepEqual( scanProgressSurfaceState( harness ), expected );
+}
+
+function fireShowScanningProgressConfigurationChange( harness )
+{
+    harness.vscode.workspaceListeners.configuration( {
+        affectsConfiguration: function( section )
+        {
+            return section === 'better-todo-tree' ||
+                section === 'todo-tree' ||
+                section === 'better-todo-tree.general.showScanningProgress' ||
+                section === 'todo-tree.general.showScanningProgress';
         }
     } );
+}
+
+QUnit.test( "default workspace scans publish progress in the status bar only", function( assert )
+{
+    var scan = createWorkspaceScanProgressHarness();
+    var harness = scan.harness;
 
     harness.extension.activate( harness.context );
 
     return matrixHelpers.flushAsyncWork().then( function()
     {
-        assert.equal( harness.vscode.progressSessions.length, 1 );
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: true } );
+        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '$(sync~spin) Better Todo Tree' ), 0 );
+        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( 'Better Todo Tree' ) >= 0, true );
+        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '100%' ) === -1, true );
+
+        scan.releaseSearch.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '100%' ) === -1, true );
+    } );
+} );
+
+QUnit.test( "workspace scans can publish progress to every visible surface", function( assert )
+{
+    var scan = createWorkspaceScanProgressHarness( {
+        showScanningProgress: 'all',
+        trackedPath: './tracked.js'
+    } );
+    var harness = scan.harness;
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: true, tree: true, statusBar: true } );
         assert.equal( harness.vscode.progressSessions[ 0 ].options.location, harness.vscode.ProgressLocation.Notification );
         assert.equal( harness.vscode.progressSessions[ 0 ].reports.length > 0, true );
         assert.equal( harness.vscode.progressSessions[ 0 ].reports.some( function( report )
@@ -4230,39 +4312,178 @@ QUnit.test( "workspace scans publish progress, current target, and clear the tre
         } ), true );
         assert.equal( harness.vscode.treeViews[ 0 ].message.indexOf( 'tracked.js' ) >= 0, true );
         assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '$(sync~spin) Better Todo Tree' ), 0 );
-        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( 'Better Todo Tree' ) >= 0, true );
-        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '100%' ) === -1, true );
 
-        releaseSearch.resolve();
+        scan.releaseSearch.resolve();
         return matrixHelpers.flushAsyncWork();
     } ).then( function()
     {
         assert.equal( harness.vscode.progressSessions[ 0 ].completed, true );
-        assert.equal( harness.vscode.treeViews[ 0 ].message, '' );
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
         assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '100%' ) === -1, true );
     } );
 } );
 
-QUnit.test( "scan progress cancellation interrupts the active scan and surfaces a cancellation message", function( assert )
+QUnit.test( "workspace scans can hide all visible scan progress", function( assert )
 {
-    var releaseSearch = createDeferred();
-    var harness = createExtensionHarness( {
-        scanMode: 'workspace',
-        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
-        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
-        ripgrepSearchImpl: function()
-        {
-            return releaseSearch.promise;
-        },
-        fileContents: {}
+    var scan = createWorkspaceScanProgressHarness( {
+        showScanningProgress: 'none',
+        emitMatch: false
     } );
+    var harness = scan.harness;
 
     harness.extension.activate( harness.context );
 
     return matrixHelpers.flushAsyncWork().then( function()
     {
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+
+        scan.releaseSearch.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+    } );
+} );
+
+QUnit.test( "workspace scans can publish progress to the tree surface only", function( assert )
+{
+    var scan = createWorkspaceScanProgressHarness( {
+        showScanningProgress: 'tree'
+    } );
+    var harness = scan.harness;
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: true, statusBar: false } );
+        assert.equal( harness.vscode.treeViews[ 0 ].message.indexOf( 'tracked.js' ) >= 0, true );
+
+        scan.releaseSearch.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+    } );
+} );
+
+QUnit.test( "workspace scans can publish progress to the notification surface only", function( assert )
+{
+    var scan = createWorkspaceScanProgressHarness( {
+        showScanningProgress: 'notification'
+    } );
+    var harness = scan.harness;
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: true, tree: false, statusBar: false } );
+        assert.equal( harness.vscode.progressSessions[ 0 ].reports.some( function( report )
+        {
+            return typeof report.message === 'string' && report.message.indexOf( 'tracked.js' ) >= 0;
+        } ), true );
+
+        scan.releaseSearch.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.vscode.progressSessions[ 0 ].completed, true );
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+    } );
+} );
+
+QUnit.test( "scan progress setting changes update active scan surfaces without rescanning", function( assert )
+{
+    var scan = createWorkspaceScanProgressHarness( {
+        showScanningProgress: 'status bar'
+    } );
+    var harness = scan.harness;
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: true } );
+        assert.equal( harness.ripgrepSearchCalls.length, 1 );
+
+        scan.harness.options.showScanningProgress = 'none';
+        fireShowScanningProgressConfigurationChange( harness );
+
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+        assert.equal( harness.ripgrepSearchCalls.length, 1 );
+
+        scan.releaseSearch.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+    } );
+} );
+
+QUnit.test( "scan progress setting changes can attach and detach notification progress", function( assert )
+{
+    var scan = createWorkspaceScanProgressHarness( {
+        showScanningProgress: 'none'
+    } );
+    var harness = scan.harness;
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+        assert.equal( harness.ripgrepSearchCalls.length, 1 );
+
+        scan.harness.options.showScanningProgress = 'all';
+        fireShowScanningProgressConfigurationChange( harness );
+
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: true, tree: true, statusBar: true } );
         assert.equal( harness.vscode.progressSessions.length, 1 );
-        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '$(sync~spin) Better Todo Tree' ), 0 );
+        assert.equal( harness.vscode.progressSessions[ 0 ].completed, false );
+        assert.equal( harness.vscode.progressSessions[ 0 ].reports.some( function( report )
+        {
+            return typeof report.message === 'string' && report.message.indexOf( 'tracked.js' ) >= 0;
+        } ), true );
+        assert.equal( harness.ripgrepSearchCalls.length, 1 );
+
+        scan.harness.options.showScanningProgress = 'none';
+        fireShowScanningProgressConfigurationChange( harness );
+
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+        assert.equal( harness.vscode.progressSessions[ 0 ].completed, true );
+        assert.equal( harness.ripgrepSearchCalls.length, 1 );
+
+        scan.releaseSearch.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+    } );
+} );
+
+QUnit.test( "scan progress notification cancellation interrupts the active scan", function( assert )
+{
+    var scan = createWorkspaceScanProgressHarness( {
+        showScanningProgress: 'notification',
+        emitMatch: false
+    } );
+    var harness = scan.harness;
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: true, tree: false, statusBar: false } );
         harness.vscode.progressSessions[ 0 ].cancel();
         return matrixHelpers.flushAsyncWork();
     } ).then( function()

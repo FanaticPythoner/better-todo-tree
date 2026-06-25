@@ -699,7 +699,8 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
                 periodicRefreshInterval: 0,
                 rootFolder: '',
                 tags: configuredTags.slice(),
-                statusBar: 'total'
+                statusBar: 'total',
+                showScanningProgress: options.showScanningProgress || 'status bar'
             },
             highlights: {
                 enabled: highlightSettings.enabled,
@@ -726,6 +727,7 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
             exportPath: '/tmp/todo-tree.txt',
             statusBar: 'total',
             statusBarClickBehaviour: '',
+            showScanningProgress: options.showScanningProgress || 'status bar',
             showActivityBarBadge: false,
             tags: configuredTags.slice(),
             tagGroups: {},
@@ -1141,6 +1143,7 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
             shouldShowTagsOnly: function() { return Object.prototype.hasOwnProperty.call( treeStateOverrides, 'tagsOnly' ) ? treeStateOverrides.tagsOnly : context.workspaceState.get( 'tagsOnly', false ); },
             clickingStatusBarShouldRevealTree: function() { return false; },
             clickingStatusBarShouldToggleHighlights: function() { return false; },
+            showScanningProgress: function() { return options.showScanningProgress || 'status bar'; },
             tags: function() { return configuredTags.slice(); },
             shouldShowIconsInsteadOfTagsInStatusBar: function() { return false; },
             shouldCompactFolders: function() { return false; },

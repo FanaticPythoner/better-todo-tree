@@ -306,6 +306,9 @@ What to show in the status bar - nothing (`none`), total count (`total`), counts
 **better-todo-tree.general.statusBarClickBehaviour** (`reveal`)</br>
 Set the behaviour of clicking the status bar to either cycle through the status bar display formats (`cycle`), reveal the tree (`reveal`) or to toggle highlights (`toggle highlights`).
 
+**better-todo-tree.general.showScanningProgress** (`status bar`)</br>
+Controls visible scanning progress: `none`, `status bar`, `notification`, `tree`, or `all`.
+
 **better-todo-tree.general.showIconsInsteadOfTagsInStatusBar** (`false`)</br>
 Show icons instead of tags in the status bar.
 

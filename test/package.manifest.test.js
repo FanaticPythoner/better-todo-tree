@@ -129,6 +129,23 @@ QUnit.test( 'issue #883 notebook scanning keeps vscode-notebook-cell enabled in 
     assert.ok( legacySchemes.default.indexOf( 'vscode-notebook-cell' ) !== -1 );
 } );
 
+QUnit.test( 'issue #57 and #77 scanning progress setting defaults to status bar only', function( assert )
+{
+    var currentProgress = getConfigurationProperty( 'better-todo-tree.general.showScanningProgress' );
+    var legacyProgress = getConfigurationProperty( 'todo-tree.general.showScanningProgress' );
+    var expectedModes = [ 'none', 'status bar', 'notification', 'tree', 'all' ];
+    var english = readPackageNls( 'package.nls.json' );
+    var chinese = readPackageNls( 'package.nls.zh-cn.json' );
+
+    assert.equal( currentProgress.default, 'status bar' );
+    assert.equal( legacyProgress.default, 'status bar' );
+    assert.deepEqual( currentProgress.enum, expectedModes );
+    assert.deepEqual( legacyProgress.enum, expectedModes );
+    assert.equal( legacyProgress.deprecationMessage, '%todo-tree.configuration.legacyNamespace.deprecationMessage%' );
+    assert.equal( typeof english[ 'better-todo-tree.configuration.general.showScanningProgress.markdownDescription' ], 'string' );
+    assert.equal( typeof chinese[ 'better-todo-tree.configuration.general.showScanningProgress.markdownDescription' ], 'string' );
+} );
+
 QUnit.test( 'context menus target stable todo-tree views with rebranded context keys', function( assert )
 {
     var packageJson = readPackageJson();

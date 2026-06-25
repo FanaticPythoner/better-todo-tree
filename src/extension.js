@@ -98,6 +98,13 @@ function activate( context )
 
     var SCAN_PROGRESS_ROOT_UNITS = 5;
     var SCAN_PROGRESS_MIN_FILES_PER_ROOT = 25;
+    var SCAN_PROGRESS_VISIBILITY_BY_MODE = Object.freeze( {
+        'none': Object.freeze( { notification: false, statusBar: false, tree: false } ),
+        'status bar': Object.freeze( { notification: false, statusBar: true, tree: false } ),
+        'notification': Object.freeze( { notification: true, statusBar: false, tree: false } ),
+        'tree': Object.freeze( { notification: false, statusBar: false, tree: true } ),
+        'all': Object.freeze( { notification: true, statusBar: true, tree: true } )
+    } );
 
     function settingLocation( setting, uri )
     {
@@ -735,6 +742,89 @@ function activate( context )
         }
     }
 
+    function getScanProgressVisibility()
+    {
+        var mode = config.showScanningProgress();
+        var visibility = SCAN_PROGRESS_VISIBILITY_BY_MODE[ mode ];
+
+        if( visibility === undefined )
+        {
+            throw new Error( 'invalid general.showScanningProgress: expected none, status bar, notification, tree, or all' );
+        }
+
+        return visibility;
+    }
+
+    function clearScanStatusBarProgress()
+    {
+        if( statusBarIndicator.command === identity.COMMANDS.stopScan )
+        {
+            statusBarIndicator.command = undefined;
+            statusBarIndicator.tooltip = '';
+            statusBarIndicator.text = '';
+            statusBarIndicator.hide();
+        }
+    }
+
+    function resolveScanProgressNotificationSession( generation )
+    {
+        if( scanProgressSession && scanProgressSession.generation === generation )
+        {
+            if( scanProgressSession.resolve )
+            {
+                scanProgressSession.resolve();
+            }
+
+            scanProgressSession = undefined;
+        }
+    }
+
+    function ensureScanProgressNotificationSession( generation )
+    {
+        var completionPromiseResolve;
+
+        if( scanProgressSession && scanProgressSession.generation === generation )
+        {
+            return;
+        }
+
+        if( scanProgressSession )
+        {
+            resolveScanProgressNotificationSession( scanProgressSession.generation );
+        }
+
+        scanProgressSession = {
+            generation: generation,
+            lastReportedPercent: 0,
+            lastReportedMessage: '',
+            resolve: undefined,
+            progress: undefined
+        };
+
+        var completionPromise = new Promise( function( resolve )
+        {
+            completionPromiseResolve = resolve;
+        } );
+
+        scanProgressSession.resolve = completionPromiseResolve;
+
+        vscode.window.withProgress( {
+            location: vscode.ProgressLocation.Notification,
+            title: identity.DISPLAY_NAME + ': Scanning',
+            cancellable: true
+        }, function( progress, token )
+        {
+            if( scanProgressSession && scanProgressSession.generation === generation )
+            {
+                scanProgressSession.progress = progress;
+                token.onCancellationRequested( interruptActiveScan );
+                updateScanProgress( generation, {}, true );
+            }
+
+            return completionPromise;
+        } );
+    }
+
     function buildScanProgressMessage( state, snapshot )
     {
         var messageParts = [];
@@ -777,14 +867,32 @@ function activate( context )
     function applyScanProgressUi( state, snapshot )
     {
         var message = buildScanProgressMessage( state, snapshot );
+        var visibility = getScanProgressVisibility();
 
-        statusBarIndicator.text = identity.STATUS_BUSY_ICON_LABEL + " " + identity.DISPLAY_NAME + " " + snapshot.percent + "%";
-        statusBarIndicator.show();
-        statusBarIndicator.command = identity.COMMANDS.stopScan;
-        statusBarIndicator.tooltip = message || 'Click to interrupt scan';
-        todoTreeView.message = message;
+        if( visibility.statusBar === true )
+        {
+            statusBarIndicator.text = identity.STATUS_BUSY_ICON_LABEL + " " + identity.DISPLAY_NAME + " " + snapshot.percent + "%";
+            statusBarIndicator.show();
+            statusBarIndicator.command = identity.COMMANDS.stopScan;
+            statusBarIndicator.tooltip = message || 'Click to interrupt scan';
+        }
+        else
+        {
+            clearScanStatusBarProgress();
+        }
 
-        if( scanProgressSession && scanProgressSession.progress )
+        todoTreeView.message = visibility.tree === true ? message : '';
+
+        if( visibility.notification === true )
+        {
+            ensureScanProgressNotificationSession( state.generation );
+        }
+        else
+        {
+            resolveScanProgressNotificationSession( state.generation );
+        }
+
+        if( visibility.notification === true && scanProgressSession && scanProgressSession.progress )
         {
             var increment = Math.max( snapshot.percent - scanProgressSession.lastReportedPercent, 0 );
             if( increment > 0 || message !== scanProgressSession.lastReportedMessage )
@@ -829,7 +937,7 @@ function activate( context )
 
     function startScanProgress( generation, roots )
     {
-        var completionPromiseResolve;
+        var visibility = getScanProgressVisibility();
 
         scanProgressState = {
             generation: generation,
@@ -851,32 +959,16 @@ function activate( context )
             lastUiPercent: 0
         };
 
-        scanProgressSession = {
-            generation: generation,
-            lastReportedPercent: 0,
-            lastReportedMessage: '',
-            resolve: undefined,
-            progress: undefined
-        };
+        scanProgressSession = undefined;
 
-        var completionPromise = new Promise( function( resolve )
+        if( visibility.notification === true )
         {
-            completionPromiseResolve = resolve;
-        } );
-
-        scanProgressSession.resolve = completionPromiseResolve;
-
-        vscode.window.withProgress( {
-            location: vscode.ProgressLocation.Notification,
-            title: identity.DISPLAY_NAME + ': Scanning',
-            cancellable: true
-        }, function( progress, token )
+            ensureScanProgressNotificationSession( generation );
+        }
+        else
         {
-            scanProgressSession.progress = progress;
-            token.onCancellationRequested( interruptActiveScan );
             updateScanProgress( generation, {}, true );
-            return completionPromise;
-        } );
+        }
     }
 
     function finishScanProgress( generation, wasCancelled )
@@ -891,10 +983,7 @@ function activate( context )
         scanProgressState.finalizationCompleted = Math.max( scanProgressState.finalizationCompleted, scanProgressState.finalizationTotal );
         updateScanProgress( generation, {}, true );
 
-        if( scanProgressSession && scanProgressSession.generation === generation && scanProgressSession.resolve )
-        {
-            scanProgressSession.resolve();
-        }
+        resolveScanProgressNotificationSession( generation );
 
         if( wasCancelled === true )
         {
@@ -905,8 +994,15 @@ function activate( context )
             todoTreeView.message = '';
         }
 
-        scanProgressSession = undefined;
         scanProgressState = undefined;
+    }
+
+    function refreshScanProgressVisibility()
+    {
+        if( scanProgressState )
+        {
+            updateScanProgress( scanProgressState.generation, {}, true );
+        }
     }
 
     function beginScanRoot( generation, rootPath )
@@ -1345,10 +1441,6 @@ function activate( context )
         interrupted = false;
         cancelledScanGenerations.delete( activeScanGeneration );
 
-        statusBarIndicator.text = identity.STATUS_BUSY_ICON_LABEL + " " + identity.DISPLAY_NAME + ": Scanning...";
-        statusBarIndicator.show();
-        statusBarIndicator.command = identity.COMMANDS.stopScan;
-        statusBarIndicator.tooltip = "Click to interrupt scan";
         setExtensionContext( 'scan-busy', true );
         startScanProgress( activeScanGeneration, roots || [] );
 
@@ -4321,9 +4413,14 @@ function activate( context )
                     rebuild();
                     documentChanged();
                 }
-                else if( identity.affectsSetting( e, 'general.showActivityBarBadge' ) )
+                else if( identity.affectsSetting( e, 'general.showActivityBarBadge' ) ||
+                    identity.affectsSetting( e, 'general.showScanningProgress' ) )
                 {
                     updateInformation();
+                    if( identity.affectsSetting( e, 'general.showScanningProgress' ) )
+                    {
+                        refreshScanProgressVisibility();
+                    }
                 }
                 else
                 {

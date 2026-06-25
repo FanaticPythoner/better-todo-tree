@@ -688,6 +688,46 @@
                         "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
                         "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
                     },
+                    "better-todo-tree.general.showScanningProgress": {
+                        "default": "status bar",
+                        "enum": [
+                            "none",
+                            "status bar",
+                            "notification",
+                            "tree",
+                            "all"
+                        ],
+                        "markdownDescription": "%better-todo-tree.configuration.general.showScanningProgress.markdownDescription%",
+                        "markdownEnumDescriptions": [
+                            "%better-todo-tree.configuration.general.showScanningProgress.markdownEnumDescriptions.1%",
+                            "%better-todo-tree.configuration.general.showScanningProgress.markdownEnumDescriptions.2%",
+                            "%better-todo-tree.configuration.general.showScanningProgress.markdownEnumDescriptions.3%",
+                            "%better-todo-tree.configuration.general.showScanningProgress.markdownEnumDescriptions.4%",
+                            "%better-todo-tree.configuration.general.showScanningProgress.markdownEnumDescriptions.5%"
+                        ],
+                        "type": "string"
+                    },
+                    "todo-tree.general.showScanningProgress": {
+                        "default": "status bar",
+                        "enum": [
+                            "none",
+                            "status bar",
+                            "notification",
+                            "tree",
+                            "all"
+                        ],
+                        "markdownDescription": "%better-todo-tree.configuration.general.showScanningProgress.markdownDescription%",
+                        "markdownEnumDescriptions": [
+                            "%better-todo-tree.configuration.general.showScanningProgress.markdownEnumDescriptions.1%",
+                            "%better-todo-tree.configuration.general.showScanningProgress.markdownEnumDescriptions.2%",
+                            "%better-todo-tree.configuration.general.showScanningProgress.markdownEnumDescriptions.3%",
+                            "%better-todo-tree.configuration.general.showScanningProgress.markdownEnumDescriptions.4%",
+                            "%better-todo-tree.configuration.general.showScanningProgress.markdownEnumDescriptions.5%"
+                        ],
+                        "type": "string",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
                     "better-todo-tree.general.statusBar": {
                         "default": "none",
                         "enum": [
