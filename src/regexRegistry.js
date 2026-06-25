@@ -961,6 +961,8 @@ var DEFAULT_DEFINITION = Object.freeze( {
         regexSyntaxCharacter: REGEX_SYNTAX_CHARACTER_SOURCE,
         regexSyntaxCharacterWithoutBackslash: '[|{}()[\\]^$+*?.-]',
         globMagicCharacter: '[*?\\[\\]{}()!+@]',
+        leadingSlashOneOrMore: '^/+',
+        windowsDrivePrefix: '^[A-Za-z]:/',
         hexColourNoise: '[^\\da-fA-F]',
         iconNameNoise: '[^0-9a-zA-Z]',
         octiconNameNoise: '[^a-z0-9]',

@@ -1171,7 +1171,7 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
             backgroundColourScheme: function() { return highlightSettings.backgroundColourScheme.slice(); },
             tagGroup: function() { return undefined; }
         };
-        var fallbackUtilsStub = {
+        var utilsStub = {
             init: function() {},
             isCodicon: function() { return false; },
             getCommentPattern: function( candidate ) { return actualUtils.getCommentPattern( candidate ); },
@@ -1203,9 +1203,16 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
             clearSubmoduleExcludeGlobCache: function() {},
             formatLabel: function( template ) { return template; },
             toGlobArray: function( value ) { return actualUtils.toGlobArray( value ); },
-            createFolderGlob: function() { return '**/*'; }
+            createFolderGlob: function()
+            {
+                return actualUtils.createFolderGlob.apply( actualUtils, arguments );
+            },
+            toRipgrepGlobArray: function()
+            {
+                return actualUtils.toRipgrepGlobArray.apply( actualUtils, arguments );
+            }
         };
-        var utilsModule = options.useActualUtilsModule === true ? moduleLoader( 'src/utils.js' ) : fallbackUtilsStub;
+        var utilsModule = options.useActualUtilsModule === true ? moduleLoader( 'src/utils.js' ) : utilsStub;
         var searchResults = options.useActualSearchResultsModule === true ? moduleLoader( 'src/searchResults.js' ) : createSearchResultsStub();
         var attributesModule = options.useActualAttributesModule === true ?
             moduleLoader( 'src/attributes.js' ) :

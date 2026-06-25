@@ -520,17 +520,41 @@ QUnit.test( "utils.hexToRgba converts correctly", function( assert )
 
 QUnit.test( "utils.createFolderGlob creates expected globs", function( assert )
 {
-    if( process.platform === 'win32' )
-    {
-        assert.equal( utils.createFolderGlob( "c:\\Users\\name\\workspace\\project\\folder\\subfolder", "c:\\Users\\name\\workspace\\project", "/**/*" ), "**/project/folder/subfolder/**/*" );
-        assert.equal( utils.createFolderGlob( "c:\\Users\\name\\workspace\\project\\folder\\subfolder", "c:\\Users\\name\\workspace\\project", "/**//*" ), "**/project/folder/subfolder/**/*" );
-        assert.equal( utils.createFolderGlob( "c:\\folder", "c:\\", "/**/*" ), "**/folder/**/*" );
-    }
-    else
-    {
-        assert.equal( utils.createFolderGlob( "/Users/name/workspace/project/folder/subfolder", "/Users/name/workspace/project", "/**/*" ), "/Users/name/workspace/project/folder/subfolder/**/*" );
-        assert.equal( utils.createFolderGlob( "/Users/name/workspace/project/folder/subfolder", "/Users/name/workspace/project", "/**//*" ), "/Users/name/workspace/project/folder/subfolder/**/*" );
-    }
+    assert.equal( utils.createFolderGlob( "c:\\Users\\name\\workspace\\project\\folder\\subfolder", "c:\\Users\\name\\workspace\\project", "/**/*" ), "**/folder/subfolder/**/*" );
+    assert.equal( utils.createFolderGlob( "c:\\Users\\name\\workspace\\project\\folder\\subfolder", "c:\\Users\\name\\workspace\\project", "/**//*" ), "**/folder/subfolder/**/*" );
+    assert.equal( utils.createFolderGlob( "c:\\folder", "c:\\", "/**/*" ), "**/folder/**/*" );
+    assert.equal( utils.createFolderGlob( "/Users/name/workspace/project/folder/subfolder", "/Users/name/workspace/project", "/**/*" ), "**/folder/subfolder/**/*" );
+    assert.equal( utils.createFolderGlob( "/Users/name/workspace/project/folder/subfolder", "/Users/name/workspace/project", "/**//*" ), "**/folder/subfolder/**/*" );
+    assert.equal( utils.createFolderGlob( "/Users/name/workspace/project/folder/subfolder", "/Users/name/workspace/project/", "/**/*" ), "**/folder/subfolder/**/*" );
+    assert.equal( utils.createFolderGlob( "/Users/name/workspace/project", "/Users/name/workspace/project", "/**/*" ), "**/*" );
+} );
+
+QUnit.test( "utils.isIncluded keeps child folder includes inside parent excludes", function( assert )
+{
+    var includes = [ "/folder1/subfolder2/" ];
+    var excludes = [ "/folder1/" ];
+
+    assert.equal( utils.isIncluded( "/workspace/folder1/subfolder2/task.js", includes, excludes ), true );
+    assert.equal( utils.isIncluded( "/workspace/folder1/task.js", includes, excludes ), false );
+    assert.equal( utils.isIncluded( "/workspace/folder1/subfolder3/task.js", includes, excludes ), false );
+    assert.equal( utils.isIncluded( "/workspace/folder1/subfolder2/node_modules/pkg/task.js", includes, excludes.concat( [ "**/node_modules/*/**" ] ) ), false );
+    assert.equal( utils.isIncluded( "/workspace/folder1/subfolder2/skip.js", includes, excludes.concat( [ "/folder1/subfolder2/skip.js" ] ) ), false );
+} );
+
+QUnit.test( "utils.toRipgrepGlobArray converts absolute and folder globs per root", function( assert )
+{
+    assert.deepEqual(
+        utils.toRipgrepGlobArray( [ "/workspace/folder1/subfolder2/", "!/workspace/folder1/", "!**/node_modules/*/**" ], "/workspace" ),
+        [ "folder1/subfolder2/**/*", "!**/node_modules/*/**" ]
+    );
+    assert.deepEqual(
+        utils.toRipgrepGlobArray( [ "/folder1/subfolder2/", "!/folder1/" ], "/workspace" ),
+        [ "folder1/subfolder2/**/*" ]
+    );
+    assert.deepEqual(
+        utils.toRipgrepGlobArray( [ "/workspace/folder1/subfolder2/", "!/workspace/folder1/" ], "/workspace/" ),
+        [ "folder1/subfolder2/**/*" ]
+    );
 } );
 
 QUnit.test( "utils.removeBlockComments supports jsonc", function( assert )

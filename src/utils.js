@@ -31,6 +31,9 @@ var repeatedSlashRegex = regexRegistry.createRegExp( 'escapedSlashCommentPrefix'
 var gitmodulePathLineRegex = regexRegistry.createRegExp( 'gitmodulePathLine' );
 var codiconRegex = regexRegistry.createRegExp( 'codicon', 'i' );
 var commentPatternsMissingDefinitionRegex = regexRegistry.createRegExp( 'commentPatternsMissingDefinition' );
+var windowsDrivePrefixRegex = regexRegistry.createRegExp( 'windowsDrivePrefix' );
+var leadingSlashOneOrMoreRegex = regexRegistry.createRegExp( 'leadingSlashOneOrMore' );
+var globMagicCharacterRegex = regexRegistry.createRegExp( 'globMagicCharacter' );
 
 function init( configuration )
 {
@@ -549,21 +552,34 @@ function getRegexForRipGrep( uri )
 
 function isIncluded( name, includes, excludes )
 {
-    var posix_includes = includes.map( function( glob )
-    {
-        return glob.replace( pathBackslashRegex, '/' );
-    } );
-    var posix_excludes = excludes.map( function( glob )
-    {
-        return glob.replace( pathBackslashRegex, '/' );
-    } );
+    var includeRules = createFilterRules( includes, false );
+    var excludeRules = createFilterRules( excludes, true );
+    var includeMatches = filterMatchingRules( name, includeRules );
 
-    var included = posix_includes.length === 0 || micromatch.isMatch( name, posix_includes );
-    if( included === true && micromatch.isMatch( name, posix_excludes ) )
+    if( includeRules.length > 0 && includeMatches.length === 0 )
     {
-        included = false;
+        return false;
     }
-    return included;
+
+    var excludeMatches = filterMatchingRules( name, excludeRules );
+
+    if( excludeMatches.length === 0 )
+    {
+        return true;
+    }
+
+    if( includeMatches.length === 0 )
+    {
+        return false;
+    }
+
+    return excludeMatches.every( function( excludeRule )
+    {
+        return includeMatches.some( function( includeRule )
+        {
+            return pathPrefixContains( excludeRule.prefix, includeRule.prefix );
+        } );
+    } );
 }
 
 function formatLabel( template, node, unexpectedPlaceholders )
@@ -613,20 +629,272 @@ function formatLabel( template, node, unexpectedPlaceholders )
 
 function createFolderGlob( folderPath, rootPath, filter )
 {
-    if( process.platform === 'win32' )
+    var folder = normalizeGlobPath( folderPath );
+    var root = normalizeGlobPath( rootPath );
+    var suffix = normalizeGlobPath( filter || "" );
+    var relativeFolder = relativeGlobPath( folder, root );
+
+    if( relativeFolder.length === 0 )
     {
-        var fp = folderPath.replace( pathBackslashRegex, '/' );
-        var rp = rootPath.replace( pathBackslashRegex, '/' );
-
-        if( fp.indexOf( rp ) === 0 )
-        {
-            fp = fp.substring( path.dirname( rp ).length );
-        }
-
-        return ( "**/" + fp + filter ).replace( repeatedSlashRegex, '/' );
+        return normalizeRepeatedSlashes( suffix.replace( leadingSlashOneOrMoreRegex, '' ) || "*" );
     }
 
-    return ( folderPath + filter ).replace( repeatedSlashRegex, '/' );
+    return normalizeRepeatedSlashes( "**/" + relativeFolder + suffix );
+}
+
+function normalizeRepeatedSlashes( value )
+{
+    return value.replace( repeatedSlashRegex, '/' );
+}
+
+function stripNegation( glob )
+{
+    var normalized = normalizeGlobPath( String( glob ) );
+
+    return {
+        negative: normalized.indexOf( '!' ) === 0,
+        body: normalized.indexOf( '!' ) === 0 ? normalized.substring( 1 ) : normalized
+    };
+}
+
+function normalizeDirectoryGlobBody( body )
+{
+    if( body.length > 0 && body[ body.length - 1 ] === '/' )
+    {
+        return body + '**/*';
+    }
+
+    return body;
+}
+
+function normalizeFilterGlobBody( body )
+{
+    return normalizeRepeatedSlashes( normalizeDirectoryGlobBody( body ) );
+}
+
+function hasWindowsDrivePrefix( value )
+{
+    return windowsDrivePrefixRegex.test( value );
+}
+
+function isAbsoluteGlobPath( value )
+{
+    return value.indexOf( '/' ) === 0 || hasWindowsDrivePrefix( value );
+}
+
+function removeDrivePrefix( value )
+{
+    return hasWindowsDrivePrefix( value ) ? value.substring( 2 ) : value;
+}
+
+function trimLeadingSlashes( value )
+{
+    return value.replace( leadingSlashOneOrMoreRegex, '' );
+}
+
+function trimTrailingSlashes( value )
+{
+    while( value.length > 1 && value[ value.length - 1 ] === '/' )
+    {
+        value = value.substring( 0, value.length - 1 );
+    }
+
+    return value;
+}
+
+function relativeGlobPath( value, root )
+{
+    var normalizedValue = trimLeadingSlashes( removeDrivePrefix( normalizeFilterGlobBody( value ) ) );
+    var normalizedRoot = trimLeadingSlashes( removeDrivePrefix(
+        trimTrailingSlashes( normalizeRepeatedSlashes( normalizeGlobPath( root ) ) )
+    ) );
+
+    if( normalizedRoot.length > 0 )
+    {
+        if( normalizedValue === normalizedRoot )
+        {
+            return "";
+        }
+
+        if( normalizedValue.indexOf( normalizedRoot + '/' ) === 0 )
+        {
+            return normalizedValue.substring( normalizedRoot.length + 1 );
+        }
+    }
+
+    return normalizedValue;
+}
+
+function uniqueValues( values )
+{
+    var seen = {};
+
+    return values.filter( function( value )
+    {
+        if( seen[ value ] === true )
+        {
+            return false;
+        }
+
+        seen[ value ] = true;
+        return true;
+    } );
+}
+
+function filterGlobBodies( glob )
+{
+    var parts = stripNegation( glob );
+    var body = normalizeFilterGlobBody( parts.body );
+    var bodies = [ body ];
+
+    if( isAbsoluteGlobPath( body ) )
+    {
+        var workspaceRelative = trimLeadingSlashes( removeDrivePrefix( body ) );
+        if( workspaceRelative.length > 0 )
+        {
+            bodies.push( workspaceRelative );
+            bodies.push( "**/" + workspaceRelative );
+        }
+    }
+    else if( body.indexOf( '**/' ) !== 0 && body.indexOf( '/' ) !== -1 )
+    {
+        bodies.push( "**/" + body );
+    }
+
+    return uniqueValues( bodies );
+}
+
+function globLiteralPrefix( body )
+{
+    var prefixParts = [];
+    var parts = trimLeadingSlashes( removeDrivePrefix( body ) ).split( '/' );
+
+    for( var index = 0; index < parts.length; index++ )
+    {
+        var part = parts[ index ];
+        if( part === '**' )
+        {
+            continue;
+        }
+        if( globMagicCharacterRegex.test( part ) )
+        {
+            break;
+        }
+        if( part.length > 0 )
+        {
+            prefixParts.push( part );
+        }
+    }
+
+    return prefixParts.join( '/' );
+}
+
+function createFilterRule( body, negative, index )
+{
+    return {
+        body: body,
+        negative: negative,
+        prefix: globLiteralPrefix( body ),
+        index: index
+    };
+}
+
+function createFilterRules( globs, negative )
+{
+    var rules = [];
+
+    ( globs || [] ).forEach( function( glob, index )
+    {
+        filterGlobBodies( glob ).forEach( function( body )
+        {
+            rules.push( createFilterRule( body, negative, index ) );
+        } );
+    } );
+
+    return rules;
+}
+
+function filterMatchingRules( name, rules )
+{
+    var normalizedName = normalizeGlobPath( name );
+
+    return rules.filter( function( rule )
+    {
+        return micromatch.isMatch( normalizedName, rule.body );
+    } );
+}
+
+function pathPrefixContains( parentPrefix, childPrefix )
+{
+    if( parentPrefix.length === 0 || childPrefix.length === 0 )
+    {
+        return false;
+    }
+
+    return childPrefix === parentPrefix || childPrefix.indexOf( parentPrefix + '/' ) === 0;
+}
+
+function ripgrepGlobBody( body, rootPath )
+{
+    var root = normalizeGlobPath( rootPath || "" );
+    var normalizedBody = normalizeFilterGlobBody( body );
+
+    if( isAbsoluteGlobPath( normalizedBody ) )
+    {
+        return relativeGlobPath( normalizedBody, root );
+    }
+
+    return normalizedBody;
+}
+
+function createRipgrepRule( glob, rootPath, index )
+{
+    var parts = stripNegation( glob );
+    var body = ripgrepGlobBody( parts.body, rootPath );
+
+    return createFilterRule( body, parts.negative, index );
+}
+
+function compareRipgrepRuleGroups( left, right )
+{
+    if( left.group !== right.group )
+    {
+        return left.group - right.group;
+    }
+
+    return left.index - right.index;
+}
+
+function toRipgrepGlobArray( globs, rootPath )
+{
+    var rules = ( globs || [] ).map( function( glob, index )
+    {
+        return createRipgrepRule( glob, rootPath, index );
+    } );
+    var includeRules = rules.filter( function( rule ) { return rule.negative !== true; } );
+
+    return rules.filter( function( rule )
+    {
+        if( rule.negative !== true )
+        {
+            return true;
+        }
+
+        return includeRules.some( function( includeRule )
+        {
+            return pathPrefixContains( rule.prefix, includeRule.prefix );
+        } ) !== true;
+    } ).map( function( rule )
+    {
+        return {
+            rule: rule,
+            index: rule.index,
+            group: rule.negative === true ? 2 : 1
+        };
+    } ).sort( compareRipgrepRuleGroups ).map( function( entry )
+    {
+        return ( entry.rule.negative === true ? '!' : '' ) + entry.rule.body;
+    } );
 }
 
 function normalizeGlobPath( value )
@@ -814,6 +1082,7 @@ module.exports.getRegexForEditorSearch = getRegexForEditorSearch;
 module.exports.isIncluded = isIncluded;
 module.exports.formatLabel = formatLabel;
 module.exports.createFolderGlob = createFolderGlob;
+module.exports.toRipgrepGlobArray = toRipgrepGlobArray;
 module.exports.getSubmoduleExcludeGlobs = getSubmoduleExcludeGlobs;
 module.exports.clearSubmoduleExcludeGlobCache = clearSubmoduleExcludeGlobCache;
 module.exports.isHidden = isHidden;

@@ -1019,7 +1019,14 @@ function createExtensionHarness( options )
         clearSubmoduleExcludeGlobCache: function() {},
         formatLabel: function( template ) { return template; },
         toGlobArray: function( value ) { return actualUtils.toGlobArray( value ); },
-        createFolderGlob: function() { return '**/*'; },
+        createFolderGlob: function()
+        {
+            return actualUtils.createFolderGlob.apply( actualUtils, arguments );
+        },
+        toRipgrepGlobArray: function()
+        {
+            return actualUtils.toRipgrepGlobArray.apply( actualUtils, arguments );
+        },
         DEFAULT_REGEX_SOURCE: actualUtils.DEFAULT_REGEX_SOURCE,
         LEGACY_MARKDOWN_TASK_FRAGMENT: actualUtils.LEGACY_MARKDOWN_TASK_FRAGMENT
     };
@@ -2560,6 +2567,50 @@ QUnit.test( "issue #19 workspace includeGlobs scan detects Vue embedded TODOs", 
     } );
 } );
 
+QUnit.test( "issue #87 workspace scan keeps included child folder under excluded parent", function( assert )
+{
+    var filePath = '/workspace/folder1/subfolder2/task.js';
+    var fixture = [ {
+        uri: matrixHelpers.createUri( filePath ),
+        line: 1,
+        column: 4,
+        endLine: 1,
+        endColumn: 8,
+        actualTag: 'TODO',
+        displayText: 'child item',
+        before: '// ',
+        after: 'child item',
+        continuationText: [],
+        match: 'TODO child item'
+    } ];
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        filteringOverrides: {
+            includeGlobs: [ '/folder1/subfolder2/' ],
+            excludeGlobs: [ '/folder1/' ]
+        },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [ { fsPath: filePath } ],
+        workspaceResults: fixture,
+        fileContents: {
+            '/workspace/folder1/subfolder2/task.js': '// TODO child item'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.ripgrepSearchCalls.length, 1 );
+        assert.deepEqual( harness.ripgrepSearchCalls[ 0 ].globs, [
+            'folder1/subfolder2/**/*'
+        ] );
+        assert.deepEqual( harness.readFileCalls, [ filePath ] );
+        assert.deepEqual( getLatestReplaceCallForPath( harness, filePath ).results, fixture );
+    } );
+} );
+
 QUnit.test( "workspace includeGlobs scan detects Svelte and Astro embedded TODOs", function( assert )
 {
     var sveltePath = '/workspace/src/components/Panel.svelte';
@@ -3279,6 +3330,64 @@ QUnit.test( "showTreeView rebuilds the actual provider even when workspace state
         assert.equal( harness.vscode.treeViews[ 0 ].title, 'Tree' );
         assert.equal( rootNode.label, 'workspace' );
         assert.equal( harness.provider.getChildren( rootNode )[ 0 ].label, 'src' );
+    } );
+} );
+
+QUnit.test( "issue #80 showOnlyThisFolderAndSubfolders keeps selected folder scan results", function( assert )
+{
+    var workspaceState = matrixHelpers.createWorkspaceState( {
+        flat: false,
+        tagsOnly: false
+    } );
+    var workspaceResult = {
+        uri: matrixHelpers.createUri( '/workspace/src/nested/file.js' ),
+        line: 1,
+        column: 4,
+        endLine: 1,
+        endColumn: 8,
+        actualTag: 'TODO',
+        displayText: 'selected folder item',
+        before: '// ',
+        after: 'selected folder item',
+        continuationText: [],
+        match: 'TODO selected folder item'
+    };
+    var harness = createExtensionHarness( {
+        useActualTreeProvider: true,
+        scanMode: 'workspace',
+        workspaceState: workspaceState,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [ { fsPath: '/workspace/src/nested/file.js' } ],
+        workspaceResults: [ workspaceResult ],
+        fileContents: {
+            '/workspace/src/nested/file.js': '// TODO selected folder item'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        var rootNode = harness.provider.getChildren()[ 0 ];
+        var srcNode = harness.provider.getChildren( rootNode )[ 0 ];
+
+        assert.equal( srcNode.label, 'src' );
+
+        return harness.vscode.commandHandlers[ 'better-todo-tree.showOnlyThisFolderAndSubfolders' ]( srcNode );
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        var latestSearchCall = harness.ripgrepSearchCalls[ harness.ripgrepSearchCalls.length - 1 ];
+
+        assert.deepEqual( workspaceState.get( 'includeGlobs' ), [ '**/src/**/*' ] );
+        assert.deepEqual( latestSearchCall.globs, [ '**/src/**/*', '!**/node_modules/*/**' ] );
+        assert.deepEqual(
+            getLatestReplaceCallForPath( harness, '/workspace/src/nested/file.js' ).results,
+            [ workspaceResult ]
+        );
     } );
 } );
 
