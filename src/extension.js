@@ -1621,7 +1621,7 @@ function activate( context )
         return target;
     }
 
-    function buildGlobsForRipgrep( includeGlobs, excludeGlobs, tempIncludeGlobs, tempExcludeGlobs, submoduleExcludeGlobs )
+    function buildGlobsForRipgrep( includeGlobs, excludeGlobs, tempIncludeGlobs, tempExcludeGlobs, submoduleExcludeGlobs, rootPath )
     {
         var globs = []
             .concat( includeGlobs )
@@ -1644,10 +1644,10 @@ function activate( context )
             globs = globs.concat( submoduleExcludeGlobs.map( g => `!${g}` ) );
         }
 
-        return globs;
+        return utils.toRipgrepGlobArray( globs, rootPath );
     }
 
-    function getOptions( filename, uri, overrideRegexSource, overrideSubmoduleExcludeGlobs )
+    function getOptions( filename, uri, overrideRegexSource, overrideSubmoduleExcludeGlobs, rootPath )
     {
         var snapshot = currentSettingsSnapshot;
         var resourceConfig = snapshot.getResourceConfig( uri );
@@ -1668,7 +1668,8 @@ function activate( context )
             snapshot.excludeGlobs,
             tempIncludeGlobs,
             tempExcludeGlobs,
-            submoduleExcludeGlobs ) : undefined;
+            submoduleExcludeGlobs,
+            rootPath ) : undefined;
 
         if( globs && globs.length > 0 )
         {
@@ -2275,7 +2276,7 @@ function activate( context )
 
         return ensureStorageDirectory().then( function()
         {
-            return search( rootPath, getOptions( undefined, undefined, getCandidateSearchRegex(), submoduleExcludeGlobs ), function( message )
+            return search( rootPath, getOptions( undefined, undefined, getCandidateSearchRegex(), submoduleExcludeGlobs, rootPath ), function( message )
             {
                 if( message.type === 'match' )
                 {
@@ -2391,7 +2392,7 @@ function activate( context )
 
         return ensureStorageDirectory().then( function()
         {
-            return search( rootPath, getOptions( undefined, undefined, undefined, submoduleExcludeGlobs ), function( message )
+            return search( rootPath, getOptions( undefined, undefined, undefined, submoduleExcludeGlobs, rootPath ), function( message )
             {
                 assertGenerationActive( generation );
 

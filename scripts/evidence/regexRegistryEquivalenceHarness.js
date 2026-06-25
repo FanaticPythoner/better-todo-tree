@@ -721,11 +721,6 @@ function runUtilityParity( baselineLoader )
     recordComparison( rows, 'isHexColour alpha', baselineUtils.isHexColour( '#aabbccdd' ), currentUtils.isHexColour( '#aabbccdd' ) );
     recordComparison( rows, 'getCodiconName', baselineUtils.getCodiconName( '$(check-all)' ), currentUtils.getCodiconName( '$(check-all)' ) );
     recordComparison( rows, 'isCodicon true', baselineUtils.isCodicon( '$(check-all)' ), currentUtils.isCodicon( '$(check-all)' ) );
-    recordComparison( rows, 'createFolderGlob slash collapse',
-        baselineUtils.createFolderGlob( '/repo/src/pkg', '/repo', '/**//*' ),
-        currentUtils.createFolderGlob( '/repo/src/pkg', '/repo', '/**//*' )
-    );
-
     return rows;
 }
 

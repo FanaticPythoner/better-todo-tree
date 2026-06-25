@@ -440,6 +440,20 @@ QUnit.test( 'extensionScenarios.instrumentProvider does not alias caller results
     }
 } );
 
+QUnit.test( 'extensionScenarios delegates workspace filter glob helpers to real utils', function( assert )
+{
+    var fs = require( 'fs' );
+    var path = require( 'path' );
+    var harnessSource = fs.readFileSync(
+        path.resolve( __dirname, '..', 'scripts', 'perf', 'extensionScenarios.js' ),
+        'utf8'
+    );
+
+    assert.equal( harnessSource.indexOf( "createFolderGlob: function() { return '**/*'; }" ), -1 );
+    assert.ok( harnessSource.indexOf( 'actualUtils.createFolderGlob.apply( actualUtils, arguments )' ) >= 0 );
+    assert.ok( harnessSource.indexOf( 'actualUtils.toRipgrepGlobArray.apply( actualUtils, arguments )' ) >= 0 );
+} );
+
 QUnit.test( 'instrumentProvider preserves bounded provider state across repeated view-mode refreshes', function( assert )
 {
     var done = assert.async();
