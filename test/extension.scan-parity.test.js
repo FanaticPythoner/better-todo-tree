@@ -4571,6 +4571,7 @@ QUnit.test( "workspace scan progress counts scheduler backlog as queued work", f
 {
     var trackedPaths = [];
     var blockedCallbacks = [];
+    var readsBlocked = true;
     var index;
     var scan;
     var harness;
@@ -4584,7 +4585,7 @@ QUnit.test( "workspace scan progress counts scheduler backlog as queued work", f
         trackedPaths: trackedPaths,
         readFileImpl: function( filePath, encoding, callback )
         {
-            if( blockedCallbacks.length < 4 )
+            if( readsBlocked === true )
             {
                 blockedCallbacks.push( callback );
                 return;
@@ -4604,7 +4605,9 @@ QUnit.test( "workspace scan progress counts scheduler backlog as queued work", f
     {
         assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '0 done (0 B), 8 queued files (' ) >= 0, true );
         assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '4 queued files' ) === -1, true );
+        assert.equal( blockedCallbacks.length > 0, true );
 
+        readsBlocked = false;
         scan.releaseSearch.resolve();
         blockedCallbacks.forEach( function( callback, blockedIndex )
         {
