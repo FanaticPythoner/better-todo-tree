@@ -2385,7 +2385,7 @@
     "devDependencies": {
         "@vscode/ripgrep-universal": "^1.18.0",
         "@vscode/vsce": "^3.9.2",
-        "ovsx": "^1.0.1",
+        "ovsx": "^1.0.2",
         "parse-code-context": "^1.0.0",
         "qunit": "^2.26.0",
         "webpack": "^5.107.2",
