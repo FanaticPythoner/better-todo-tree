@@ -31,6 +31,24 @@ QUnit.test( 'stable hidden view ids are preserved while the public namespace is 
     assert.equal( treeView.when, '!better-todo-tree-is-empty' );
 } );
 
+QUnit.test( 'scan progress contributes the Better Todo Tree product icon font', function( assert )
+{
+    var packageJson = readPackageJson();
+    var english = readPackageNls( 'package.nls.json' );
+    var chinese = readPackageNls( 'package.nls.zh-cn.json' );
+    var productIcon = packageJson.contributes.icons[ 'better-todo-tree' ];
+    var iconDefault = productIcon.default;
+    var fontPath = path.join( __dirname, '..', iconDefault.fontPath );
+
+    assert.equal( productIcon.description, '%better-todo-tree.productIcon.description%' );
+    assert.equal( iconDefault.fontPath, './resources/product-icons/better-todo-tree.woff' );
+    assert.equal( iconDefault.fontCharacter, '\\EA01' );
+    assert.equal( fs.existsSync( fontPath ), true );
+    assert.equal( fs.statSync( fontPath ).size > 0, true );
+    assert.equal( english[ 'better-todo-tree.productIcon.description' ], 'Better Todo Tree status icon' );
+    assert.equal( typeof chinese[ 'better-todo-tree.productIcon.description' ], 'string' );
+} );
+
 QUnit.test( 'public commands use the better-todo-tree namespace', function( assert )
 {
     var packageJson = readPackageJson();

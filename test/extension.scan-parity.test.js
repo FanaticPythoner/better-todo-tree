@@ -17,6 +17,9 @@ var actualPackageNls = require( '../package.nls.json' );
 
 var DEFAULT_INCLUDE_GLOBS = languageMatrix.findConfigurationProperty( 'better-todo-tree.filtering.includeGlobs' ).default.slice();
 var DEFAULT_EXCLUDE_GLOBS = languageMatrix.findConfigurationProperty( 'better-todo-tree.filtering.excludeGlobs' ).default.slice();
+var SCAN_STATUS_ICON_LABEL = '$(better-todo-tree)';
+var SCAN_STATUS_SPIN_ICON_LABEL = '$(better-todo-tree~spin)';
+var SCAN_STATUS_SPINNER_LABEL = SCAN_STATUS_SPIN_ICON_LABEL + ' Scanning';
 var LEGACY_MARKDOWN_REGEX_SOURCE = actualRegexRegistry.LEGACY_MARKDOWN_REGEX_SOURCE;
 var HARNESS_CANDIDATE_TAGS = Object.freeze( [ 'TODO', 'FIXME', 'BUG', 'HACK', 'XXX', '[ ]', '[x]' ] );
 var HARNESS_TAG_SOURCE = actualRegexRegistry.buildEscapedAlternationSource( HARNESS_CANDIDATE_TAGS );
@@ -701,14 +704,26 @@ function createVscodeStub( options )
             visibleNotebookEditors: visibleNotebookEditors,
             createStatusBarItem: function()
             {
+                var text = '';
                 var item = {
-                    text: '',
                     tooltip: '',
                     command: undefined,
+                    textWrites: [],
                     show: function() {},
                     hide: function() {},
                     dispose: function() {}
                 };
+                Object.defineProperty( item, 'text', {
+                    get: function()
+                    {
+                        return text;
+                    },
+                    set: function( value )
+                    {
+                        text = value;
+                        item.textWrites.push( value );
+                    }
+                } );
                 statusBarItems.push( item );
                 return item;
             },
@@ -740,7 +755,12 @@ function createVscodeStub( options )
             showWarningMessage: function( message )
             {
                 warningMessages.push( message );
-                return Promise.resolve();
+                if( typeof ( options.showWarningMessageImpl ) === 'function' )
+                {
+                    return Promise.resolve( options.showWarningMessageImpl.apply( undefined, arguments ) );
+                }
+
+                return Promise.resolve( options.showWarningMessageValue );
             },
             showErrorMessage: function( message )
             {
@@ -4324,10 +4344,20 @@ function createWorkspaceScanProgressHarness( options )
         showScanningProgress: 'status bar',
         emitMatch: true
     }, options || {} );
-    var trackedPath = scanOptions.trackedPath || './tracked.js';
-    var trackedRelativePath = trackedPath.indexOf( './' ) === 0 ? trackedPath.substring( 2 ) : trackedPath;
-    var trackedFile = '/workspace/' + trackedRelativePath;
-    var harness = createExtensionHarness( {
+    var trackedPaths = scanOptions.trackedPaths || [ scanOptions.trackedPath || './tracked.js' ];
+    var configuredFileContents = scanOptions.fileContents || {};
+    var fileContents = {};
+
+    trackedPaths.forEach( function( pathEntry )
+    {
+        var trackedRelativePath = pathEntry.indexOf( './' ) === 0 ? pathEntry.substring( 2 ) : pathEntry;
+        var absolutePath = '/workspace/' + trackedRelativePath;
+        fileContents[ absolutePath ] = Object.prototype.hasOwnProperty.call( configuredFileContents, absolutePath ) ?
+            configuredFileContents[ absolutePath ] :
+            '# TODO ' + path.basename( pathEntry );
+    } );
+
+    var harness = createExtensionHarness( Object.assign( {}, scanOptions, {
         scanMode: 'workspace',
         showScanningProgress: scanOptions.showScanningProgress,
         resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
@@ -4345,17 +4375,27 @@ function createWorkspaceScanProgressHarness( options )
         {
             if( scanOptions.emitMatch === true )
             {
-                onEvent( {
-                    type: 'match',
-                    data: {
-                        path: { text: trackedPath }
-                    }
-                } );
-                onEvent( {
-                    type: 'end',
-                    data: {
-                        path: { text: trackedPath }
-                    }
+                trackedPaths.forEach( function( pathEntry )
+                {
+                    var trackedRelativePath = pathEntry.indexOf( './' ) === 0 ? pathEntry.substring( 2 ) : pathEntry;
+                    var absolutePath = '/workspace/' + trackedRelativePath;
+                    var bytesSearched = Buffer.byteLength( fileContents[ absolutePath ] || '', 'utf8' );
+
+                    onEvent( {
+                        type: 'match',
+                        data: {
+                            path: { text: pathEntry }
+                        }
+                    } );
+                    onEvent( {
+                        type: 'end',
+                        data: {
+                            path: { text: pathEntry },
+                            stats: {
+                                bytes_searched: bytesSearched
+                            }
+                        }
+                    } );
                 } );
             }
 
@@ -4364,10 +4404,10 @@ function createWorkspaceScanProgressHarness( options )
                 return { stats: { matches: scanOptions.emitMatch === true ? 1 : 0 } };
             } );
         },
-        fileContents: scanOptions.emitMatch === true ? Object.assign( {}, {
-            [ trackedFile ]: '# TODO tracked'
-        } ) : {}
-    } );
+        fileContents: scanOptions.emitMatch === true ? fileContents : {},
+        fileStats: scanOptions.fileStats,
+        readFileImpl: scanOptions.readFileImpl
+    } ) );
 
     return {
         harness: harness,
@@ -4383,13 +4423,80 @@ function scanProgressSurfaceState( harness )
             return session.completed !== true;
         } ),
         tree: harness.vscode.treeViews[ 0 ].message !== '',
-        statusBar: harness.vscode.statusBarItems[ 0 ].command === 'better-todo-tree.stopScan'
+        statusBar: isScanProgressStatusBarItem( getScanProgressStatusBarItem( harness ) )
     };
 }
 
 function assertScanProgressSurfaceState( assert, harness, expected )
 {
     assert.deepEqual( scanProgressSurfaceState( harness ), expected );
+}
+
+function getScanProgressStatusBarItem( harness )
+{
+    return harness.vscode.statusBarItems.filter( function( item )
+    {
+        return isScanProgressStatusBarItem( item ) === true;
+    } )[ 0 ] || harness.vscode.statusBarItems[ 0 ];
+}
+
+function isScanProgressStatusBarItem( item )
+{
+    if( !item )
+    {
+        return false;
+    }
+
+    return item.command === 'better-todo-tree.openCurrentScanFile' ||
+        item.command === 'better-todo-tree.exportScanDiagnostics';
+}
+
+function getScanProgressSpinnerStatusBarItem( harness )
+{
+    return harness.vscode.statusBarItems.filter( function( item )
+    {
+        return item.text === SCAN_STATUS_SPINNER_LABEL ||
+            item.textWrites.indexOf( SCAN_STATUS_SPINNER_LABEL ) >= 0;
+    } )[ 0 ];
+}
+
+function getScanProgressStatusBarPercent( harness )
+{
+    var text = getScanProgressStatusBarItem( harness ).text;
+    var percentIndex = text.lastIndexOf( '%' );
+    var separatorIndex = text.lastIndexOf( ' ', percentIndex );
+
+    if( percentIndex === -1 )
+    {
+        return undefined;
+    }
+
+    return Number( text.slice( separatorIndex + 1, percentIndex ) );
+}
+
+function getLastProgressReport( harness )
+{
+    var session = harness.vscode.progressSessions[ harness.vscode.progressSessions.length - 1 ];
+
+    if( !session || session.reports.length === 0 )
+    {
+        return undefined;
+    }
+
+    return session.reports[ session.reports.length - 1 ];
+}
+
+function waitForScanProgressTooltip( harness, predicate, attempts )
+{
+    if( predicate( getScanProgressStatusBarItem( harness ).tooltip ) || attempts <= 0 )
+    {
+        return Promise.resolve();
+    }
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return waitForScanProgressTooltip( harness, predicate, attempts - 1 );
+    } );
 }
 
 function fireShowScanningProgressConfigurationChange( harness )
@@ -4415,16 +4522,325 @@ QUnit.test( "default workspace scans publish progress in the status bar only", f
     return matrixHelpers.flushAsyncWork().then( function()
     {
         assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: true } );
-        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '$(sync~spin) Better Todo Tree' ), 0 );
-        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( 'Better Todo Tree' ) >= 0, true );
-        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '100%' ) === -1, true );
+        assert.equal( getScanProgressSpinnerStatusBarItem( harness ).text, SCAN_STATUS_SPINNER_LABEL );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( SCAN_STATUS_ICON_LABEL ), -1 );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( 'Scanning' ), -1 );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( 'Better Todo Tree' ), -1 );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '$(checklist)' ), -1 );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( 'queued' ) >= 0, true );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '100%' ) === -1, true );
 
         scan.releaseSearch.resolve();
         return matrixHelpers.flushAsyncWork();
     } ).then( function()
     {
         assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
-        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '100%' ) === -1, true );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '100%' ) === -1, true );
+    } );
+} );
+
+QUnit.test( "workspace scan progress counts scheduler backlog as queued work", function( assert )
+{
+    var trackedPaths = [];
+    var blockedCallbacks = [];
+    var index;
+    var scan;
+    var harness;
+
+    for( index = 0; index < 8; index++ )
+    {
+        trackedPaths.push( './tracked-' + index + '.js' );
+    }
+
+    scan = createWorkspaceScanProgressHarness( {
+        trackedPaths: trackedPaths,
+        readFileImpl: function( filePath, encoding, callback )
+        {
+            if( blockedCallbacks.length < 4 )
+            {
+                blockedCallbacks.push( callback );
+                return;
+            }
+
+            callback( null, '# TODO ' + path.basename( filePath ) );
+        }
+    } );
+    harness = scan.harness;
+
+    harness.extension.activate( harness.context );
+
+    return waitForScanProgressTooltip( harness, function( tooltip )
+    {
+        return tooltip.indexOf( '0 done (0 B), 8 queued files (' ) >= 0;
+    }, 20 ).then( function()
+    {
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '0 done (0 B), 8 queued files (' ) >= 0, true );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '4 queued files' ) === -1, true );
+
+        scan.releaseSearch.resolve();
+        blockedCallbacks.forEach( function( callback, blockedIndex )
+        {
+            callback( null, '# TODO tracked-' + blockedIndex + '.js' );
+        } );
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+    } );
+} );
+
+QUnit.test( "workspace scan progress separates discovery from known file work", function( assert )
+{
+    var trackedPaths = [];
+    var blockedPath = '/workspace/tracked-49.js';
+    var blockedReadCallback;
+    var percentDuringDiscovery;
+    var percentAfterDiscovery;
+    var index;
+    var scan;
+    var harness;
+
+    for( index = 0; index < 50; index++ )
+    {
+        trackedPaths.push( './tracked-' + index + '.js' );
+    }
+
+    scan = createWorkspaceScanProgressHarness( {
+        trackedPaths: trackedPaths,
+        readFileImpl: function( filePath, encoding, callback )
+        {
+            if( filePath === blockedPath )
+            {
+                blockedReadCallback = callback;
+                return;
+            }
+
+            callback( null, '# TODO ' + path.basename( filePath ) );
+        }
+    } );
+    harness = scan.harness;
+
+    harness.extension.activate( harness.context );
+
+    return waitForScanProgressTooltip( harness, function( tooltip )
+    {
+        return tooltip.indexOf( '49 done (' ) >= 0 &&
+            tooltip.indexOf( '1 queued file (' ) >= 0;
+    }, 20 ).then( function()
+    {
+        percentDuringDiscovery = getScanProgressStatusBarPercent( harness );
+
+        assert.equal( getScanProgressStatusBarItem( harness ).tooltip.indexOf( '49 done (' ) >= 0, true );
+        assert.equal( getScanProgressStatusBarItem( harness ).tooltip.indexOf( '1 queued file (' ) >= 0, true );
+        assert.equal( percentDuringDiscovery, undefined );
+
+        scan.releaseSearch.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        percentAfterDiscovery = getScanProgressStatusBarPercent( harness );
+
+        assert.equal( percentAfterDiscovery, undefined );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '49 done (' ) >= 0, true );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '1 queued file (' ) >= 0, true );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '%' ) === -1, true );
+
+        blockedReadCallback( null, '# TODO tracked-49.js' );
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+    } );
+} );
+
+QUnit.test( "workspace scan progress weights pending file bytes", function( assert )
+{
+    var trackedPaths = [];
+    var fileContents = {};
+    var blockedPath = '/workspace/tracked-49.js';
+    var blockedReadCallback;
+    var originalDateNow = Date.now;
+    var now = 100000;
+    var hugeContent = new Array( ( 512 * 1024 ) + 1 ).join( 'x' ) + '\n# TODO tracked-49.js\n';
+    var percentDuringDiscovery;
+    var percentAfterDiscovery;
+    var report;
+    var spinner;
+    var index;
+    var scan;
+    var harness;
+
+    Date.now = function()
+    {
+        return now;
+    };
+
+    for( index = 0; index < 50; index++ )
+    {
+        trackedPaths.push( './tracked-' + index + '.js' );
+        fileContents[ '/workspace/tracked-' + index + '.js' ] = '# TODO tracked-' + index + '.js\n';
+    }
+    fileContents[ blockedPath ] = hugeContent;
+
+    scan = createWorkspaceScanProgressHarness( {
+        showScanningProgress: 'all',
+        trackedPaths: trackedPaths,
+        fileContents: fileContents,
+        readFileImpl: function( filePath, encoding, callback )
+        {
+            if( filePath === blockedPath )
+            {
+                blockedReadCallback = callback;
+                return;
+            }
+
+            callback( null, fileContents[ filePath ] );
+        }
+    } );
+    harness = scan.harness;
+
+    harness.extension.activate( harness.context );
+
+    return waitForScanProgressTooltip( harness, function( tooltip )
+    {
+        return tooltip.indexOf( '49 done (' ) >= 0 &&
+            tooltip.indexOf( '1 queued file (512.0 KB)' ) >= 0;
+    }, 20 ).then( function()
+    {
+        percentDuringDiscovery = getScanProgressStatusBarPercent( harness );
+
+        assert.equal( percentDuringDiscovery, undefined );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '49 done (' ) >= 0, true );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '1 queued file (512.0 KB)' ) >= 0, true );
+
+        now += 1000;
+        scan.releaseSearch.resolve();
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        percentAfterDiscovery = getScanProgressStatusBarPercent( harness );
+        report = getLastProgressReport( harness );
+        spinner = getScanProgressSpinnerStatusBarItem( harness );
+
+        assert.equal( percentAfterDiscovery, undefined );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '49 done (' ) >= 0, true );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '1 queued file (512.0 KB)' ) >= 0, true );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '%' ) === -1, true );
+        assert.equal( getScanProgressStatusBarItem( harness ).tooltip.indexOf( 'ETA ' ) >= 0, true );
+        assert.equal( getScanProgressStatusBarItem( harness ).tooltip.indexOf( 'KB' ) >= 0, true );
+        assert.equal( getScanProgressStatusBarItem( harness ).tooltip.indexOf( report && report.message ), 0 );
+        assert.deepEqual( spinner.textWrites.filter( function( value )
+        {
+            return value === SCAN_STATUS_SPINNER_LABEL;
+        } ), [ SCAN_STATUS_SPINNER_LABEL ] );
+
+        blockedReadCallback( null, hugeContent );
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+    } ).finally( function()
+    {
+        Date.now = originalDateNow;
+    } );
+} );
+
+QUnit.test( "workspace scan status opens the current file", function( assert )
+{
+    var blockedPath = '/workspace/current.vue';
+    var blockedReadCallback;
+    var openedUri;
+    var shownDocument;
+    var scan = createWorkspaceScanProgressHarness( {
+        trackedPath: './current.vue',
+        readFileImpl: function( filePath, encoding, callback )
+        {
+            if( filePath === blockedPath )
+            {
+                blockedReadCallback = callback;
+                return;
+            }
+
+            callback( null, '# TODO other' );
+        },
+        openTextDocumentImpl: function( uri )
+        {
+            openedUri = uri;
+            return { uri: uri };
+        },
+        showTextDocumentImpl: function( document )
+        {
+            shownDocument = document;
+            return undefined;
+        }
+    } );
+    var harness = scan.harness;
+
+    harness.extension.activate( harness.context );
+
+    return waitForScanProgressTooltip( harness, function( tooltip )
+    {
+        return tooltip.indexOf( 'current.vue' ) >= 0;
+    }, 20 ).then( function()
+    {
+        assert.equal( getScanProgressStatusBarItem( harness ).command, 'better-todo-tree.openCurrentScanFile' );
+        return harness.vscode.commandHandlers[ 'better-todo-tree.openCurrentScanFile' ]();
+    } ).then( function()
+    {
+        assert.equal( openedUri.fsPath, blockedPath );
+        assert.equal( shownDocument.uri.fsPath, blockedPath );
+
+        scan.releaseSearch.resolve();
+        blockedReadCallback( null, '# TODO current' );
+        return matrixHelpers.flushAsyncWork();
+    } );
+} );
+
+QUnit.test( "workspace scan read errors are exported in diagnostics", function( assert )
+{
+    var readError = new Error( 'permission denied' );
+    var diagnosticDocument;
+    readError.code = 'EACCES';
+
+    var scan = createWorkspaceScanProgressHarness( {
+        trackedPath: './blocked.js',
+        readFileImpl: function( filePath, encoding, callback )
+        {
+            callback( readError );
+        },
+        openTextDocumentImpl: function( document )
+        {
+            diagnosticDocument = document;
+            return { uri: matrixHelpers.createUri( '/tmp/scan-diagnostics.json' ) };
+        }
+    } );
+    var harness = scan.harness;
+
+    harness.extension.activate( harness.context );
+    scan.releaseSearch.resolve();
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.ok( harness.warningMessages.some( function( message )
+        {
+            return message.indexOf( 'blocked.js' ) >= 0 && message.indexOf( 'permission denied' ) >= 0;
+        } ) );
+        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+
+        return harness.vscode.commandHandlers[ 'better-todo-tree.exportScanDiagnostics' ]();
+    } ).then( function()
+    {
+        var diagnostics = JSON.parse( diagnosticDocument.content );
+        assert.equal( diagnosticDocument.language, 'json' );
+        assert.equal( diagnostics.scan.active, false );
+        assert.equal( diagnostics.scan.roots[ 0 ], '/workspace' );
+        assert.equal( diagnostics.issues.length, 1 );
+        assert.equal( diagnostics.issues[ 0 ].filePath, '/workspace/blocked.js' );
+        assert.equal( diagnostics.issues[ 0 ].code, 'EACCES' );
+        assert.ok( diagnostics.events.some( function( event )
+        {
+            return event.type === 'file-skipped' && event.filePath === '/workspace/blocked.js';
+        } ) );
     } );
 } );
 
@@ -4448,7 +4864,11 @@ QUnit.test( "workspace scans can publish progress to every visible surface", fun
             return typeof report.message === 'string' && report.message.indexOf( 'tracked.js' ) >= 0;
         } ), true );
         assert.equal( harness.vscode.treeViews[ 0 ].message.indexOf( 'tracked.js' ) >= 0, true );
-        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '$(sync~spin) Better Todo Tree' ), 0 );
+        assert.equal( getScanProgressSpinnerStatusBarItem( harness ).text, SCAN_STATUS_SPINNER_LABEL );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( SCAN_STATUS_ICON_LABEL ), -1 );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( 'Scanning' ), -1 );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( 'Better Todo Tree' ), -1 );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '$(checklist)' ), -1 );
 
         scan.releaseSearch.resolve();
         return matrixHelpers.flushAsyncWork();
@@ -4456,7 +4876,7 @@ QUnit.test( "workspace scans can publish progress to every visible surface", fun
     {
         assert.equal( harness.vscode.progressSessions[ 0 ].completed, true );
         assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
-        assert.equal( harness.vscode.statusBarItems[ 0 ].text.indexOf( '100%' ) === -1, true );
+        assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '100%' ) === -1, true );
     } );
 } );
 
@@ -4626,7 +5046,7 @@ QUnit.test( "scan progress notification cancellation interrupts the active scan"
     } ).then( function()
     {
         assert.equal( harness.vscode.progressSessions[ 0 ].completed, true );
-        assert.equal( harness.vscode.statusBarItems[ 0 ].text, 'Better Todo Tree: Scanning interrupted.' );
+        assert.equal( harness.vscode.statusBarItems[ 0 ].text, SCAN_STATUS_ICON_LABEL + ' Scanning interrupted.' );
         assert.equal( harness.vscode.treeViews[ 0 ].message, 'Scan cancelled.' );
     } );
 } );

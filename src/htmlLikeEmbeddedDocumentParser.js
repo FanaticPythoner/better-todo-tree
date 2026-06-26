@@ -101,6 +101,12 @@ function parseAttributes( text, start, end )
         }
 
         var name = readName( text, index );
+        if( name.value.length === 0 )
+        {
+            index++;
+            continue;
+        }
+
         var key = normalizeToken( name.value );
         index = name.end;
 
