@@ -4570,8 +4570,8 @@ QUnit.test( "default workspace scans publish progress in the status bar only", f
 QUnit.test( "workspace scan progress counts scheduler backlog as queued work", function( assert )
 {
     var trackedPaths = [];
-    var blockedCallbacks = [];
-    var readsBlocked = true;
+    var pendingReadPaths = [];
+    var releaseReads = createDeferred();
     var index;
     var scan;
     var harness;
@@ -4585,13 +4585,11 @@ QUnit.test( "workspace scan progress counts scheduler backlog as queued work", f
         trackedPaths: trackedPaths,
         readFileImpl: function( filePath, encoding, callback )
         {
-            if( readsBlocked === true )
+            pendingReadPaths.push( filePath );
+            releaseReads.promise.then( function()
             {
-                blockedCallbacks.push( callback );
-                return;
-            }
-
-            callback( null, '# TODO ' + path.basename( filePath ) );
+                callback( null, '# TODO ' + path.basename( filePath ) );
+            } );
         }
     } );
     harness = scan.harness;
@@ -4605,14 +4603,11 @@ QUnit.test( "workspace scan progress counts scheduler backlog as queued work", f
     {
         assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '0 done (0 B), 8 queued files (' ) >= 0, true );
         assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '4 queued files' ) === -1, true );
-        assert.equal( blockedCallbacks.length > 0, true );
+        assert.equal( pendingReadPaths.length > 0, true );
+        assert.equal( pendingReadPaths.length < trackedPaths.length, true );
 
-        readsBlocked = false;
+        releaseReads.resolve();
         scan.releaseSearch.resolve();
-        blockedCallbacks.forEach( function( callback, blockedIndex )
-        {
-            callback( null, '# TODO tracked-' + blockedIndex + '.js' );
-        } );
         return waitAndAssertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
     } );
 } );
