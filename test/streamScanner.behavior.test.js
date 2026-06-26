@@ -135,6 +135,40 @@ QUnit.module( "streamScanner", function()
         } );
     } );
 
+    QUnit.test( "default options stream files above the default in-memory threshold", function( assert )
+    {
+        var done = assert.async();
+        var line = "x\n";
+        var content = line.repeat( Math.ceil( ( streamScanner.DEFAULT_MAX_INMEMORY_SCAN_BYTES + 4096 ) / line.length ) );
+        var fsImpl = createMockFs( content, undefined, 8192 );
+        var calls = [];
+
+        streamScanner.scanWorkspaceFileWithText( '/tmp/default-large.js', function( text )
+        {
+            calls.push( text.length );
+            return [];
+        }, { fs: fsImpl } ).then( function()
+        {
+            assert.equal(
+                streamScanner.DEFAULT_MAX_INMEMORY_SCAN_BYTES,
+                streamScanner.DEFAULT_STREAM_CHUNK_BYTES
+            );
+            assert.ok( calls.length > 1, "default scanner streams the file in chunks" );
+            assert.ok(
+                calls.every( function( length )
+                {
+                    return length <= streamScanner.DEFAULT_STREAM_CHUNK_BYTES + streamScanner.DEFAULT_STREAM_OVERLAP_BYTES;
+                } ),
+                "chunk scan calls stay bounded by default chunk plus overlap"
+            );
+            done();
+        } ).catch( function( error )
+        {
+            assert.notOk( error, error && error.stack ? error.stack : String( error ) );
+            done();
+        } );
+    } );
+
     QUnit.test( "files exceeding maxInMemoryBytes stream chunks and aggregate global offsets", function( assert )
     {
         var done = assert.async();

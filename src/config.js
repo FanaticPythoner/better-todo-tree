@@ -118,14 +118,14 @@ function regex( uri )
     return {
         tags: tags(),
         regex: identity.getSetting( 'regex.regex', undefined, uri ),
-        caseSensitive: identity.getSetting( 'regex.regexCaseSensitive', true, uri ),
-        multiLine: identity.getSetting( 'regex.enableMultiLine', false, uri )
+        caseSensitive: identity.getSetting( 'regex.regexCaseSensitive', true ),
+        multiLine: identity.getSetting( 'regex.enableMultiLine', false )
     };
 }
 
-function subTagRegex( uri )
+function subTagRegex()
 {
-    return identity.getSetting( 'regex.subTagRegex', '', uri );
+    return identity.getSetting( 'regex.subTagRegex', '' );
 }
 
 function ripgrepExecutableName()

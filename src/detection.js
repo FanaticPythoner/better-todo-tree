@@ -1157,29 +1157,90 @@ function collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resour
 
 function createTextWithMaskedRanges( text, ranges )
 {
-    if( !Array.isArray( ranges ) || ranges.length === 0 )
+    var normalizedRanges = normalizeMaskRanges( text, ranges );
+
+    if( normalizedRanges.length === 0 )
     {
         return text;
     }
 
-    var chars = text.split( '' );
+    var maskedText = "";
+    var cursor = 0;
 
-    ranges.forEach( function( range )
+    normalizedRanges.forEach( function( range )
     {
-        var start = Math.max( 0, range.startOffset || 0 );
-        var end = Math.min( text.length, range.endOffset || 0 );
-        var index;
-
-        for( index = start; index < end; index++ )
-        {
-            if( chars[ index ] !== '\n' && chars[ index ] !== '\r' )
-            {
-                chars[ index ] = ' ';
-            }
-        }
+        maskedText += text.slice( cursor, range.startOffset );
+        maskedText += maskRangeText( text, range.startOffset, range.endOffset );
+        cursor = range.endOffset;
     } );
 
-    return chars.join( '' );
+    return maskedText + text.slice( cursor );
+}
+
+function normalizeMaskRanges( text, ranges )
+{
+    var normalized = [];
+
+    if( Array.isArray( ranges ) !== true || ranges.length === 0 )
+    {
+        return normalized;
+    }
+
+    ranges.map( function( range )
+    {
+        return {
+            startOffset: Math.max( 0, Math.min( text.length, range.startOffset || 0 ) ),
+            endOffset: Math.max( 0, Math.min( text.length, range.endOffset || 0 ) )
+        };
+    } ).filter( function( range )
+    {
+        return range.endOffset > range.startOffset;
+    } ).sort( function( left, right )
+    {
+        return left.startOffset - right.startOffset || left.endOffset - right.endOffset;
+    } ).forEach( function( range )
+    {
+        var previous = normalized[ normalized.length - 1 ];
+
+        if( previous && range.startOffset <= previous.endOffset )
+        {
+            previous.endOffset = Math.max( previous.endOffset, range.endOffset );
+            return;
+        }
+
+        normalized.push( range );
+    } );
+
+    return normalized;
+}
+
+function maskRangeText( text, startOffset, endOffset )
+{
+    var maskedText = "";
+    var cursor = startOffset;
+    var index = startOffset;
+
+    while( index < endOffset )
+    {
+        if( text[ index ] === '\n' || text[ index ] === '\r' )
+        {
+            if( index > cursor )
+            {
+                maskedText += " ".repeat( index - cursor );
+            }
+            maskedText += text[ index ];
+            cursor = index + 1;
+        }
+
+        index++;
+    }
+
+    if( endOffset > cursor )
+    {
+        maskedText += " ".repeat( endOffset - cursor );
+    }
+
+    return maskedText;
 }
 
 function createShiftedNestedResult( result, charOffset, lineOffsets )

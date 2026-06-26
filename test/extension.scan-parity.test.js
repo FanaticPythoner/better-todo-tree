@@ -1080,6 +1080,14 @@ function createExtensionHarness( options )
                     filePath,
                     scanFn,
                     Object.assign( {}, callerOptions, streamScannerOverrides ) );
+            },
+            scanInspectedWorkspaceFileWithText: function( filePath, scanInfo, scanFn, callerOptions )
+            {
+                return actualStreamScanner.scanInspectedWorkspaceFileWithText(
+                    filePath,
+                    scanInfo,
+                    scanFn,
+                    Object.assign( {}, callerOptions, streamScannerOverrides ) );
             }
         } ) :
         actualStreamScanner;
@@ -1661,6 +1669,26 @@ QUnit.test( "issue #42 default-derived workspace regex uses candidate scan", fun
         assert.equal( harness.scanTextCalls.length, 1 );
         assert.equal( harness.scanTextCalls[ 0 ].text, '- [ ] Task 1\n' );
         assert.deepEqual( getLatestReplaceCallForPath( harness, filePath ).results, fixture );
+    } );
+} );
+
+QUnit.test( "startup workspace scan begins after activate returns", function( assert )
+{
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [],
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    assert.equal( harness.ripgrepSearchCalls.length, 0, "ripgrep does not run inside activate" );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.ripgrepSearchCalls.length, 1, "startup scan runs after activate returns" );
     } );
 } );
 
@@ -4727,7 +4755,7 @@ QUnit.test( "workspace scan keeps successful results when one workspace file rea
     } );
 } );
 
-QUnit.test( "workspace scan streams oversized files through chunked detection instead of skipping them", function( assert )
+QUnit.test( "workspace scan normalizes oversized default-regex matches without reparsing the file", function( assert )
 {
     var oversizedPath = '/workspace/huge.js';
     var oversizedContent = [
@@ -4741,28 +4769,28 @@ QUnit.test( "workspace scan streams oversized files through chunked detection in
         scanMode: 'workspace',
         resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
         workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
-        scanTextImpl: function( uri, text )
+        normalizeWorkspaceResult: function( match, uri )
         {
-            var indices = [];
-            var index = 0;
-            while( ( index = text.indexOf( 'TODO', index ) ) !== -1 )
-            {
-                indices.push( {
-                    uri: uri,
-                    actualTag: 'TODO',
-                    displayText: text.slice( index, index + 4 ),
-                    continuationText: [],
-                    line: 1,
-                    matchStartOffset: index,
-                    matchEndOffset: index + 4,
-                    tagStartOffset: index,
-                    tagEndOffset: index + 4
-                } );
-                index += 4;
-            }
-            return indices;
+            return {
+                uri: uri,
+                actualTag: 'TODO',
+                tag: 'TODO',
+                displayText: match.lines.trim().split( ' ' ).slice( 2 ).join( ' ' ),
+                continuationText: [],
+                line: match.line,
+                endLine: match.line,
+                matchStartOffset: match.absoluteOffset,
+                matchEndOffset: match.absoluteOffset + match.match.length,
+                tagStartOffset: match.absoluteOffset + 3,
+                tagEndOffset: match.absoluteOffset + 7
+            };
         },
-        ripgrepMatches: [ { fsPath: oversizedPath } ],
+        ripgrepMatches: [
+            { fsPath: oversizedPath, line: 1, column: 4, match: 'TODO', lines: '// TODO alpha\n', absoluteOffset: 3 },
+            { fsPath: oversizedPath, line: 2, column: 4, match: 'TODO', lines: '// TODO beta\n', absoluteOffset: 17 },
+            { fsPath: oversizedPath, line: 3, column: 4, match: 'TODO', lines: '// TODO gamma\n', absoluteOffset: 30 },
+            { fsPath: oversizedPath, line: 4, column: 4, match: 'TODO', lines: '// TODO delta\n', absoluteOffset: 44 }
+        ],
         fileContents: {
             '/workspace/huge.js': oversizedContent
         },
@@ -4788,8 +4816,10 @@ QUnit.test( "workspace scan streams oversized files through chunked detection in
 
         assert.equal( harness.readFileCalls.indexOf( oversizedPath ), -1,
             "fs.readFile was bypassed for oversized files" );
-        assert.ok( harness.scanTextCalls.length >= 2,
-            "streaming scanText was invoked multiple times for the oversized file (got " + harness.scanTextCalls.length + ")" );
+        assert.equal( harness.scanTextCalls.length, 0,
+            "full-text default scanning is bypassed for oversized files" );
+        assert.equal( harness.normalizeWorkspaceCalls.length, 4,
+            "raw workspace matches are normalized directly for oversized files" );
 
         var replaceForOversized = harness.provider.replaceCalls.filter( function( call )
         {

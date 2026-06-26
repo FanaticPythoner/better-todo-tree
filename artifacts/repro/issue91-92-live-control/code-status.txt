@@ -1,0 +1,53 @@
+Version:          Code 1.123.0 (6a44c352bd24569c417e530095901b649960f9f8, 2026-06-03T11:29:03+02:00)
+OS Version:       Linux x64 6.8.0-124-generic
+CPUs:             Intel(R) Core(TM) i9-14900HX (16 x 3002)
+Memory (System):  62.51GB (15.43GB free)
+Load (avg):       2, 3, 3
+VM:               0%
+Screen Reader:    no
+Process Argv:     --user-data-dir /home/n00ne/Documents/GitHub/better-todo-tree/artifacts/repro/issue91-92-live-control/user-data --extensions-dir /home/n00ne/Documents/GitHub/better-todo-tree/artifacts/repro/issue91-92-live-control/extensions --new-window --log trace --wait /home/n00ne/Documents/GitHub/better-todo-tree/artifacts/repro/issue91-92-live-workspace --waitMarkerFilePath /tmp/hWHc0gCf
+GPU Status:       2d_canvas:                              unavailable_software
+                  GPU0:                                   VENDOR= 0x10de, DEVICE=0x2860, DRIVER_VENDOR=Mesa, DRIVER_VERSION=23.2.1 *ACTIVE*
+                  GPU1:                                   VENDOR= 0x8086, DEVICE=0xa788
+                  Machine model name:                     
+                  Machine model version:                  
+                  direct_rendering_display_compositor:    disabled_off_ok
+                  gpu_compositing:                        disabled_software
+                  multiple_raster_threads:                enabled_on
+                  opengl:                                 unavailable_off
+                  rasterization:                          unavailable_off
+                  raw_draw:                               disabled_off_ok
+                  skia_graphite:                          disabled_off
+                  trees_in_viz:                           disabled_off
+                  video_decode:                           unavailable_off
+                  video_encode:                           disabled_software
+                  vulkan:                                 disabled_off
+                  webgl:                                  unavailable_off
+                  webgpu:                                 unavailable_software
+                  webgpu_on_vk_via_gl_interop:            disabled_off
+                  webnn:                                  disabled_off
+GPU Log Messages:
+[550171:0626/061053.433491:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:1680] : Installed VAAPI version is too old. min supported version: 1.17 installed version: 1.14
+
+[550171:0626/061053.436440:WARNING:sandbox/policy/linux/sandbox_linux.cc:404] : InitializeSandbox() called with multiple threads in process gpu-process.
+
+[550171:0626/061053.438121:WARNING:ui/gfx/linux/gbm_support_x11.cc:48] : dri3 extension not supported.
+
+
+CPU %	Mem MB	   PID	Process
+    0	171854459637	550136	code
+    0	     0	550139	   zygote
+    0	85927229818	550171	     gpu-process
+    0	     0	550140	   zygote
+    0	     0	550143	     zygote
+    0	214818074546	550240	window [1] (issue91-92-live-workspace - Visual Studio Code)
+    0	42963614909	550173	   utility-network-service
+    0	85927229818	550359	shared-process
+    0	42963614909	550360	file-watcher [1]
+    0	85927229818	550405	extension-host [1]
+
+Workspace Stats: 
+|  Window (issue91-92-live-workspace - Visual Studio Code)
+|    Folder (issue91-92-live-workspace): 91 files
+|      File types: vue(81) astro(9) json(1)
+|      Conf files: settings.json(1)

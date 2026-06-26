@@ -2321,6 +2321,33 @@ function activate( context )
         return '(' + utils.getTagRegexSource() + ')';
     }
 
+    function normalizeWorkspaceRegexMatches( uri, fileMatches )
+    {
+        return fileMatches.map( function( match )
+        {
+            return detection.normalizeWorkspaceRegexMatch( uri, match, currentSettingsSnapshot );
+        } ).filter( function( result )
+        {
+            return result !== undefined;
+        } );
+    }
+
+    function scanWorkspaceFileRegexMatches( rootPath, filePath, uri, submoduleExcludeGlobs )
+    {
+        var fileMatches = [];
+
+        return search( rootPath, getOptions( filePath, uri, undefined, submoduleExcludeGlobs, rootPath ), function( message )
+        {
+            if( message.type === 'match' )
+            {
+                fileMatches.push( toWorkspaceMatch( rootPath, message.data ) );
+            }
+        } ).then( function()
+        {
+            return normalizeWorkspaceRegexMatches( uri, fileMatches );
+        } );
+    }
+
     function scanWorkspaceCandidates( rootPath, generation, store )
     {
         var matchedFiles = new Set();
@@ -2348,10 +2375,20 @@ function activate( context )
                 }
 
                 queueScanFileProgress( generation, filePath );
-                return scanWorkspaceFileWithText( filePath, function( text )
+                return inspectWorkspaceFile( filePath ).then( function( scanInfo )
                 {
                     assertGenerationActive( generation );
-                    return detection.scanTextWithStreamingContext( detection.createScanContext( uri, text, currentSettingsSnapshot ) );
+
+                    if( scanInfo.useStreaming === true )
+                    {
+                        return scanWorkspaceFileRegexMatches( rootPath, filePath, uri, submoduleExcludeGlobs );
+                    }
+
+                    return streamScanner.scanInspectedWorkspaceFileWithText( filePath, scanInfo, function( text )
+                    {
+                        assertGenerationActive( generation );
+                        return detection.scanTextWithStreamingContext( detection.createScanContext( uri, text, currentSettingsSnapshot ) );
+                    }, { fs: fs } );
                 } ).then( function( results )
                 {
                     assertGenerationActive( generation );
@@ -2409,17 +2446,6 @@ function activate( context )
             }
 
             return matchesByFile.get( filePath );
-        }
-
-        function normalizeWorkspaceRegexMatches( uri, fileMatches )
-        {
-            return fileMatches.map( function( match )
-            {
-                return detection.normalizeWorkspaceRegexMatch( uri, match, currentSettingsSnapshot );
-            } ).filter( function( result )
-            {
-                return result !== undefined;
-            } );
         }
 
         function scheduleFileNormalization( filePath, fileMatches )
@@ -3564,6 +3590,26 @@ function activate( context )
             }
         }
 
+        function scheduleStartupScan()
+        {
+            var startupScanImmediate = setImmediate( function()
+            {
+                rebuild();
+
+                if( vscode.window.activeTextEditor )
+                {
+                    documentChanged();
+                }
+            } );
+
+            context.subscriptions.push( {
+                dispose: function()
+                {
+                    clearImmediate( startupScanImmediate );
+                }
+            } );
+        }
+
         function activeEditorChanged( editor )
         {
             if( !editor || !editor.document )
@@ -4470,12 +4516,7 @@ function activate( context )
                 }
             } );
 
-            rebuild();
-
-            if( vscode.window.activeTextEditor )
-            {
-                documentChanged();
-            }
+            scheduleStartupScan();
         }
         else
         {
