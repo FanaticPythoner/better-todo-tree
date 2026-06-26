@@ -1284,7 +1284,7 @@ function activate( context )
         scanProgressState.phase = 'completed';
         scanProgressState.currentFile = undefined;
         scanProgressState.finalizationCompleted = Math.max( scanProgressState.finalizationCompleted, scanProgressState.finalizationTotal );
-        updateScanProgress( generation, {}, true );
+        clearScanStatusBarProgress();
 
         resolveScanProgressNotificationSession( generation );
 

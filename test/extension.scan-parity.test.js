@@ -20,6 +20,7 @@ var DEFAULT_EXCLUDE_GLOBS = languageMatrix.findConfigurationProperty( 'better-to
 var SCAN_STATUS_ICON_LABEL = '$(better-todo-tree)';
 var SCAN_STATUS_SPIN_ICON_LABEL = '$(better-todo-tree~spin)';
 var SCAN_STATUS_SPINNER_LABEL = SCAN_STATUS_SPIN_ICON_LABEL + ' Scanning';
+var SCAN_PROGRESS_SETTLE_ATTEMPTS = 20;
 var LEGACY_MARKDOWN_REGEX_SOURCE = actualRegexRegistry.LEGACY_MARKDOWN_REGEX_SOURCE;
 var HARNESS_CANDIDATE_TAGS = Object.freeze( [ 'TODO', 'FIXME', 'BUG', 'HACK', 'XXX', '[ ]', '[x]' ] );
 var HARNESS_TAG_SOURCE = actualRegexRegistry.buildEscapedAlternationSource( HARNESS_CANDIDATE_TAGS );
@@ -4432,6 +4433,34 @@ function assertScanProgressSurfaceState( assert, harness, expected )
     assert.deepEqual( scanProgressSurfaceState( harness ), expected );
 }
 
+function scanProgressSurfaceStateMatches( actual, expected )
+{
+    return actual.notification === expected.notification &&
+        actual.tree === expected.tree &&
+        actual.statusBar === expected.statusBar;
+}
+
+function waitForScanProgressSurfaceState( harness, expected, attempts )
+{
+    if( scanProgressSurfaceStateMatches( scanProgressSurfaceState( harness ), expected ) === true || attempts <= 0 )
+    {
+        return Promise.resolve();
+    }
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return waitForScanProgressSurfaceState( harness, expected, attempts - 1 );
+    } );
+}
+
+function waitAndAssertScanProgressSurfaceState( assert, harness, expected )
+{
+    return waitForScanProgressSurfaceState( harness, expected, SCAN_PROGRESS_SETTLE_ATTEMPTS ).then( function()
+    {
+        assertScanProgressSurfaceState( assert, harness, expected );
+    } );
+}
+
 function getScanProgressStatusBarItem( harness )
 {
     return harness.vscode.statusBarItems.filter( function( item )
@@ -4531,10 +4560,9 @@ QUnit.test( "default workspace scans publish progress in the status bar only", f
         assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '100%' ) === -1, true );
 
         scan.releaseSearch.resolve();
-        return matrixHelpers.flushAsyncWork();
+        return waitAndAssertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
     } ).then( function()
     {
-        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
         assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '100%' ) === -1, true );
     } );
 } );
@@ -4582,10 +4610,7 @@ QUnit.test( "workspace scan progress counts scheduler backlog as queued work", f
         {
             callback( null, '# TODO tracked-' + blockedIndex + '.js' );
         } );
-        return matrixHelpers.flushAsyncWork();
-    } ).then( function()
-    {
-        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+        return waitAndAssertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
     } );
 } );
 
@@ -4646,10 +4671,7 @@ QUnit.test( "workspace scan progress separates discovery from known file work", 
         assert.equal( getScanProgressStatusBarItem( harness ).text.indexOf( '%' ) === -1, true );
 
         blockedReadCallback( null, '# TODO tracked-49.js' );
-        return matrixHelpers.flushAsyncWork();
-    } ).then( function()
-    {
-        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+        return waitAndAssertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
     } );
 } );
 
@@ -4735,10 +4757,7 @@ QUnit.test( "workspace scan progress weights pending file bytes", function( asse
         } ), [ SCAN_STATUS_SPINNER_LABEL ] );
 
         blockedReadCallback( null, hugeContent );
-        return matrixHelpers.flushAsyncWork();
-    } ).then( function()
-    {
-        assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
+        return waitAndAssertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
     } ).finally( function()
     {
         Date.now = originalDateNow;
