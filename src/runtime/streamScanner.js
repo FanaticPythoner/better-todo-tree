@@ -1,10 +1,9 @@
 var fs = require( 'fs' );
-var bufferConstants = require( 'buffer' ).constants;
 var regexRegistry = require( '../regexRegistry.js' );
 
-var DEFAULT_MAX_INMEMORY_SCAN_BYTES = bufferConstants.MAX_STRING_LENGTH;
-var DEFAULT_STREAM_CHUNK_BYTES = 64 * 1024 * 1024;
-var DEFAULT_STREAM_OVERLAP_BYTES = 1 * 1024 * 1024;
+var DEFAULT_STREAM_CHUNK_BYTES = 1 * 1024 * 1024;
+var DEFAULT_MAX_INMEMORY_SCAN_BYTES = DEFAULT_STREAM_CHUNK_BYTES;
+var DEFAULT_STREAM_OVERLAP_BYTES = 64 * 1024;
 var endOffsetFieldRegex = regexRegistry.createRegExp( 'endOffsetField' );
 
 var STREAM_RESULT_OFFSET_FIELDS = [
@@ -430,45 +429,50 @@ function streamScanFile( filePath, scanFn, options )
     } );
 }
 
-function scanWorkspaceFileWithText( filePath, scanFn, options )
+function scanInspectedWorkspaceFileWithText( filePath, scanInfo, scanFn, options )
 {
     var resolved = resolveOptions( options );
     var fsImpl = resolved.fs;
 
+    if( scanInfo.useStreaming === true )
+    {
+        return streamScanFile( filePath, scanFn, options );
+    }
+
+    return new Promise( function( resolve, reject )
+    {
+        fsImpl.readFile( filePath, 'utf8', function( error, text )
+        {
+            if( error )
+            {
+                reject( error );
+                return;
+            }
+
+            try
+            {
+                var scanResponse = normalizeScanResponse( scanFn( text, {
+                    charOffset: 0,
+                    lineOffset: 0,
+                    isFirst: true,
+                    isLast: true,
+                    suggestedKeepStart: text.length
+                } ) );
+                resolve( scanResponse.results.slice() );
+            }
+            catch( err )
+            {
+                reject( err );
+            }
+        } );
+    } );
+}
+
+function scanWorkspaceFileWithText( filePath, scanFn, options )
+{
     return inspectWorkspaceFile( filePath, options ).then( function( scanInfo )
     {
-        if( scanInfo.useStreaming === true )
-        {
-            return streamScanFile( filePath, scanFn, options );
-        }
-
-        return new Promise( function( resolve, reject )
-        {
-            fsImpl.readFile( filePath, 'utf8', function( error, text )
-            {
-                if( error )
-                {
-                    reject( error );
-                    return;
-                }
-
-                try
-                {
-                    var scanResponse = normalizeScanResponse( scanFn( text, {
-                        charOffset: 0,
-                        lineOffset: 0,
-                        isFirst: true,
-                        isLast: true,
-                        suggestedKeepStart: text.length
-                    } ) );
-                    resolve( scanResponse.results.slice() );
-                }
-                catch( err )
-                {
-                    reject( err );
-                }
-            } );
-        } );
+        return scanInspectedWorkspaceFileWithText( filePath, scanInfo, scanFn, options );
     } );
 }
 
@@ -479,4 +483,5 @@ module.exports.STREAM_RESULT_OFFSET_FIELDS = STREAM_RESULT_OFFSET_FIELDS;
 module.exports.inspectWorkspaceFile = inspectWorkspaceFile;
 module.exports.streamFileChunks = streamFileChunks;
 module.exports.streamScanFile = streamScanFile;
+module.exports.scanInspectedWorkspaceFileWithText = scanInspectedWorkspaceFileWithText;
 module.exports.scanWorkspaceFileWithText = scanWorkspaceFileWithText;

@@ -5,8 +5,9 @@ var LEGACY_NAMESPACE = 'todo-tree';
 
 var DISPLAY_NAME = 'Better Todo Tree';
 var LEGACY_DISPLAY_NAME = 'Todo Tree';
-var STATUS_BUSY_ICON = 'sync~spin';
-var STATUS_BUSY_ICON_LABEL = '$(' + STATUS_BUSY_ICON + ')';
+var STATUS_SCAN_ICON = 'better-todo-tree';
+var STATUS_SCAN_ICON_LABEL = '$(' + STATUS_SCAN_ICON + ')';
+var STATUS_SCAN_SPIN_ICON_LABEL = '$(' + STATUS_SCAN_ICON + '~spin)';
 
 var VIEW_CONTAINER_ID = 'todo-tree-container';
 var VIEW_ID = 'todo-tree-view';
@@ -52,6 +53,8 @@ var commandSuffixes = [
     'revealInFile',
     'openUrl',
     'stopScan',
+    'openCurrentScanFile',
+    'exportScanDiagnostics',
     'treeStateBusy',
     'scanBusy',
     'onStatusBarClicked',
@@ -244,8 +247,9 @@ module.exports.CURRENT_NAMESPACE = CURRENT_NAMESPACE;
 module.exports.LEGACY_NAMESPACE = LEGACY_NAMESPACE;
 module.exports.DISPLAY_NAME = DISPLAY_NAME;
 module.exports.LEGACY_DISPLAY_NAME = LEGACY_DISPLAY_NAME;
-module.exports.STATUS_BUSY_ICON = STATUS_BUSY_ICON;
-module.exports.STATUS_BUSY_ICON_LABEL = STATUS_BUSY_ICON_LABEL;
+module.exports.STATUS_SCAN_ICON = STATUS_SCAN_ICON;
+module.exports.STATUS_SCAN_ICON_LABEL = STATUS_SCAN_ICON_LABEL;
+module.exports.STATUS_SCAN_SPIN_ICON_LABEL = STATUS_SCAN_SPIN_ICON_LABEL;
 module.exports.VIEW_CONTAINER_ID = VIEW_CONTAINER_ID;
 module.exports.VIEW_ID = VIEW_ID;
 module.exports.EXPORT_SCHEME = EXPORT_SCHEME;

@@ -28,6 +28,7 @@ function loadConfigModule( options )
 {
     options = options || {};
 
+    var getSettingCalls = [];
     var config = helpers.loadWithStubs( '../src/config.js', {
         vscode: createVscodeStub( options.appRoot || '/Applications/Visual Studio Code (M1).app/Contents/Resources/app' ),
         fs: {
@@ -47,17 +48,32 @@ function loadConfigModule( options )
             }
         },
         './extensionIdentity.js': {
-            getSetting: function( setting, defaultValue )
+            getSetting: function( setting, defaultValue, uri )
             {
+                getSettingCalls.push( {
+                    setting: setting,
+                    uri: uri
+                } );
+
                 if( setting === 'ripgrep.ripgrep' )
                 {
                     return options.configuredRipgrepPath !== undefined ? options.configuredRipgrepPath : defaultValue;
+                }
+
+                if( options.settingValues && Object.prototype.hasOwnProperty.call( options.settingValues, setting ) )
+                {
+                    return options.settingValues[ setting ];
                 }
 
                 return defaultValue;
             }
         }
     } );
+
+    config.__getSettingCalls = function()
+    {
+        return getSettingCalls.slice();
+    };
 
     if( options.extensionPath )
     {
@@ -120,6 +136,41 @@ function createDirectoryEntry( name )
 }
 
 QUnit.module( 'behavioral config' );
+
+QUnit.test( 'regex reads only language-overridable regex source with a resource URI', function( assert )
+{
+    var uri = { toString: function() { return '/workspace/source.vue'; } };
+    var config = loadConfigModule( {
+        settingValues: {
+            'regex.regex': 'TODO',
+            'regex.regexCaseSensitive': false,
+            'regex.enableMultiLine': true,
+            'regex.subTagRegex': '^-\\s+'
+        }
+    } );
+
+    var regexConfig = config.regex( uri );
+    var subTagRegex = config.subTagRegex( uri );
+    var calls = config.__getSettingCalls().filter( function( call )
+    {
+        return call.setting.indexOf( 'regex.' ) === 0;
+    } );
+
+    assert.deepEqual( regexConfig, {
+        tags: [ "TODO" ],
+        regex: 'TODO',
+        caseSensitive: false,
+        multiLine: true
+    } );
+    assert.equal( subTagRegex, '^-\\s+' );
+    assert.equal( calls.filter( function( call )
+    {
+        return call.uri === uri;
+    } ).map( function( call )
+    {
+        return call.setting;
+    } ).join( ',' ), 'regex.regex' );
+} );
 
 QUnit.test( 'ripgrepPath prefers the configured executable even when the path contains spaces and parentheses', function( assert )
 {

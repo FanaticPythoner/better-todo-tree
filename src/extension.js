@@ -69,6 +69,7 @@ var YES_BUTTON = "Yes";
 var NEVER_SHOW_AGAIN_BUTTON = "Never Show This Again";
 var OPEN_SETTINGS_BUTTON = "Open Settings";
 var OK_BUTTON = "OK";
+var EXPORT_DIAGNOSTICS_BUTTON = "Export Diagnostics";
 
 function activate( context )
 {
@@ -81,6 +82,8 @@ function activate( context )
     var nextSearchResults = undefined;
     var documentScanCache = documentScanCacheModule.createDocumentScanCache();
     var workspaceScanIssues = [];
+    var scanDiagnosticsState;
+    var lastScanDiagnosticsSnapshot;
     var lastWorkspaceScanIssueSignature;
     var streamingTreeApplyTimer;
     var streamingTreeApplyGeneration = 0;
@@ -95,9 +98,10 @@ function activate( context )
     };
     var scanProgressSession;
     var scanProgressState;
+    var scanStatusBarSpinnerVisible = false;
 
-    var SCAN_PROGRESS_ROOT_UNITS = 5;
-    var SCAN_PROGRESS_MIN_FILES_PER_ROOT = 25;
+    var SCAN_PROGRESS_MIN_FILE_UNITS = 1;
+    var SCAN_DIAGNOSTIC_EVENT_LIMIT = 500;
     var SCAN_PROGRESS_VISIBILITY_BY_MODE = Object.freeze( {
         'none': Object.freeze( { notification: false, statusBar: false, tree: false } ),
         'status bar': Object.freeze( { notification: false, statusBar: true, tree: false } ),
@@ -255,6 +259,122 @@ function activate( context )
         } ) );
     }
 
+    function appendScanDiagnosticEvent( type, data )
+    {
+        if( !scanDiagnosticsState )
+        {
+            return;
+        }
+
+        scanDiagnosticsState.events.push( Object.assign( {
+            type: type,
+            timestamp: new Date().toISOString()
+        }, data || {} ) );
+
+        if( scanDiagnosticsState.events.length > SCAN_DIAGNOSTIC_EVENT_LIMIT )
+        {
+            scanDiagnosticsState.events.splice( 0, scanDiagnosticsState.events.length - SCAN_DIAGNOSTIC_EVENT_LIMIT );
+        }
+    }
+
+    function cloneScanIssue( issue )
+    {
+        return {
+            stage: issue.stage,
+            filePath: issue.filePath,
+            message: issue.message,
+            code: issue.code,
+            timestamp: issue.timestamp
+        };
+    }
+
+    function readScanProgressDiagnostics()
+    {
+        var state = scanProgressState;
+        var snapshot;
+
+        if( !state )
+        {
+            return undefined;
+        }
+
+        snapshot = calculateScanProgressSnapshot( state );
+
+        return {
+            generation: state.generation,
+            phase: state.phase,
+            rootCount: state.rootCount,
+            rootsCompleted: state.rootsCompleted,
+            currentRoot: state.currentRoot,
+            currentFile: state.currentFile,
+            filesQueued: state.filesQueued,
+            filesCompleted: state.filesCompleted,
+            filesMeasured: state.filesMeasured,
+            filesQueuedRemaining: Math.max( state.filesQueued - state.filesCompleted, 0 ),
+            bytesQueued: state.bytesQueued,
+            bytesCompleted: state.bytesCompleted,
+            exactPercent: snapshot.exactPercent,
+            percent: snapshot.exactPercent === true ? snapshot.percent : undefined
+        };
+    }
+
+    function buildScanDiagnosticsSnapshot()
+    {
+        var diagnostics = scanDiagnosticsState || lastScanDiagnosticsSnapshot || {};
+        var progress = readScanProgressDiagnostics();
+
+        return {
+            schemaVersion: 1,
+            generatedAt: new Date().toISOString(),
+            extension: {
+                id: packageJson.publisher + "." + packageJson.name,
+                version: packageJson.version
+            },
+            process: {
+                pid: process.pid,
+                platform: process.platform,
+                arch: process.arch
+            },
+            scan: {
+                active: scanInFlight === true,
+                generation: diagnostics.generation,
+                startedAt: diagnostics.startedAt,
+                finishedAt: diagnostics.finishedAt,
+                roots: diagnostics.roots || [],
+                progress: progress || diagnostics.progress
+            },
+            issues: ( diagnostics.issues || [] ).map( cloneScanIssue ),
+            events: ( diagnostics.events || [] ).slice()
+        };
+    }
+
+    function startScanDiagnostics( generation, roots )
+    {
+        scanDiagnosticsState = {
+            generation: generation,
+            startedAt: new Date().toISOString(),
+            finishedAt: undefined,
+            roots: ( roots || [] ).slice(),
+            issues: [],
+            events: []
+        };
+        appendScanDiagnosticEvent( 'scan-started', { roots: ( roots || [] ).slice() } );
+    }
+
+    function finishScanDiagnostics( generation )
+    {
+        if( !scanDiagnosticsState || scanDiagnosticsState.generation !== generation )
+        {
+            return;
+        }
+
+        scanDiagnosticsState.finishedAt = new Date().toISOString();
+        scanDiagnosticsState.progress = readScanProgressDiagnostics();
+        appendScanDiagnosticEvent( 'scan-finished', { generation: generation } );
+        lastScanDiagnosticsSnapshot = scanDiagnosticsState;
+        scanDiagnosticsState = undefined;
+    }
+
     function resolvePackageString( value, location )
     {
         if( typeof ( value ) !== 'string' || value.length === 0 )
@@ -385,6 +505,7 @@ function activate( context )
 
     provider = new tree.TreeNodeProvider( context, debug, setButtonsAndContext );
     var statusBarIndicator = vscode.window.createStatusBarItem( vscode.StatusBarAlignment.Left, 0 );
+    var scanStatusBarSpinner = vscode.window.createStatusBarItem( vscode.StatusBarAlignment.Left, 1 );
 
     var todoTreeView = vscode.window.createTreeView( identity.VIEW_ID, { treeDataProvider: provider } );
 
@@ -392,6 +513,7 @@ function activate( context )
 
     context.subscriptions.push( provider );
     context.subscriptions.push( statusBarIndicator );
+    context.subscriptions.push( scanStatusBarSpinner );
     context.subscriptions.push( todoTreeView );
 
     registerExportContentProvider( identity.EXPORT_SCHEME );
@@ -645,6 +767,26 @@ function activate( context )
         return remainingSeconds > 0 ? minutes + 'm ' + remainingSeconds + 's' : minutes + 'm';
     }
 
+    function formatScanByteCount( bytes )
+    {
+        var units = [ 'B', 'KB', 'MB', 'GB', 'TB' ];
+        var value = bytes;
+        var index = 0;
+
+        while( value >= 1024 && index < units.length - 1 )
+        {
+            value = value / 1024;
+            index++;
+        }
+
+        if( index === 0 )
+        {
+            return Math.round( value ) + ' ' + units[ index ];
+        }
+
+        return value >= 10 ? value.toFixed( 1 ) + ' ' + units[ index ] : value.toFixed( 2 ) + ' ' + units[ index ];
+    }
+
     function getScanTargetLabel( rootPath, targetPath )
     {
         if( !targetPath )
@@ -664,45 +806,91 @@ function activate( context )
         return path.basename( targetPath ) || targetPath;
     }
 
+    function getScanFileWorkUnits( size )
+    {
+        if( typeof size !== 'number' || isFinite( size ) !== true || size < 0 )
+        {
+            throw new Error( 'invalid scan progress file size: expected non-negative finite number' );
+        }
+
+        return Math.max( SCAN_PROGRESS_MIN_FILE_UNITS, Math.ceil( size ) );
+    }
+
+    function readRipgrepBytesSearched( data )
+    {
+        var bytes = data && data.stats && data.stats.bytes_searched;
+
+        if( typeof bytes === 'number' && isFinite( bytes ) === true && bytes >= 0 )
+        {
+            return bytes;
+        }
+
+        return undefined;
+    }
+
+    function getEstimatedScanFileUnits( state, count )
+    {
+        var averageUnits = state.filesMeasured > 0 ?
+            state.bytesQueued / state.filesMeasured :
+            SCAN_PROGRESS_MIN_FILE_UNITS;
+
+        return count * Math.max( SCAN_PROGRESS_MIN_FILE_UNITS, averageUnits );
+    }
+
     function calculateScanProgressSnapshot( state )
     {
         var activeRootCount = state.currentRoot ? 1 : 0;
+        var activeRootDiscoveryCompleted = activeRootCount > 0 && state.currentRootDiscoveryCompleted === true;
         var remainingRootCount = Math.max( state.rootCount - state.rootsCompleted - activeRootCount, 0 );
-        var estimatedFilesPerRoot = SCAN_PROGRESS_MIN_FILES_PER_ROOT;
+        var unknownFileCount = Math.max( state.filesQueued - state.filesMeasured, 0 );
+        var currentRootUnknownFileCount = Math.max( state.currentRootQueued - state.currentRootFilesMeasured, 0 );
+        var estimatedQueuedUnits = state.bytesQueued + getEstimatedScanFileUnits( state, unknownFileCount );
+        var currentRootUnits = state.currentRootQueuedBytes + getEstimatedScanFileUnits( state, currentRootUnknownFileCount );
+        var estimatedRootUnits = currentRootUnits;
+        var finalizationUnits = getEstimatedScanFileUnits( state, Math.max( state.finalizationTotal, 0 ) );
+        var finalizationCompletedUnits = getEstimatedScanFileUnits( state, Math.max( state.finalizationCompleted, 0 ) );
+        var remainingRootUnits;
+        var activeRootRemainingUnits = 0;
+        var totalUnits;
+        var completedUnits;
+        var fraction;
+        var exactPercent;
 
         if( state.rootsCompleted > 0 )
         {
-            estimatedFilesPerRoot = Math.max( SCAN_PROGRESS_MIN_FILES_PER_ROOT, Math.ceil( state.completedRootQueuedTotal / state.rootsCompleted ) );
-        }
-        else if( state.currentRootQueued > 0 )
-        {
-            estimatedFilesPerRoot = Math.max( SCAN_PROGRESS_MIN_FILES_PER_ROOT, state.currentRootQueued );
+            estimatedRootUnits = Math.max(
+                estimatedRootUnits,
+                state.completedRootQueuedBytesTotal / state.rootsCompleted
+            );
         }
 
-        var estimatedWorkspaceFilesTotal = Math.max(
-            state.filesQueued + ( remainingRootCount * estimatedFilesPerRoot ),
-            state.filesCompleted + ( activeRootCount > 0 ? Math.max( state.currentRootQueued, estimatedFilesPerRoot ) : 0 ),
-            state.finalizationTotal > 0 ? state.finalizationTotal : 1
+        remainingRootUnits = remainingRootCount * estimatedRootUnits;
+
+        if( activeRootCount > 0 && activeRootDiscoveryCompleted !== true )
+        {
+            activeRootRemainingUnits = Math.max( estimatedRootUnits - currentRootUnits, 0 );
+        }
+
+        totalUnits = Math.max(
+            estimatedQueuedUnits + activeRootRemainingUnits + remainingRootUnits + finalizationUnits,
+            state.bytesCompleted + finalizationCompletedUnits,
+            SCAN_PROGRESS_MIN_FILE_UNITS
         );
-        var totalUnits = ( Math.max( state.rootCount, 1 ) * SCAN_PROGRESS_ROOT_UNITS ) + estimatedWorkspaceFilesTotal + Math.max( state.finalizationTotal, 1 );
-        var currentRootFraction = state.currentRoot ?
-            ( state.currentRootQueued > 0 ?
-                Math.min( state.currentRootCompleted / Math.max( state.currentRootQueued, 1 ), 1 ) :
-                0.15 ) :
-            0;
-        var completedUnits = ( state.rootsCompleted * SCAN_PROGRESS_ROOT_UNITS ) + state.filesCompleted + state.finalizationCompleted + ( currentRootFraction * SCAN_PROGRESS_ROOT_UNITS );
-        var rawFraction = totalUnits > 0 ? Math.min( completedUnits / totalUnits, state.phase === 'completed' ? 1 : 0.99 ) : 0;
-        var fraction = state.phase === 'completed' ? 1 : Math.max( rawFraction, 0.01 );
-        var completedWorkUnits = Math.max( completedUnits, state.filesCompleted + state.finalizationCompleted + state.rootsCompleted );
-        var totalWorkUnits = Math.max( totalUnits, completedWorkUnits );
+        completedUnits = Math.min( state.bytesCompleted + finalizationCompletedUnits, totalUnits );
+        fraction = state.phase === 'completed' ? 1 : completedUnits / totalUnits;
+        exactPercent = state.phase === 'completed' ||
+            ( remainingRootCount === 0 &&
+                ( activeRootCount === 0 || activeRootDiscoveryCompleted === true ) &&
+                unknownFileCount === 0 );
 
         return {
             fraction: fraction,
-            percent: state.phase === 'completed' ?
-                100 :
-                Math.max( 1, Math.min( 99, Math.floor( fraction * 100 ) ) ),
-            totalUnits: totalWorkUnits,
-            completedUnits: completedWorkUnits
+            percent: state.phase === 'completed' ? 100 : Math.max( 1, Math.min( 99, Math.floor( fraction * 100 ) ) ),
+            exactPercent: exactPercent,
+            totalUnits: totalUnits,
+            completedUnits: completedUnits,
+            fileBytesCompleted: state.bytesCompleted,
+            fileBytesTotal: estimatedQueuedUnits
         };
     }
 
@@ -711,6 +899,11 @@ function activate( context )
         var recentSample = state.progressSamples.length > 0 ? state.progressSamples[ 0 ] : undefined;
         var remainingUnits = Math.max( snapshot.totalUnits - snapshot.completedUnits, 0 );
         var rate;
+
+        if( snapshot.exactPercent !== true )
+        {
+            return undefined;
+        }
 
         if( recentSample && recentSample.completedUnits < snapshot.completedUnits && now > recentSample.timestamp )
         {
@@ -757,13 +950,50 @@ function activate( context )
 
     function clearScanStatusBarProgress()
     {
-        if( statusBarIndicator.command === identity.COMMANDS.stopScan )
+        hideScanStatusBarSpinner();
+
+        if( isScanStatusBarProgressCommand( statusBarIndicator.command ) === true )
         {
             statusBarIndicator.command = undefined;
             statusBarIndicator.tooltip = '';
             statusBarIndicator.text = '';
             statusBarIndicator.hide();
         }
+    }
+
+    function showScanStatusBarSpinner()
+    {
+        if( scanStatusBarSpinnerVisible === true )
+        {
+            return;
+        }
+
+        scanStatusBarSpinner.text = identity.STATUS_SCAN_SPIN_ICON_LABEL + ' Scanning';
+        scanStatusBarSpinner.command = identity.COMMANDS.stopScan;
+        scanStatusBarSpinner.tooltip = 'Click to interrupt scan';
+        scanStatusBarSpinner.show();
+        scanStatusBarSpinnerVisible = true;
+    }
+
+    function hideScanStatusBarSpinner()
+    {
+        if( scanStatusBarSpinnerVisible !== true )
+        {
+            return;
+        }
+
+        scanStatusBarSpinner.command = undefined;
+        scanStatusBarSpinner.tooltip = '';
+        scanStatusBarSpinner.text = '';
+        scanStatusBarSpinner.hide();
+        scanStatusBarSpinnerVisible = false;
+    }
+
+    function isScanStatusBarProgressCommand( command )
+    {
+        return command === identity.COMMANDS.stopScan ||
+            command === identity.COMMANDS.openCurrentScanFile ||
+            command === identity.COMMANDS.exportScanDiagnostics;
     }
 
     function resolveScanProgressNotificationSession( generation )
@@ -825,20 +1055,47 @@ function activate( context )
         } );
     }
 
+    function formatScanProgressWorkLabel( state, snapshot )
+    {
+        if( state.filesCompleted > 0 || state.filesQueued > 0 )
+        {
+            var queuedFiles = Math.max( state.filesQueued - state.filesCompleted, 0 );
+            var queuedBytes = snapshot ? Math.max( snapshot.fileBytesTotal - snapshot.fileBytesCompleted, 0 ) : 0;
+            var label = state.filesCompleted + ' done';
+
+            if( snapshot && snapshot.fileBytesTotal > 0 )
+            {
+                label += ' (' + formatScanByteCount( snapshot.fileBytesCompleted ) + ')';
+            }
+
+            label += ', ' + queuedFiles + ' queued ' + ( queuedFiles === 1 ? 'file' : 'files' );
+
+            if( snapshot && snapshot.fileBytesTotal > 0 )
+            {
+                label += ' (' + formatScanByteCount( queuedBytes ) + ')';
+            }
+
+            return label;
+        }
+
+        return undefined;
+    }
+
     function buildScanProgressMessage( state, snapshot )
     {
         var messageParts = [];
         var currentRootNumber = state.currentRoot ? Math.min( state.rootsCompleted + 1, Math.max( state.rootCount, 1 ) ) : Math.min( state.rootsCompleted, Math.max( state.rootCount, 1 ) );
         var targetLabel = getScanTargetLabel( state.currentRoot, state.currentFile ) || ( state.currentRoot ? path.basename( state.currentRoot ) : undefined );
+        var workLabel = formatScanProgressWorkLabel( state, snapshot );
 
         if( state.rootCount > 0 )
         {
             messageParts.push( 'Root ' + currentRootNumber + '/' + state.rootCount );
         }
 
-        if( state.filesCompleted > 0 || state.filesQueued > 0 )
+        if( workLabel )
         {
-            messageParts.push( state.filesCompleted + '/' + Math.max( state.filesQueued, state.filesCompleted ) + ' files' );
+            messageParts.push( workLabel );
         }
 
         if( state.phase === 'finalizing' )
@@ -864,17 +1121,32 @@ function activate( context )
         return messageParts.join( ' · ' );
     }
 
-    function applyScanProgressUi( state, snapshot )
+    function buildScanStatusBarProgressLabel( state, snapshot )
     {
-        var message = buildScanProgressMessage( state, snapshot );
+        var workLabel = formatScanProgressWorkLabel( state, snapshot );
+
+        if( workLabel )
+        {
+            return workLabel;
+        }
+
+        return state.phase === 'finalizing' ? 'Finalizing' : 'Scanning';
+    }
+
+    function applyScanProgressUi( state, snapshot, message )
+    {
         var visibility = getScanProgressVisibility();
+        var currentFile = state.currentFile;
+
+        message = message !== undefined ? message : buildScanProgressMessage( state, snapshot );
 
         if( visibility.statusBar === true )
         {
-            statusBarIndicator.text = identity.STATUS_BUSY_ICON_LABEL + " " + identity.DISPLAY_NAME + " " + snapshot.percent + "%";
+            showScanStatusBarSpinner();
+            statusBarIndicator.text = buildScanStatusBarProgressLabel( state, snapshot );
             statusBarIndicator.show();
-            statusBarIndicator.command = identity.COMMANDS.stopScan;
-            statusBarIndicator.tooltip = message || 'Click to interrupt scan';
+            statusBarIndicator.command = currentFile ? identity.COMMANDS.openCurrentScanFile : identity.COMMANDS.exportScanDiagnostics;
+            statusBarIndicator.tooltip = currentFile ? ( message + '\nClick to open current scan file' ) : ( message || 'Click to export scan diagnostics' );
         }
         else
         {
@@ -894,14 +1166,19 @@ function activate( context )
 
         if( visibility.notification === true && scanProgressSession && scanProgressSession.progress )
         {
-            var increment = Math.max( snapshot.percent - scanProgressSession.lastReportedPercent, 0 );
+            var increment = snapshot.exactPercent === true ?
+                Math.max( snapshot.percent - scanProgressSession.lastReportedPercent, 0 ) :
+                0;
             if( increment > 0 || message !== scanProgressSession.lastReportedMessage )
             {
                 scanProgressSession.progress.report( {
                     increment: increment,
                     message: message
                 } );
-                scanProgressSession.lastReportedPercent = Math.max( scanProgressSession.lastReportedPercent, snapshot.percent );
+                if( snapshot.exactPercent === true )
+                {
+                    scanProgressSession.lastReportedPercent = Math.max( scanProgressSession.lastReportedPercent, snapshot.percent );
+                }
                 scanProgressSession.lastReportedMessage = message;
             }
         }
@@ -921,18 +1198,36 @@ function activate( context )
 
         var snapshot = calculateScanProgressSnapshot( scanProgressState );
         var now = Date.now();
+        var message;
+
+        if( scanProgressState.phase !== 'completed' && snapshot.exactPercent === true )
+        {
+            snapshot.percent = Math.max( snapshot.percent, scanProgressState.lastUiPercent || 0 );
+        }
 
         snapshot.etaSeconds = calculateScanEtaSeconds( scanProgressState, snapshot, now );
-        recordScanProgressSample( scanProgressState, snapshot, now );
+        message = buildScanProgressMessage( scanProgressState, snapshot );
+        if( snapshot.exactPercent === true )
+        {
+            recordScanProgressSample( scanProgressState, snapshot, now );
+        }
 
-        if( force !== true && scanProgressState.lastUiUpdateAt && ( now - scanProgressState.lastUiUpdateAt ) < 100 && snapshot.percent <= scanProgressState.lastUiPercent )
+        if( force !== true &&
+            scanProgressState.lastUiUpdateAt &&
+            ( now - scanProgressState.lastUiUpdateAt ) < 100 &&
+            ( snapshot.exactPercent !== true || snapshot.percent <= scanProgressState.lastUiPercent ) &&
+            message === scanProgressState.lastUiMessage )
         {
             return;
         }
 
         scanProgressState.lastUiUpdateAt = now;
-        scanProgressState.lastUiPercent = snapshot.percent;
-        applyScanProgressUi( scanProgressState, snapshot );
+        if( snapshot.exactPercent === true )
+        {
+            scanProgressState.lastUiPercent = snapshot.percent;
+        }
+        scanProgressState.lastUiMessage = message;
+        applyScanProgressUi( scanProgressState, snapshot, message );
     }
 
     function startScanProgress( generation, roots )
@@ -945,18 +1240,26 @@ function activate( context )
             rootCount: roots.length,
             rootsCompleted: 0,
             currentRoot: roots.length > 0 ? roots[ 0 ] : undefined,
+            currentRootDiscoveryCompleted: false,
             currentFile: undefined,
             filesQueued: 0,
             filesCompleted: 0,
+            filesMeasured: 0,
+            bytesQueued: 0,
+            bytesCompleted: 0,
             currentRootQueued: 0,
             currentRootCompleted: 0,
-            completedRootQueuedTotal: 0,
+            currentRootFilesMeasured: 0,
+            currentRootQueuedBytes: 0,
+            completedRootQueuedBytesTotal: 0,
             finalizationTotal: 0,
             finalizationCompleted: 0,
+            fileProgressByPath: new Map(),
             phase: 'searching',
             progressSamples: [],
             lastUiUpdateAt: 0,
-            lastUiPercent: 0
+            lastUiPercent: 0,
+            lastUiMessage: ''
         };
 
         scanProgressSession = undefined;
@@ -981,7 +1284,7 @@ function activate( context )
         scanProgressState.phase = 'completed';
         scanProgressState.currentFile = undefined;
         scanProgressState.finalizationCompleted = Math.max( scanProgressState.finalizationCompleted, scanProgressState.finalizationTotal );
-        updateScanProgress( generation, {}, true );
+        clearScanStatusBarProgress();
 
         resolveScanProgressNotificationSession( generation );
 
@@ -997,6 +1300,34 @@ function activate( context )
         scanProgressState = undefined;
     }
 
+    function openCurrentScanFile()
+    {
+        var filePath = scanProgressState && scanProgressState.currentFile;
+
+        if( !filePath )
+        {
+            return vscode.window.showWarningMessage( identity.DISPLAY_NAME + ": no workspace scan file is active." );
+        }
+
+        return vscode.workspace.openTextDocument( vscode.Uri.file( filePath ) ).then( function( document )
+        {
+            return vscode.window.showTextDocument( document, { preview: true } );
+        } );
+    }
+
+    function exportScanDiagnostics()
+    {
+        var diagnostics = buildScanDiagnosticsSnapshot();
+
+        return vscode.workspace.openTextDocument( {
+            language: 'json',
+            content: JSON.stringify( diagnostics, null, 2 )
+        } ).then( function( document )
+        {
+            return vscode.window.showTextDocument( document, { preview: false } );
+        } );
+    }
+
     function refreshScanProgressVisibility()
     {
         if( scanProgressState )
@@ -1010,10 +1341,29 @@ function activate( context )
         updateScanProgress( generation, {
             phase: 'searching',
             currentRoot: rootPath,
+            currentRootDiscoveryCompleted: false,
             currentFile: undefined,
             currentRootQueued: 0,
-            currentRootCompleted: 0
+            currentRootCompleted: 0,
+            currentRootFilesMeasured: 0,
+            currentRootQueuedBytes: 0
         }, true );
+        appendScanDiagnosticEvent( 'root-started', { root: rootPath } );
+    }
+
+    function getScanFileProgressRecord( state, filePath )
+    {
+        if( state.fileProgressByPath.has( filePath ) !== true )
+        {
+            state.fileProgressByPath.set( filePath, {
+                queued: false,
+                measured: false,
+                completed: false,
+                units: 0
+            } );
+        }
+
+        return state.fileProgressByPath.get( filePath );
     }
 
     function queueScanFileProgress( generation, filePath )
@@ -1023,10 +1373,66 @@ function activate( context )
             return;
         }
 
+        var record = getScanFileProgressRecord( scanProgressState, filePath );
+
+        if( record.queued === true )
+        {
+            return;
+        }
+
+        record.queued = true;
+        appendScanDiagnosticEvent( 'file-queued', { filePath: filePath } );
+
         updateScanProgress( generation, {
-            currentFile: filePath,
             filesQueued: scanProgressState.filesQueued + 1,
             currentRootQueued: scanProgressState.currentRootQueued + 1
+        }, false );
+    }
+
+    function startScanFileProgress( generation, filePath )
+    {
+        if( !scanProgressState || scanProgressState.generation !== generation )
+        {
+            return;
+        }
+
+        if( getScanFileProgressRecord( scanProgressState, filePath ).queued !== true )
+        {
+            queueScanFileProgress( generation, filePath );
+        }
+
+        updateScanProgress( generation, { currentFile: filePath }, false );
+    }
+
+    function measureScanFileProgress( generation, filePath, size )
+    {
+        if( !scanProgressState || scanProgressState.generation !== generation )
+        {
+            return;
+        }
+
+        var record = getScanFileProgressRecord( scanProgressState, filePath );
+
+        if( record.queued !== true )
+        {
+            queueScanFileProgress( generation, filePath );
+        }
+
+        if( record.measured === true )
+        {
+            return;
+        }
+
+        record.measured = true;
+        record.units = getScanFileWorkUnits( size );
+        appendScanDiagnosticEvent( 'file-measured', { filePath: filePath, bytes: record.units } );
+
+        updateScanProgress( generation, {
+            currentFile: filePath,
+            filesMeasured: scanProgressState.filesMeasured + 1,
+            bytesQueued: scanProgressState.bytesQueued + record.units,
+            currentRootFilesMeasured: scanProgressState.currentRootFilesMeasured + 1,
+            currentRootQueuedBytes: scanProgressState.currentRootQueuedBytes + record.units
         }, false );
     }
 
@@ -1037,11 +1443,56 @@ function activate( context )
             return;
         }
 
+        var record = getScanFileProgressRecord( scanProgressState, filePath );
+
+        if( record.queued !== true )
+        {
+            record.queued = true;
+            scanProgressState.filesQueued += 1;
+            scanProgressState.currentRootQueued += 1;
+        }
+
+        if( record.measured !== true )
+        {
+            record.measured = true;
+            record.units = getScanFileWorkUnits( 0 );
+            scanProgressState.filesMeasured += 1;
+            scanProgressState.bytesQueued += record.units;
+            scanProgressState.currentRootFilesMeasured += 1;
+            scanProgressState.currentRootQueuedBytes += record.units;
+        }
+
+        if( record.completed === true )
+        {
+            updateScanProgress( generation, { currentFile: filePath }, false );
+            return;
+        }
+
+        record.completed = true;
+        appendScanDiagnosticEvent( 'file-completed', { filePath: filePath } );
+
         updateScanProgress( generation, {
             currentFile: filePath,
             filesCompleted: scanProgressState.filesCompleted + 1,
+            bytesCompleted: scanProgressState.bytesCompleted + record.units,
             currentRootCompleted: scanProgressState.currentRootCompleted + 1
         }, false );
+    }
+
+    function completeScanRootDiscovery( generation )
+    {
+        if( !scanProgressState || scanProgressState.generation !== generation )
+        {
+            return;
+        }
+
+        updateScanProgress( generation, {
+            currentRootDiscoveryCompleted: true
+        }, true );
+        appendScanDiagnosticEvent( 'root-discovery-completed', {
+            root: scanProgressState.currentRoot,
+            filesQueued: scanProgressState.currentRootQueued
+        } );
     }
 
     function completeScanRoot( generation, nextRootPath )
@@ -1053,12 +1504,16 @@ function activate( context )
 
         updateScanProgress( generation, {
             rootsCompleted: scanProgressState.rootsCompleted + 1,
-            completedRootQueuedTotal: scanProgressState.completedRootQueuedTotal + scanProgressState.currentRootQueued,
+            completedRootQueuedBytesTotal: scanProgressState.completedRootQueuedBytesTotal + scanProgressState.currentRootQueuedBytes,
             currentRoot: nextRootPath,
+            currentRootDiscoveryCompleted: nextRootPath ? false : true,
             currentFile: undefined,
             currentRootQueued: 0,
-            currentRootCompleted: 0
+            currentRootCompleted: 0,
+            currentRootFilesMeasured: 0,
+            currentRootQueuedBytes: 0
         }, true );
+        appendScanDiagnosticEvent( 'root-completed', { nextRoot: nextRootPath } );
     }
 
     function beginScanFinalization( generation, totalTargets )
@@ -1265,6 +1720,8 @@ function activate( context )
             return;
         }
 
+        clearScanStatusBarProgress();
+
         if( statusBar === STATUS_BAR_TOTAL )
         {
             statusBarIndicator.text = "$(check) " + total;
@@ -1426,7 +1883,8 @@ function activate( context )
     {
         pendingRescan = false;
         cancelScan();
-        statusBarIndicator.text = identity.DISPLAY_NAME + ": Scanning interrupted.";
+        hideScanStatusBarSpinner();
+        statusBarIndicator.text = identity.STATUS_SCAN_ICON_LABEL + " Scanning interrupted.";
         statusBarIndicator.tooltip = "Click to restart";
         statusBarIndicator.command = identity.COMMANDS.refresh;
         interrupted = true;
@@ -1442,6 +1900,7 @@ function activate( context )
         cancelledScanGenerations.delete( activeScanGeneration );
 
         setExtensionContext( 'scan-busy', true );
+        startScanDiagnostics( activeScanGeneration, roots || [] );
         startScanProgress( activeScanGeneration, roots || [] );
 
         return activeScanGeneration;
@@ -1458,6 +1917,7 @@ function activate( context )
         }
 
         setExtensionContext( 'scan-busy', scanInFlight === true );
+        finishScanDiagnostics( generation );
         finishScanProgress( generation, false );
 
         if( scanInFlight !== true && interrupted !== true )
@@ -1487,6 +1947,7 @@ function activate( context )
         setExtensionContext( 'scan-busy', false );
         if( cancelledGeneration !== 0 )
         {
+            finishScanDiagnostics( cancelledGeneration );
             finishScanProgress( cancelledGeneration, true );
         }
 
@@ -1543,11 +2004,6 @@ function activate( context )
                 return Promise.all( pendingPromises );
             }
         };
-    }
-
-    function scanWorkspaceFileWithText( filePath, scanFn )
-    {
-        return streamScanner.scanWorkspaceFileWithText( filePath, scanFn, { fs: fs } );
     }
 
     function inspectWorkspaceFile( filePath )
@@ -1657,11 +2113,19 @@ function activate( context )
     function recordWorkspaceScanIssue( stage, filePath, error )
     {
         var message = error && error.message ? error.message : String( error );
-        workspaceScanIssues.push( {
+        var issue = {
             stage: stage,
             filePath: filePath,
-            message: message
-        } );
+            message: message,
+            code: error && error.code,
+            timestamp: new Date().toISOString()
+        };
+        workspaceScanIssues.push( issue );
+        if( scanDiagnosticsState )
+        {
+            scanDiagnosticsState.issues.push( cloneScanIssue( issue ) );
+        }
+        appendScanDiagnosticEvent( 'file-skipped', cloneScanIssue( issue ) );
         debug( "Skipping workspace file during " + stage + ": " + filePath + " (" + message + ")" );
     }
 
@@ -1693,7 +2157,21 @@ function activate( context )
             vscode.window.showWarningMessage(
                 identity.DISPLAY_NAME + ": skipped " + workspaceScanIssues.length +
                 " workspace file(s) while scanning. Results may be incomplete. First failure: " +
-                firstIssue.filePath + " (" + firstIssue.message + ")" );
+                firstIssue.filePath + " (" + firstIssue.message + ")",
+                EXPORT_DIAGNOSTICS_BUTTON
+            ).then( function( button )
+            {
+                if( button === EXPORT_DIAGNOSTICS_BUTTON )
+                {
+                    return exportScanDiagnostics().catch( function( error )
+                    {
+                        vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to export scan diagnostics (" + formatErrorMessage( error ) + ")" );
+                    } );
+                }
+            }, function( error )
+            {
+                vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to show scan diagnostics action (" + formatErrorMessage( error ) + ")" );
+            } );
             lastWorkspaceScanIssueSignature = signature;
         }
 
@@ -2321,14 +2799,42 @@ function activate( context )
         return '(' + utils.getTagRegexSource() + ')';
     }
 
+    function normalizeWorkspaceRegexMatches( uri, fileMatches )
+    {
+        return fileMatches.map( function( match )
+        {
+            return detection.normalizeWorkspaceRegexMatch( uri, match, currentSettingsSnapshot );
+        } ).filter( function( result )
+        {
+            return result !== undefined;
+        } );
+    }
+
+    function scanWorkspaceFileRegexMatches( rootPath, filePath, uri, submoduleExcludeGlobs )
+    {
+        var fileMatches = [];
+
+        return search( rootPath, getOptions( filePath, uri, undefined, submoduleExcludeGlobs, rootPath ), function( message )
+        {
+            if( message.type === 'match' )
+            {
+                fileMatches.push( toWorkspaceMatch( rootPath, message.data ) );
+            }
+        } ).then( function()
+        {
+            return normalizeWorkspaceRegexMatches( uri, fileMatches );
+        } );
+    }
+
     function scanWorkspaceCandidates( rootPath, generation, store )
     {
         var matchedFiles = new Set();
+        var matchedFileSizes = new Map();
         var scheduledFiles = new Set();
         var scheduler = createTaskScheduler( currentSettingsSnapshot.readFileConcurrency );
         var submoduleExcludeGlobs = config.shouldIgnoreGitSubmodules() ? utils.getSubmoduleExcludeGlobs( rootPath ) : [];
 
-        function scheduleFileScan( filePath )
+        function scheduleFileScan( filePath, size )
         {
             if( !filePath || scheduledFiles.has( filePath ) )
             {
@@ -2337,21 +2843,38 @@ function activate( context )
 
             scheduledFiles.add( filePath );
 
+            var uri = vscode.Uri.file( filePath );
+            if( isIncluded( uri ) !== true )
+            {
+                return;
+            }
+
+            queueScanFileProgress( generation, filePath );
+            if( size !== undefined )
+            {
+                measureScanFileProgress( generation, filePath, size );
+            }
+
             scheduler.schedule( function()
             {
                 assertGenerationActive( generation );
 
-                var uri = vscode.Uri.file( filePath );
-                if( isIncluded( uri ) !== true )
-                {
-                    return;
-                }
-
-                queueScanFileProgress( generation, filePath );
-                return scanWorkspaceFileWithText( filePath, function( text )
+                startScanFileProgress( generation, filePath );
+                return inspectWorkspaceFile( filePath ).then( function( scanInfo )
                 {
                     assertGenerationActive( generation );
-                    return detection.scanTextWithStreamingContext( detection.createScanContext( uri, text, currentSettingsSnapshot ) );
+                    measureScanFileProgress( generation, filePath, scanInfo.stats.size );
+
+                    if( scanInfo.useStreaming === true )
+                    {
+                        return scanWorkspaceFileRegexMatches( rootPath, filePath, uri, submoduleExcludeGlobs );
+                    }
+
+                    return streamScanner.scanInspectedWorkspaceFileWithText( filePath, scanInfo, function( text )
+                    {
+                        assertGenerationActive( generation );
+                        return detection.scanTextWithStreamingContext( detection.createScanContext( uri, text, currentSettingsSnapshot ) );
+                    }, { fs: fs } );
                 } ).then( function( results )
                 {
                     assertGenerationActive( generation );
@@ -2377,10 +2900,15 @@ function activate( context )
                 else if( message.type === 'end' )
                 {
                     var filePath = resolveWorkspaceFilePath( rootPath, message.data.path );
+                    var size = readRipgrepBytesSearched( message.data );
                     if( matchedFiles.has( filePath ) === true )
                     {
                         matchedFiles.delete( filePath );
-                        scheduleFileScan( filePath );
+                        scheduleFileScan( filePath, size );
+                    }
+                    else if( size !== undefined )
+                    {
+                        matchedFileSizes.set( filePath, size );
                     }
                 }
             } );
@@ -2388,9 +2916,10 @@ function activate( context )
         {
             Array.from( matchedFiles ).forEach( function( filePath )
             {
-                scheduleFileScan( filePath );
+                scheduleFileScan( filePath, matchedFileSizes.get( filePath ) );
             } );
 
+            completeScanRootDiscovery( generation );
             return scheduler.wait();
         } );
     }
@@ -2399,6 +2928,7 @@ function activate( context )
     {
         var scheduler = createTaskScheduler( currentSettingsSnapshot.readFileConcurrency );
         var matchesByFile = new Map();
+        var fileSizesByPath = new Map();
         var submoduleExcludeGlobs = config.shouldIgnoreGitSubmodules() ? utils.getSubmoduleExcludeGlobs( rootPath ) : [];
 
         function getFileMatches( filePath )
@@ -2411,45 +2941,41 @@ function activate( context )
             return matchesByFile.get( filePath );
         }
 
-        function normalizeWorkspaceRegexMatches( uri, fileMatches )
-        {
-            return fileMatches.map( function( match )
-            {
-                return detection.normalizeWorkspaceRegexMatch( uri, match, currentSettingsSnapshot );
-            } ).filter( function( result )
-            {
-                return result !== undefined;
-            } );
-        }
-
-        function scheduleFileNormalization( filePath, fileMatches )
+        function scheduleFileNormalization( filePath, fileMatches, size )
         {
             if( !filePath || !fileMatches || fileMatches.length === 0 )
             {
                 return;
             }
 
+            var uri = vscode.Uri.file( filePath );
+            if( isIncluded( uri ) !== true )
+            {
+                return;
+            }
+
+            queueScanFileProgress( generation, filePath );
+            if( size !== undefined )
+            {
+                measureScanFileProgress( generation, filePath, size );
+            }
+
             scheduler.schedule( function()
             {
                 assertGenerationActive( generation );
 
-                var uri = vscode.Uri.file( filePath );
-                if( isIncluded( uri ) !== true )
-                {
-                    return;
-                }
-
-                queueScanFileProgress( generation, filePath );
+                startScanFileProgress( generation, filePath );
                 return inspectWorkspaceFile( filePath ).then( function( scanInfo )
                 {
                     assertGenerationActive( generation );
+                    measureScanFileProgress( generation, filePath, scanInfo.stats.size );
 
                     if( scanInfo.useStreaming === true )
                     {
                         return normalizeWorkspaceRegexMatches( uri, fileMatches );
                     }
 
-                    return scanWorkspaceFileWithText( filePath, function( text, info )
+                    return streamScanner.scanInspectedWorkspaceFileWithText( filePath, scanInfo, function( text, info )
                     {
                         assertGenerationActive( generation );
 
@@ -2467,7 +2993,7 @@ function activate( context )
                         }
 
                         return detection.scanTextWithContext( scanContext );
-                    } );
+                    }, { fs: fs } );
                 } ).then( function( results )
                 {
                     assertGenerationActive( generation );
@@ -2497,17 +3023,23 @@ function activate( context )
                 {
                     var filePath = resolveWorkspaceFilePath( rootPath, message.data.path );
                     var fileMatches = matchesByFile.get( filePath );
+                    var size = readRipgrepBytesSearched( message.data );
+                    if( size !== undefined )
+                    {
+                        fileSizesByPath.set( filePath, size );
+                    }
                     matchesByFile.delete( filePath );
-                    scheduleFileNormalization( filePath, fileMatches );
+                    scheduleFileNormalization( filePath, fileMatches, size );
                 }
             } );
         } ).then( function()
         {
             matchesByFile.forEach( function( fileMatches, filePath )
             {
-                scheduleFileNormalization( filePath, fileMatches );
+                scheduleFileNormalization( filePath, fileMatches, fileSizesByPath.get( filePath ) );
             } );
 
+            completeScanRootDiscovery( generation );
             return scheduler.wait();
         } );
     }
@@ -3564,6 +4096,26 @@ function activate( context )
             }
         }
 
+        function scheduleStartupScan()
+        {
+            var startupScanImmediate = setImmediate( function()
+            {
+                rebuild();
+
+                if( vscode.window.activeTextEditor )
+                {
+                    documentChanged();
+                }
+            } );
+
+            context.subscriptions.push( {
+                dispose: function()
+                {
+                    clearImmediate( startupScanImmediate );
+                }
+            } );
+        }
+
         function activeEditorChanged( editor )
         {
             if( !editor || !editor.document )
@@ -3681,6 +4233,9 @@ function activate( context )
         {
             interruptActiveScan();
         }, 'stop scan' );
+
+        registerCommandPair( 'openCurrentScanFile', openCurrentScanFile, 'open current scan file' );
+        registerCommandPair( 'exportScanDiagnostics', exportScanDiagnostics, 'export scan diagnostics' );
 
         registerCommandPair( 'exportTree', function()
         {
@@ -4470,12 +5025,7 @@ function activate( context )
                 }
             } );
 
-            rebuild();
-
-            if( vscode.window.activeTextEditor )
-            {
-                documentChanged();
-            }
+            scheduleStartupScan();
         }
         else
         {

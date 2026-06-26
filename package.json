@@ -60,6 +60,15 @@
     ],
     "main": "./dist/extension",
     "contributes": {
+        "icons": {
+            "better-todo-tree": {
+                "description": "%better-todo-tree.productIcon.description%",
+                "default": {
+                    "fontPath": "./resources/product-icons/better-todo-tree.woff",
+                    "fontCharacter": "\\EA01"
+                }
+            }
+        },
         "viewsContainers": {
             "activitybar": [
                 {
@@ -472,6 +481,17 @@
                 "title": "%better-todo-tree.command.exportTree.title%",
                 "category": "%better-todo-tree.command.category%",
                 "icon": "$(save)"
+            },
+            {
+                "command": "better-todo-tree.openCurrentScanFile",
+                "title": "%better-todo-tree.command.openCurrentScanFile.title%",
+                "category": "%better-todo-tree.command.category%"
+            },
+            {
+                "command": "better-todo-tree.exportScanDiagnostics",
+                "title": "%better-todo-tree.command.exportScanDiagnostics.title%",
+                "category": "%better-todo-tree.command.category%",
+                "icon": "$(output)"
             },
             {
                 "command": "better-todo-tree.showOnlyThisFolder",

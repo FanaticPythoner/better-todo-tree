@@ -32,6 +32,29 @@ QUnit.test( 'default descriptor resolves Vue script, style, and typed regions fr
     );
 } );
 
+QUnit.test( 'default descriptor advances over Vue directive attributes', function( assert )
+{
+    var text = [
+        '<template>',
+        '  <button @click="save" :class="{ active: isActive }">',
+        '    <!-- TODO markup -->',
+        '  </button>',
+        '</template>',
+        '<script>',
+        '// TODO script',
+        '</script>'
+    ].join( '\n' );
+    var document = embeddedDocuments.resolveEmbeddedDocument( '/tmp/component.vue', text );
+
+    assert.deepEqual(
+        document.regions.map( function( region )
+        {
+            return region.element;
+        } ),
+        [ 'script' ]
+    );
+} );
+
 QUnit.test( 'default descriptor resolves Svelte script and style regions from data', function( assert )
 {
     var text = [
