@@ -258,6 +258,16 @@ function editorId( editor )
 
 function highlight( editor )
 {
+    function addDecorationRange( tag, startPos, endPos )
+    {
+        var decoration = { range: new vscode.Range( startPos, endPos ) };
+        if( documentHighlights[ tag ] === undefined )
+        {
+            documentHighlights[ tag ] = [];
+        }
+        documentHighlights[ tag ].push( decoration );
+    }
+
     function addDecoration( tag, startOffset, endOffset )
     {
         if( startOffset === undefined || endOffset === undefined )
@@ -274,12 +284,30 @@ function highlight( editor )
 
         var startPos = editor.document.positionAt( startOffset );
         var endPos = editor.document.positionAt( endOffset );
-        var decoration = { range: new vscode.Range( startPos, endPos ) };
-        if( documentHighlights[ tag ] === undefined )
+        addDecorationRange( tag, startPos, endPos );
+    }
+
+    function addSingleLineDecoration( tag, startOffset, endOffset )
+    {
+        if( startOffset === undefined || endOffset === undefined )
         {
-            documentHighlights[ tag ] = [];
+            return;
         }
-        documentHighlights[ tag ].push( decoration );
+
+        if( endOffset < startOffset )
+        {
+            var previousStart = startOffset;
+            startOffset = endOffset;
+            endOffset = previousStart;
+        }
+
+        var startPos = editor.document.positionAt( startOffset );
+        var endPos = editor.document.positionAt( endOffset );
+        if( endPos.line !== startPos.line )
+        {
+            endPos = editor.document.lineAt( startPos.line ).range.end;
+        }
+        addDecorationRange( tag, startPos, endPos );
     }
 
     var documentHighlights = {};
@@ -304,7 +332,7 @@ function highlight( editor )
                     }
                     else if( type === 'text' )
                     {
-                        addDecoration( tag, match.matchStartOffset, match.matchEndOffset );
+                        addSingleLineDecoration( tag, match.matchStartOffset, match.matchEndOffset );
                     }
                     else if( type !== undefined && type.indexOf( captureGroupArgument + ":" ) === 0 )
                     {
@@ -341,14 +369,10 @@ function highlight( editor )
                     }
                     else if( type === 'line' || type === 'whole-line' )
                     {
-                        var lineStart = new vscode.Position( editor.document.positionAt( match.commentStartOffset ).line, 0 );
-                        var lineEnd = editor.document.lineAt( editor.document.positionAt( match.commentEndOffset ).line ).range.end;
-                        var lineDecoration = { range: new vscode.Range( lineStart, lineEnd ) };
-                        if( documentHighlights[ tag ] === undefined )
-                        {
-                            documentHighlights[ tag ] = [];
-                        }
-                        documentHighlights[ tag ].push( lineDecoration );
+                        var tagLine = editor.document.positionAt( match.tagStartOffset ).line;
+                        var lineStart = new vscode.Position( tagLine, 0 );
+                        var lineEnd = editor.document.lineAt( tagLine ).range.end;
+                        addDecorationRange( tag, lineStart, lineEnd );
                     }
                     else
                     {

@@ -116,13 +116,34 @@ function createAttributeConfig( overrides )
 {
     return Object.assign( {
         tagList: [ 'TODO', 'FIXME' ],
+        regexSource: actualUtils.DEFAULT_REGEX_SOURCE,
+        caseSensitive: true,
+        multiLine: false,
+        subTagRegexString: regexRegistry.pattern( 'subTagPrefixCapture' ),
         tags: function()
         {
             return this.tagList;
         },
+        regex: function()
+        {
+            return {
+                tags: this.tagList,
+                regex: this.regexSource,
+                caseSensitive: this.caseSensitive,
+                multiLine: this.multiLine
+            };
+        },
+        subTagRegex: function()
+        {
+            return this.subTagRegexString;
+        },
         isRegexCaseSensitive: function()
         {
-            return true;
+            return this.caseSensitive;
+        },
+        shouldGroupByTag: function()
+        {
+            return false;
         },
         shouldUseColourScheme: function()
         {
@@ -145,6 +166,63 @@ function createAttributeConfig( overrides )
             return {};
         }
     }, overrides || {} );
+}
+
+function createActualDetectionHighlightHarness( options )
+{
+    var recorded = [];
+    var decorationLog = [];
+    var config = createAttributeConfig( {
+        tagList: options.tags || [ 'TODO' ],
+        defaultHighlight: function()
+        {
+            return {
+                type: options.type
+            };
+        }
+    } );
+
+    actualUtils.init( config );
+    actualAttributes.init( config );
+
+    var highlights = helpers.loadWithStubs( '../src/highlights.js', {
+        vscode: createVscodeStub( { enabled: true }, decorationLog ),
+        './config.js': {
+            customHighlight: config.customHighlight.bind( config ),
+            subTagRegex: config.subTagRegex.bind( config ),
+            tagGroup: function() { return undefined; }
+        },
+        './utils.js': actualUtils,
+        './attributes.js': actualAttributes,
+        './icons.js': {
+            getGutterIcon: function()
+            {
+                return { dark: '/tmp/gutter.svg', light: '/tmp/gutter.svg' };
+            }
+        },
+        './detection.js': actualDetection,
+        './extensionIdentity.js': {
+            getSetting: function( setting, defaultValue )
+            {
+                return defaultValue;
+            }
+        }
+    } );
+
+    highlights.init( { subscriptions: { push: function() {} } }, function() {} );
+    highlights.highlight( {
+        viewColumn: 1,
+        document: createDocument( options.text ),
+        setDecorations: function( decoration, ranges )
+        {
+            recorded.push( ranges );
+        }
+    } );
+
+    return {
+        recorded: recorded,
+        decorationLog: decorationLog
+    };
 }
 
 QUnit.module( "behavioral highlights", function( hooks )
@@ -705,6 +783,56 @@ QUnit.module( "behavioral highlights", function( hooks )
         assert.equal( recorded[ 0 ][ 0 ].range.start.character, 3 );
         assert.equal( recorded[ 0 ][ 0 ].range.end.line, 0 );
         assert.equal( recorded[ 0 ][ 0 ].range.end.character, 18 );
+    } );
+
+    QUnit.test( "issue #98 text highlights stay on the tag line", function( assert )
+    {
+        var firstLine = '// TODO: this is a todo comment';
+        var harness = createActualDetectionHighlightHarness( {
+            type: 'text',
+            text: [
+                firstLine,
+                '// This is an unrelated comment'
+            ].join( '\n' )
+        } );
+
+        assert.equal( harness.recorded[ 0 ][ 0 ].range.start.line, 0 );
+        assert.equal( harness.recorded[ 0 ][ 0 ].range.start.character, 3 );
+        assert.equal( harness.recorded[ 0 ][ 0 ].range.end.line, 0 );
+        assert.equal( harness.recorded[ 0 ][ 0 ].range.end.character, firstLine.length );
+    } );
+
+    QUnit.test( "issue #99 text highlights exclude code on continuation lines", function( assert )
+    {
+        var firstLine = '// TODO: this is highlighted';
+        var harness = createActualDetectionHighlightHarness( {
+            type: 'text',
+            text: [
+                firstLine,
+                'console.log("This code should not be highlighted");  // Extra comment'
+            ].join( '\n' )
+        } );
+
+        assert.equal( harness.recorded[ 0 ][ 0 ].range.start.line, 0 );
+        assert.equal( harness.recorded[ 0 ][ 0 ].range.end.line, 0 );
+        assert.equal( harness.recorded[ 0 ][ 0 ].range.end.character, firstLine.length );
+    } );
+
+    QUnit.test( "issue #99 line highlights stay on the tag line", function( assert )
+    {
+        var firstLine = '// TODO: this is highlighted';
+        var harness = createActualDetectionHighlightHarness( {
+            type: 'line',
+            text: [
+                firstLine,
+                'console.log("This code should not be highlighted");  // Extra comment'
+            ].join( '\n' )
+        } );
+
+        assert.equal( harness.recorded[ 0 ][ 0 ].range.start.line, 0 );
+        assert.equal( harness.recorded[ 0 ][ 0 ].range.start.character, 0 );
+        assert.equal( harness.recorded[ 0 ][ 0 ].range.end.line, 0 );
+        assert.equal( harness.recorded[ 0 ][ 0 ].range.end.character, firstLine.length );
     } );
 
     QUnit.test( "issue #888 tag highlights anchor to the content-line asterisk", function( assert )
