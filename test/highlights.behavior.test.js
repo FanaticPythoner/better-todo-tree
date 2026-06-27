@@ -274,6 +274,135 @@ QUnit.module( "behavioral highlights", function( hooks )
         assert.strictEqual( decoration.dark.color, undefined );
     } );
 
+    QUnit.test( "issue #58 empty colour schemes keep default editor highlights visible", function( assert )
+    {
+        var decorationLog = [];
+        var config = createAttributeConfig( {
+            shouldUseColourScheme: function()
+            {
+                return true;
+            },
+            foregroundColourScheme: function()
+            {
+                return [];
+            },
+            backgroundColourScheme: function()
+            {
+                return [];
+            }
+        } );
+
+        actualUtils.init( config );
+        actualAttributes.init( config );
+
+        var highlights = helpers.loadWithStubs( '../src/highlights.js', {
+            vscode: createVscodeStub( { enabled: true }, decorationLog ),
+            './config.js': {
+                customHighlight: config.customHighlight.bind( config ),
+                subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); },
+                tagGroup: function() { return undefined; }
+            },
+            './utils.js': actualUtils,
+            './attributes.js': actualAttributes,
+            './icons.js': {
+                getGutterIcon: function()
+                {
+                    return { dark: '/tmp/gutter-dark.svg', light: '/tmp/gutter-light.svg' };
+                }
+            },
+            './detection.js': {
+                scanDocument: function()
+                {
+                    return [];
+                }
+            },
+            './extensionIdentity.js': {
+                getSetting: function( setting, defaultValue )
+                {
+                    return defaultValue;
+                }
+            }
+        } );
+
+        highlights.init( { subscriptions: { push: function() {} } }, function() {} );
+
+        var decoration = highlights.getDecoration( 'TODO' );
+
+        assert.equal( decoration.light.backgroundColor.name, 'editor.selectionHighlightBackground' );
+        assert.equal( decoration.dark.backgroundColor.name, 'editor.selectionHighlightBackground' );
+        assert.strictEqual( decoration.light.color, undefined );
+        assert.strictEqual( decoration.dark.color, undefined );
+    } );
+
+    QUnit.test( "issue #75 identical yellow backgrounds use identical black foregrounds", function( assert )
+    {
+        var decorationLog = [];
+        var config = createAttributeConfig( {
+            tagList: [ 'Bug', 'Temp' ],
+            customHighlight: function()
+            {
+                return {
+                    Bug: {
+                        background: '#ffff00',
+                        iconColour: '#ffff00',
+                        icon: 'bug',
+                        type: 'line'
+                    },
+                    Temp: {
+                        background: '#ffff00',
+                        iconColour: '#ffff00',
+                        icon: 'x',
+                        type: 'line'
+                    }
+                };
+            }
+        } );
+
+        actualUtils.init( config );
+        actualAttributes.init( config );
+
+        var highlights = helpers.loadWithStubs( '../src/highlights.js', {
+            vscode: createVscodeStub( { enabled: true }, decorationLog ),
+            './config.js': {
+                customHighlight: config.customHighlight.bind( config ),
+                subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); },
+                tagGroup: function() { return undefined; }
+            },
+            './utils.js': actualUtils,
+            './attributes.js': actualAttributes,
+            './icons.js': {
+                getGutterIcon: function()
+                {
+                    return { dark: '/tmp/gutter-dark.svg', light: '/tmp/gutter-light.svg' };
+                }
+            },
+            './detection.js': {
+                scanDocument: function()
+                {
+                    return [];
+                }
+            },
+            './extensionIdentity.js': {
+                getSetting: function( setting, defaultValue )
+                {
+                    return defaultValue;
+                }
+            }
+        } );
+
+        highlights.init( { subscriptions: { push: function() {} } }, function() {} );
+
+        var bugDecoration = highlights.getDecoration( 'Bug' );
+        var tempDecoration = highlights.getDecoration( 'Temp' );
+
+        assert.equal( bugDecoration.light.backgroundColor, 'rgba(255,255,0,1)' );
+        assert.equal( tempDecoration.light.backgroundColor, 'rgba(255,255,0,1)' );
+        assert.equal( bugDecoration.light.color, '#000000' );
+        assert.equal( tempDecoration.light.color, '#000000' );
+        assert.equal( bugDecoration.dark.color, '#000000' );
+        assert.equal( tempDecoration.dark.color, '#000000' );
+    } );
+
     QUnit.test( "customHighlight colours and defaultHighlight fallback flow into editor decorations", function( assert )
     {
         var decorationLog = [];

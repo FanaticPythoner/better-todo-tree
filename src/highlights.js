@@ -117,17 +117,17 @@ function createDecoration( tag )
             darkBackgroundColour = new vscode.ThemeColor( 'editor.background' );
         }
 
+        if( lightForegroundColour === undefined && utils.isHexColour( lightBackgroundColour ) )
+        {
+            lightForegroundColour = utils.complementaryColour( lightBackgroundColour );
+        }
+        if( darkForegroundColour === undefined && utils.isHexColour( darkBackgroundColour ) )
+        {
+            darkForegroundColour = utils.complementaryColour( darkBackgroundColour );
+        }
+
         lightBackgroundColour = applyOpacity( lightBackgroundColour, opacity );
         darkBackgroundColour = applyOpacity( darkBackgroundColour, opacity );
-    }
-
-    if( lightForegroundColour === undefined && utils.isHexColour( lightBackgroundColour ) )
-    {
-        lightForegroundColour = utils.complementaryColour( lightBackgroundColour );
-    }
-    if( darkForegroundColour === undefined && utils.isHexColour( darkBackgroundColour ) )
-    {
-        darkForegroundColour = utils.complementaryColour( darkBackgroundColour );
     }
 
     if( lightBackgroundColour === undefined && lightForegroundColour === undefined )

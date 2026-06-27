@@ -1867,6 +1867,51 @@ QUnit.test( "restored visible editors receive highlights after startup scan with
     } );
 } );
 
+QUnit.test( "issue #61 restored visible editor scans configured custom tag corpus", function( assert )
+{
+    var tags = [ 'TODO', 'FIXME', 'HACK', 'REVIEW', 'NOTE', 'XXX', 'BUG', '[ ]', '[/]', '[x]' ];
+    var document = matrixHelpers.createDocument(
+        '/tmp/issue-61-restored.js',
+        tags.map( function( tag )
+        {
+            return '// ' + tag + ' restored editor item';
+        } ).join( '\n' )
+    );
+    var fixture = tags.map( function( tag, index )
+    {
+        return {
+            uri: document.uri,
+            line: index,
+            actualTag: tag,
+            displayText: 'restored editor item',
+            continuationText: []
+        };
+    } );
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: false },
+        visibleTextEditors: [ { document: document } ],
+        activeTextEditor: undefined,
+        documentResults: fixture,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 1 );
+        assert.deepEqual( harness.provider.replaceCalls[ 0 ].results.map( function( result )
+        {
+            return result.actualTag;
+        } ), tags );
+        assert.deepEqual( harness.highlightCalls.map( function( editor )
+        {
+            return editor.document.fileName;
+        } ), [ '/tmp/issue-61-restored.js' ] );
+    } );
+} );
+
 QUnit.test( "refresh command reapplies highlights to visible editors", function( assert )
 {
     var document = matrixHelpers.createDocument( '/tmp/refresh.js', '// TODO refresh' );
@@ -1936,6 +1981,61 @@ QUnit.test( "refresh command scans visible editor when open event was missed", f
         {
             return editor.document.fileName;
         } ), [ '/tmp/refresh-visible.js' ] );
+    } );
+} );
+
+QUnit.test( "issue #61 refresh command scans configured restored-editor tag corpus", function( assert )
+{
+    var tags = [ 'TODO', 'FIXME', 'HACK', 'REVIEW', 'NOTE', 'XXX', 'BUG', '[ ]', '[/]', '[x]' ];
+    var document = matrixHelpers.createDocument(
+        '/tmp/issue-61-refresh.js',
+        tags.map( function( tag )
+        {
+            return '// ' + tag + ' refresh item';
+        } ).join( '\n' )
+    );
+    var fixture = tags.map( function( tag, index )
+    {
+        return {
+            uri: document.uri,
+            line: index,
+            actualTag: tag,
+            displayText: 'refresh item',
+            continuationText: []
+        };
+    } );
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: false },
+        visibleTextEditors: [],
+        activeTextEditor: undefined,
+        textDocuments: [ document ],
+        documentResults: fixture,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 0 );
+        harness.vscode.window.visibleTextEditors = [ { document: document } ];
+        return harness.vscode.commandHandlers[ 'better-todo-tree.refresh' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 1 );
+        assert.deepEqual( harness.provider.replaceCalls[ 0 ].results.map( function( result )
+        {
+            return result.actualTag;
+        } ), tags );
+        assert.deepEqual( harness.highlightCalls.map( function( editor )
+        {
+            return editor.document.fileName;
+        } ), [ '/tmp/issue-61-refresh.js' ] );
     } );
 } );
 
