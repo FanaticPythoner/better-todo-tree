@@ -656,4 +656,69 @@ QUnit.module( "behavioral detection", function( hooks )
             [ 'ChangeNote', 'TODO' ]
         );
     } );
+
+    QUnit.test( "issue #61 configured restored-editor tags detect with the default regex", function( assert )
+    {
+        var uri = createUri( '/tmp/issue-61.js' );
+        var tags = [ 'TODO', 'FIXME', 'HACK', 'REVIEW', 'NOTE', 'XXX', 'BUG', '[ ]', '[/]', '[x]' ];
+        var text = tags.map( function( tag )
+        {
+            return '// ' + tag + ' restored editor item';
+        } ).join( '\n' );
+        var config = createConfig( {
+            tagList: tags,
+            caseSensitive: false
+        } );
+
+        utils.init( config );
+
+        assert.deepEqual(
+            detection.scanText( uri, text ).map( function( result ) { return result.actualTag; } ),
+            tags
+        );
+    } );
+
+    QUnit.test( "issue #898 registered custom highlight tags detect through legacy-style regexes", function( assert )
+    {
+        var uri = createUri( '/tmp/issue-898.py' );
+        var tags = [
+            'BUG',
+            'HACK',
+            'FIXME',
+            'TODO',
+            'XXX',
+            '[ ]',
+            '[x]',
+            'NOTE',
+            'ChangeNote',
+            'Change_Note',
+            'CHANGE NOTE',
+            'ToTest'
+        ];
+        var text = tags.map( function( tag )
+        {
+            return '# ' + tag + ' registered custom tag';
+        } ).join( '\n' );
+        var config = createConfig( {
+            tagList: tags,
+            regexSource: slashHashTagRegexWithTail( regexRegistry.fragment( 'anyTextZeroOrMore' ) ),
+            customHighlight: function()
+            {
+                return tags.reduce( function( highlights, tag )
+                {
+                    highlights[ tag ] = {
+                        foreground: '#00C03F'
+                    };
+                    return highlights;
+                }, {} );
+            }
+        } );
+
+        utils.init( config );
+
+        assert.deepEqual(
+            detection.scanText( uri, text ).map( function( result ) { return result.actualTag; } ),
+            tags
+        );
+    } );
 } );
