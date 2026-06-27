@@ -213,6 +213,67 @@ QUnit.module( "behavioral highlights", function( hooks )
         assert.equal( decoration.gutterIconPath, '/tmp/gutter-dark.svg' );
     } );
 
+    QUnit.test( "empty highlight colours use selection highlight background with inherited text colour", function( assert )
+    {
+        var decorationLog = [];
+        var highlights = helpers.loadWithStubs( '../src/highlights.js', {
+            vscode: createVscodeStub( { highlight: 'tag', enabled: true }, decorationLog ),
+            './config.js': {
+                customHighlight: function() { return {}; },
+                subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); }
+            },
+            './utils.js': {
+                isHexColour: function() { return false; },
+                isRgbColour: function() { return false; },
+                isValidColour: function() { return true; },
+                isThemeColour: function() { return false; },
+                hexToRgba: function( value ) { return value; },
+                complementaryColour: function() { return '#ffffff'; },
+                setRgbAlpha: function( value ) { return value; }
+            },
+            './attributes.js': {
+                getForeground: function() { return undefined; },
+                getBackground: function() { return undefined; },
+                hasCustomHighlight: function() { return false; },
+                getAttribute: function( tag, attribute, defaultValue )
+                {
+                    if( attribute === 'gutterIcon' )
+                    {
+                        return false;
+                    }
+                    return defaultValue;
+                }
+            },
+            './icons.js': {
+                getGutterIcon: function()
+                {
+                    return { dark: '/tmp/gutter-dark.svg', light: '/tmp/gutter-light.svg' };
+                }
+            },
+            './detection.js': {
+                scanDocument: function()
+                {
+                    return [];
+                }
+            },
+            './extensionIdentity.js': {
+                getSetting: function( setting, defaultValue )
+                {
+                    return defaultValue;
+                }
+            }
+        } );
+
+        highlights.init( { subscriptions: { push: function() {} } }, function() {} );
+
+        var decoration = highlights.getDecoration( 'TODO' );
+
+        assert.equal( decoration.light.backgroundColor.name, 'editor.selectionHighlightBackground' );
+        assert.equal( decoration.dark.backgroundColor.name, 'editor.selectionHighlightBackground' );
+        assert.strictEqual( decoration.light.color, undefined );
+        assert.strictEqual( decoration.dark.color, undefined );
+    } );
+
     QUnit.test( "customHighlight colours and defaultHighlight fallback flow into editor decorations", function( assert )
     {
         var decorationLog = [];

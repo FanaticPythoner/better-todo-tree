@@ -99,9 +99,12 @@ function activate( context )
     var scanProgressSession;
     var scanProgressState;
     var scanStatusBarSpinnerVisible = false;
+    var startupOpenScanRetryTimer;
+    var startupOpenScanRetryIndex = 0;
 
     var SCAN_PROGRESS_MIN_FILE_UNITS = 1;
     var SCAN_DIAGNOSTIC_EVENT_LIMIT = 500;
+    var STARTUP_OPEN_SCAN_RETRY_DELAYS = Object.freeze( [ 50, 150, 350, 750, 1500, 3000 ] );
     var SCAN_PROGRESS_VISIBILITY_BY_MODE = Object.freeze( {
         'none': Object.freeze( { notification: false, statusBar: false, tree: false } ),
         'status bar': Object.freeze( { notification: false, statusBar: true, tree: false } ),
@@ -2546,19 +2549,92 @@ function activate( context )
         return openNotebookTargets;
     }
 
+    function isOpenTextDocumentCandidate( document )
+    {
+        return document &&
+            document.uri &&
+            notebooks.isNotebookCellDocument( document ) !== true &&
+            config.isValidScheme( document.uri );
+    }
+
+    function rememberOpenTextDocument( document )
+    {
+        if( isOpenTextDocumentCandidate( document ) !== true )
+        {
+            return false;
+        }
+
+        openDocuments[ document.uri.toString() ] = document;
+        return true;
+    }
+
+    function rememberVisibleTextEditors()
+    {
+        var remembered = 0;
+
+        vscode.window.visibleTextEditors.forEach( function( editor )
+        {
+            if( editor && editor.document )
+            {
+                if( rememberOpenTextDocument( editor.document ) )
+                {
+                    remembered++;
+                }
+            }
+        } );
+
+        return remembered;
+    }
+
+    function getVisibleTextEditorDocuments()
+    {
+        return vscode.window.visibleTextEditors.map( function( editor )
+        {
+            return editor ? editor.document : undefined;
+        } ).filter( isOpenTextDocumentCandidate );
+    }
+
+    function getWorkspaceTextDocuments()
+    {
+        if( Array.isArray( vscode.workspace.textDocuments ) !== true )
+        {
+            return [];
+        }
+
+        return vscode.workspace.textDocuments.filter( isOpenTextDocumentCandidate );
+    }
+
+    function getOpenTextDocumentCandidates()
+    {
+        var documentsByUri = {};
+
+        Object.keys( openDocuments ).forEach( function( key )
+        {
+            var document = openDocuments[ key ];
+            if( isOpenTextDocumentCandidate( document ) )
+            {
+                documentsByUri[ document.uri.toString() ] = document;
+            }
+        } );
+
+        getWorkspaceTextDocuments().concat( getVisibleTextEditorDocuments() ).forEach( function( document )
+        {
+            documentsByUri[ document.uri.toString() ] = document;
+        } );
+
+        return Object.keys( documentsByUri ).map( function( key )
+        {
+            return documentsByUri[ key ];
+        } ).filter( function( document )
+        {
+            return isIncluded( document.uri );
+        } );
+    }
+
     function getOpenDocumentsForScan( workspaceRoots )
     {
         var scanMode = config.scanMode();
-        var documents = Object.keys( openDocuments ).map( function( key )
-        {
-            return openDocuments[ key ];
-        } ).filter( function( document )
-        {
-            return document &&
-                notebooks.isNotebookCellDocument( document ) !== true &&
-                config.isValidScheme( document.uri ) &&
-                isIncluded( document.uri );
-        } );
+        var documents = getOpenTextDocumentCandidates();
 
         if( scanMode === SCAN_MODE_CURRENT_FILE )
         {
@@ -2584,6 +2660,15 @@ function activate( context )
         }
 
         return [];
+    }
+
+    function scanModeUsesOpenScanTargets()
+    {
+        var scanMode = config.scanMode();
+
+        return scanMode === SCAN_MODE_OPEN_FILES ||
+            scanMode === SCAN_MODE_CURRENT_FILE ||
+            scanMode === SCAN_MODE_WORKSPACE_AND_OPEN_FILES;
     }
 
     function scanNotebookDocument( notebook )
@@ -3209,6 +3294,7 @@ function activate( context )
             flushWorkspaceScanIssues();
             finishScan( generation );
             flushPendingDocumentRefreshes();
+            triggerHighlightsForVisibleEditors();
         } );
     }
 
@@ -3238,6 +3324,57 @@ function activate( context )
 
             executeRebuild();
         }, delay === undefined ? 1000 : delay );
+    }
+
+    function clearStartupOpenScanRetry()
+    {
+        if( startupOpenScanRetryTimer )
+        {
+            clearTimeout( startupOpenScanRetryTimer );
+            startupOpenScanRetryTimer = undefined;
+        }
+    }
+
+    function getOpenScanTargetCount()
+    {
+        if( scanModeUsesOpenScanTargets() !== true )
+        {
+            return 0;
+        }
+
+        return getRefreshTargets( searchList ).length;
+    }
+
+    function scheduleStartupOpenScanRetry()
+    {
+        clearStartupOpenScanRetry();
+
+        if( getOpenScanTargetCount() > 0 || startupOpenScanRetryIndex >= STARTUP_OPEN_SCAN_RETRY_DELAYS.length )
+        {
+            return;
+        }
+
+        var retryDelay = STARTUP_OPEN_SCAN_RETRY_DELAYS[ startupOpenScanRetryIndex ];
+        startupOpenScanRetryIndex++;
+
+        startupOpenScanRetryTimer = setTimeout( function()
+        {
+            startupOpenScanRetryTimer = undefined;
+            rememberVisibleTextEditors();
+
+            if( getOpenScanTargetCount() > 0 )
+            {
+                triggerRescan( 0 );
+                return;
+            }
+
+            scheduleStartupOpenScanRetry();
+        }, retryDelay );
+
+        if( startupOpenScanRetryTimer && typeof startupOpenScanRetryTimer.unref === 'function' && !vscode.env.appName )
+        {
+            startupOpenScanRetryTimer.unref();
+        }
     }
 
     function resetGitWatcher()
@@ -3516,6 +3653,56 @@ function activate( context )
                 return openDocuments[ lookupKey ];
             }
         );
+    }
+
+    function editorMatchesHighlightTarget( editor, document )
+    {
+        if( !editor || !editor.document || config.isValidScheme( editor.document.uri ) !== true )
+        {
+            return false;
+        }
+
+        if( document && document !== editor.document )
+        {
+            return false;
+        }
+
+        return isIncluded( editor.document.uri ) === true;
+    }
+
+    function triggerHighlightsForVisibleEditors( document )
+    {
+        vscode.window.visibleTextEditors.forEach( function( editor )
+        {
+            if( editorMatchesHighlightTarget( editor, document ) )
+            {
+                highlights.triggerHighlight( editor );
+            }
+        } );
+    }
+
+    function documentChanged( document )
+    {
+        if( document )
+        {
+            triggerHighlightsForVisibleEditors( document );
+            if( config.isValidScheme( document.uri ) && path.basename( document.fileName ) !== "settings.json" )
+            {
+                if( notebooks.isNotebookCellDocument( document ) === true )
+                {
+                    return;
+                }
+
+                if( shouldRefreshFile() )
+                {
+                    queueDocumentRefresh( document, 'change' );
+                }
+            }
+        }
+        else
+        {
+            triggerHighlightsForVisibleEditors();
+        }
     }
 
     function refresh( options )
@@ -4042,76 +4229,21 @@ function activate( context )
             return revealPromise;
         }
 
-        function triggerHighlightsForDocument( document )
-        {
-            if( document )
-            {
-                vscode.window.visibleTextEditors.map( editor =>
-                {
-                    if( document === editor.document && config.isValidScheme( document.uri ) )
-                    {
-                        if( isIncluded( document.uri ) )
-                        {
-                            highlights.triggerHighlight( editor );
-                        }
-                    }
-                } );
-            }
-            else
-            {
-                vscode.window.visibleTextEditors.map( editor =>
-                {
-                    if( config.isValidScheme( editor.document.uri ) )
-                    {
-                        if( isIncluded( editor.document.uri ) )
-                        {
-                            highlights.triggerHighlight( editor );
-                        }
-                    }
-                } );
-            }
-        }
-
-        function documentChanged( document )
-        {
-            if( document )
-            {
-                triggerHighlightsForDocument( document );
-                if( config.isValidScheme( document.uri ) && path.basename( document.fileName ) !== "settings.json" )
-                {
-                    if( notebooks.isNotebookCellDocument( document ) === true )
-                    {
-                        return;
-                    }
-
-                    if( shouldRefreshFile() )
-                    {
-                        queueDocumentRefresh( document, 'change' );
-                    }
-                }
-            }
-            else
-            {
-                triggerHighlightsForDocument();
-            }
-        }
-
         function scheduleStartupScan()
         {
             var startupScanImmediate = setImmediate( function()
             {
+                startupOpenScanRetryIndex = 0;
+                rememberVisibleTextEditors();
                 rebuild();
-
-                if( vscode.window.activeTextEditor )
-                {
-                    documentChanged();
-                }
+                scheduleStartupOpenScanRetry();
             } );
 
             context.subscriptions.push( {
                 dispose: function()
                 {
                     clearImmediate( startupScanImmediate );
+                    clearStartupOpenScanRetry();
                 }
             } );
         }
@@ -4129,12 +4261,9 @@ function activate( context )
             var ownerUri = activeNotebook ? activeNotebook.uri : getOwnerUriForDocument( document );
             var ownerFileFilter = ownerUri && ownerUri.fsPath !== undefined ? ownerUri.fsPath : document.fileName;
 
-            triggerHighlightsForDocument( document );
+            triggerHighlightsForVisibleEditors( document );
 
-            if( activeDocumentIsNotebookCell !== true )
-            {
-                openDocuments[ document.uri.toString() ] = document;
-            }
+            rememberOpenTextDocument( document );
 
             if( config.scanMode() === SCAN_MODE_CURRENT_FILE )
             {
@@ -4164,6 +4293,18 @@ function activate( context )
             if( config.scanMode() !== SCAN_MODE_CURRENT_FILE && activeNotebook && shouldRefreshFile() )
             {
                 queueNotebookRefresh( activeNotebook, 'open' );
+            }
+        }
+
+        function visibleTextEditorsChanged()
+        {
+            rememberVisibleTextEditors();
+            triggerHighlightsForVisibleEditors();
+
+            if( shouldRefreshFile() === true && getOpenScanTargetCount() > 0 )
+            {
+                clearStartupOpenScanRetry();
+                triggerRescan( 0 );
             }
         }
 
@@ -4776,6 +4917,10 @@ function activate( context )
         } ) );
 
         context.subscriptions.push( vscode.window.onDidChangeActiveTextEditor( activeEditorChanged ) );
+        if( typeof vscode.window.onDidChangeVisibleTextEditors === 'function' )
+        {
+            context.subscriptions.push( vscode.window.onDidChangeVisibleTextEditors( visibleTextEditorsChanged ) );
+        }
 
         context.subscriptions.push( vscode.workspace.onDidSaveTextDocument( document =>
         {
@@ -4790,11 +4935,10 @@ function activate( context )
 
         context.subscriptions.push( vscode.workspace.onDidOpenTextDocument( document =>
         {
-            if( shouldRefreshFile() )
+            if( config.isValidScheme( document.uri ) && notebooks.isNotebookCellDocument( document ) !== true )
             {
-                if( config.isValidScheme( document.uri ) && notebooks.isNotebookCellDocument( document ) !== true )
+                if( rememberOpenTextDocument( document ) && shouldRefreshFile() )
                 {
-                    openDocuments[ document.uri.toString() ] = document;
                     queueDocumentRefresh( document, 'open' );
                 }
             }
@@ -5016,15 +5160,7 @@ function activate( context )
 
         if( getSetting( 'tree.scanAtStartup', true ) === true )
         {
-            var editors = vscode.window.visibleTextEditors;
-            editors.map( function( editor )
-            {
-                if( editor.document && config.isValidScheme( editor.document.uri ) && notebooks.isNotebookCellDocument( editor.document ) !== true )
-                {
-                    openDocuments[ editor.document.uri.toString() ] = editor.document;
-                }
-            } );
-
+            rememberVisibleTextEditors();
             scheduleStartupScan();
         }
         else

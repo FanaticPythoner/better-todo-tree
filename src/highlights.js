@@ -10,6 +10,7 @@ var regexRegistry = require( './regexRegistry.js' );
 
 var captureGroupArgument = "capture-groups";
 var themeColourReferenceRegex = regexRegistry.createRegExp( 'themeColourReference', 'i' );
+var defaultEditorHighlightBackground = 'editor.selectionHighlightBackground';
 
 var lanes =
 {
@@ -131,14 +132,12 @@ function createDecoration( tag )
 
     if( lightBackgroundColour === undefined && lightForegroundColour === undefined )
     {
-        lightBackgroundColour = new vscode.ThemeColor( 'editor.foreground' );
-        lightForegroundColour = new vscode.ThemeColor( 'editor.background' );
+        lightBackgroundColour = new vscode.ThemeColor( defaultEditorHighlightBackground );
     }
 
     if( darkBackgroundColour === undefined && darkForegroundColour === undefined )
     {
-        darkBackgroundColour = new vscode.ThemeColor( 'editor.foreground' );
-        darkForegroundColour = new vscode.ThemeColor( 'editor.background' );
+        darkBackgroundColour = new vscode.ThemeColor( defaultEditorHighlightBackground );
     }
 
     var lane = getRulerLane( tag );

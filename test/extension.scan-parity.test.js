@@ -796,6 +796,7 @@ function createVscodeStub( options )
                 return Promise.resolve();
             },
             onDidChangeActiveTextEditor: function( listener ) { return registerListener( workspaceListeners, 'activeEditor', listener ); },
+            onDidChangeVisibleTextEditors: function( listener ) { return registerListener( windowListeners, 'visibleTextEditors', listener ); },
             onDidChangeVisibleNotebookEditors: function( listener ) { return registerListener( windowListeners, 'visibleNotebookEditors', listener ); }
         },
         informationMessages: informationMessages,
@@ -803,6 +804,7 @@ function createVscodeStub( options )
         errorMessages: errorMessages,
         workspace: {
             workspaceFolders: options.workspaceFolders || [],
+            textDocuments: options.textDocuments || [],
             registerTextDocumentContentProvider: function()
             {
                 return { dispose: function() {} };
@@ -844,6 +846,7 @@ function createExtensionHarness( options )
     var normalizeCalls = [];
     var normalizeWorkspaceCalls = [];
     var readFileCalls = [];
+    var highlightCalls = [];
     var ripgrepMatchLookup = new Map();
     var validSchemes = options.validSchemes || [ 'file', 'vscode-notebook-cell' ];
     var treeStateOverrides = {};
@@ -1211,7 +1214,10 @@ function createExtensionHarness( options )
         },
         './highlights.js': {
             init: function() {},
-            triggerHighlight: function() {},
+            triggerHighlight: function( editor )
+            {
+                highlightCalls.push( editor );
+            },
             setScanResultsProvider: function() {},
             resetCaches: function() {}
         },
@@ -1404,6 +1410,7 @@ function createExtensionHarness( options )
         normalizeCalls: normalizeCalls,
         normalizeWorkspaceCalls: normalizeWorkspaceCalls,
         readFileCalls: readFileCalls,
+        highlightCalls: highlightCalls,
         notebookMetrics: notebookMetrics,
         vscode: vscodeStub,
         windowListeners: vscodeStub.windowListeners,
@@ -1648,6 +1655,287 @@ QUnit.test( "open-files mode stores canonical document results through the refre
         assert.equal( harness.scanDocumentCalls.length, 1 );
         assert.equal( harness.scanDocumentCalls[ 0 ].fileName, '/tmp/open.js' );
         assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, fixture );
+    } );
+} );
+
+QUnit.test( "open-files startup scan includes visible editors restored after activation", function( assert )
+{
+    var fixture = [ {
+        uri: matrixHelpers.createUri( '/tmp/restored.js' ),
+        actualTag: 'TODO',
+        displayText: 'restored item',
+        continuationText: []
+    } ];
+    var document = matrixHelpers.createDocument( '/tmp/restored.js', '// TODO restored item' );
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        visibleTextEditors: [],
+        activeTextEditor: undefined,
+        documentResults: fixture,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+    harness.vscode.window.visibleTextEditors = [ { document: document } ];
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 1 );
+        assert.equal( harness.scanDocumentCalls[ 0 ].fileName, '/tmp/restored.js' );
+        assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, fixture );
+        assert.deepEqual( harness.highlightCalls.map( function( editor )
+        {
+            return editor.document.fileName;
+        } ), [ '/tmp/restored.js' ] );
+    } );
+} );
+
+QUnit.test( "open-files startup scan includes restored workspace text documents before visible editors", function( assert )
+{
+    var fixture = [ {
+        uri: matrixHelpers.createUri( '/tmp/restored-text-document.js' ),
+        actualTag: 'TODO',
+        displayText: 'restored text document item',
+        continuationText: []
+    } ];
+    var document = matrixHelpers.createDocument( '/tmp/restored-text-document.js', '// TODO restored text document item' );
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        visibleTextEditors: [],
+        activeTextEditor: undefined,
+        textDocuments: [ document ],
+        documentResults: fixture,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 1 );
+        assert.equal( harness.scanDocumentCalls[ 0 ].fileName, '/tmp/restored-text-document.js' );
+        assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, fixture );
+        assert.equal( harness.highlightCalls.length, 0 );
+
+        harness.vscode.window.visibleTextEditors = [ { document: document } ];
+        return harness.vscode.workspaceListeners.activeEditor( { document: document } );
+    } ).then( function()
+    {
+        assert.deepEqual( harness.highlightCalls.map( function( editor )
+        {
+            return editor.document.fileName;
+        } ), [ '/tmp/restored-text-document.js' ] );
+    } );
+} );
+
+QUnit.test( "visible editor readiness event rescans open-files startup after empty scan", function( assert )
+{
+    var fixture = [ {
+        uri: matrixHelpers.createUri( '/tmp/late-visible.js' ),
+        actualTag: 'TODO',
+        displayText: 'late visible item',
+        continuationText: []
+    } ];
+    var document = matrixHelpers.createDocument( '/tmp/late-visible.js', '// TODO late visible item' );
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        visibleTextEditors: [],
+        activeTextEditor: undefined,
+        documentResults: fixture,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 0 );
+
+        harness.vscode.window.visibleTextEditors = [ { document: document } ];
+        harness.vscode.windowListeners.visibleTextEditors( [ { document: document } ] );
+
+        return waitForDelay( 0 ).then( function()
+        {
+            return matrixHelpers.flushAsyncWork();
+        } );
+    } ).then( function()
+    {
+        var lastReplaceCall = harness.provider.replaceCalls[ harness.provider.replaceCalls.length - 1 ];
+
+        assert.equal( harness.scanDocumentCalls.length, 1 );
+        assert.equal( harness.scanDocumentCalls[ 0 ].fileName, '/tmp/late-visible.js' );
+        assert.deepEqual( lastReplaceCall.results, fixture );
+        assert.deepEqual( harness.highlightCalls.map( function( editor )
+        {
+            return editor.document.fileName;
+        } ), [ '/tmp/late-visible.js', '/tmp/late-visible.js' ] );
+    } );
+} );
+
+QUnit.test( "startup open-files retry scans editor that becomes visible after empty scan", function( assert )
+{
+    var scheduledTimeouts = [];
+    var fixture = [ {
+        uri: matrixHelpers.createUri( '/tmp/retry-visible.js' ),
+        actualTag: 'TODO',
+        displayText: 'retry visible item',
+        continuationText: []
+    } ];
+    var document = matrixHelpers.createDocument( '/tmp/retry-visible.js', '// TODO retry visible item' );
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        visibleTextEditors: [],
+        activeTextEditor: undefined,
+        documentResults: fixture,
+        timerStubs: {
+            setTimeout: function( callback, delay )
+            {
+                var handle = {
+                    callback: callback,
+                    delay: delay,
+                    unref: function() {}
+                };
+                scheduledTimeouts.push( handle );
+                return handle;
+            },
+            clearTimeout: function() {},
+            setInterval: function() { return {}; },
+            clearInterval: function() {}
+        },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        var retryTimer = scheduledTimeouts.find( function( timer )
+        {
+            return timer.delay === 50;
+        } );
+
+        assert.equal( harness.scanDocumentCalls.length, 0 );
+        assert.ok( retryTimer );
+
+        harness.vscode.window.visibleTextEditors = [ { document: document } ];
+        retryTimer.callback();
+
+        var rescanTimer = scheduledTimeouts.find( function( timer )
+        {
+            return timer.delay === 0;
+        } );
+
+        assert.ok( rescanTimer );
+        rescanTimer.callback();
+
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        var lastReplaceCall = harness.provider.replaceCalls[ harness.provider.replaceCalls.length - 1 ];
+
+        assert.equal( harness.scanDocumentCalls.length, 1 );
+        assert.equal( harness.scanDocumentCalls[ 0 ].fileName, '/tmp/retry-visible.js' );
+        assert.deepEqual( lastReplaceCall.results, fixture );
+    } );
+} );
+
+QUnit.test( "restored visible editors receive highlights after startup scan without active editor", function( assert )
+{
+    var firstDocument = matrixHelpers.createDocument( '/tmp/first.js', '// TODO first' );
+    var secondDocument = matrixHelpers.createDocument( '/tmp/second.js', '// FIXME second' );
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        visibleTextEditors: [ { document: firstDocument }, { document: secondDocument } ],
+        activeTextEditor: undefined,
+        documentResults: [],
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.deepEqual( harness.highlightCalls.map( function( editor )
+        {
+            return editor.document.fileName;
+        } ), [ '/tmp/first.js', '/tmp/second.js' ] );
+    } );
+} );
+
+QUnit.test( "refresh command reapplies highlights to visible editors", function( assert )
+{
+    var document = matrixHelpers.createDocument( '/tmp/refresh.js', '// TODO refresh' );
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        visibleTextEditors: [ { document: document } ],
+        documentResults: [],
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.highlightCalls.length, 0 );
+        return harness.vscode.commandHandlers[ 'better-todo-tree.refresh' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.deepEqual( harness.highlightCalls.map( function( editor )
+        {
+            return editor.document.fileName;
+        } ), [ '/tmp/refresh.js' ] );
+    } );
+} );
+
+QUnit.test( "refresh command scans visible editor when open event was missed", function( assert )
+{
+    var fixture = [ {
+        uri: matrixHelpers.createUri( '/tmp/refresh-visible.js' ),
+        actualTag: 'TODO',
+        displayText: 'refresh visible item',
+        continuationText: []
+    } ];
+    var document = matrixHelpers.createDocument( '/tmp/refresh-visible.js', '// TODO refresh visible item' );
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        visibleTextEditors: [],
+        activeTextEditor: undefined,
+        textDocuments: [ document ],
+        documentResults: fixture,
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 0 );
+        harness.vscode.window.visibleTextEditors = [ { document: document } ];
+        return harness.vscode.commandHandlers[ 'better-todo-tree.refresh' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.equal( harness.scanDocumentCalls.length, 1 );
+        assert.equal( harness.scanDocumentCalls[ 0 ].fileName, '/tmp/refresh-visible.js' );
+        assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, fixture );
+        assert.deepEqual( harness.highlightCalls.map( function( editor )
+        {
+            return editor.document.fileName;
+        } ), [ '/tmp/refresh-visible.js' ] );
     } );
 } );
 
