@@ -966,7 +966,7 @@ var DEFAULT_DEFINITION = Object.freeze( {
         windowsAbsolutePath: '[A-Za-z]:[\\\\/][^\\s"\')]+',
         windowsAbsoluteGlob: '^[A-Za-z]:[\\\\/]',
         homeUsersAbsolutePath: '\\/(?:home|Users)\\/[^\\s"\')]+',
-        diagnosticPathTail: '(?:[/\\\\][^\\s"\')]+)?',
+        diagnosticPathTail: '(?:[/\\\\][^\\s"\')]+)*',
         hexColourNoise: '[^\\da-fA-F]',
         iconNameNoise: '[^0-9a-zA-Z]',
         octiconNameNoise: '[^a-z0-9]',

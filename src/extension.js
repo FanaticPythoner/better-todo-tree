@@ -2541,7 +2541,7 @@ function activate( context )
         return error &&
             error.name === 'RipgrepError' &&
             error.exitCode === 2 &&
-            ( !error.stderr || error.outputLineCount > 0 || error.matchCount > 0 );
+            ( error.outputLineCount > 0 || error.matchCount > 0 );
     }
 
     function search( cwd, options, onEvent, errorOptions )

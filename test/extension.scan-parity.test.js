@@ -5370,12 +5370,12 @@ QUnit.test( "workspace scan status opens the current file", function( assert )
 
 QUnit.test( "workspace scan read errors are exported in diagnostics", function( assert )
 {
-    var readError = new Error( 'permission denied /workspace/blocked.js' );
+    var readError = new Error( 'permission denied /workspace/private/blocked.js' );
     var diagnosticDocument;
     readError.code = 'EACCES';
 
     var scan = createWorkspaceScanProgressHarness( {
-        trackedPath: './blocked.js',
+        trackedPath: './private/blocked.js',
         readFileImpl: function( filePath, encoding, callback )
         {
             callback( readError );
@@ -5398,6 +5398,7 @@ QUnit.test( "workspace scan read errors are exported in diagnostics", function( 
             return message.indexOf( 'path:1 during candidate scan' ) >= 0 &&
                 message.indexOf( 'permission denied' ) >= 0 &&
                 message.indexOf( '/workspace' ) === -1 &&
+                message.indexOf( 'private' ) === -1 &&
                 message.indexOf( 'blocked.js' ) === -1;
         } ) );
         assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
@@ -5410,13 +5411,14 @@ QUnit.test( "workspace scan read errors are exported in diagnostics", function( 
         assert.equal( diagnostics.schemaVersion, 2 );
         assert.equal( diagnostics.privacy.publicSafe, true );
         assert.equal( diagnosticDocument.content.indexOf( '/workspace' ), -1 );
+        assert.equal( diagnosticDocument.content.indexOf( 'private' ), -1 );
         assert.equal( diagnosticDocument.content.indexOf( 'blocked.js' ), -1 );
         assert.equal( diagnostics.scan.active, false );
         assert.equal( diagnostics.scan.roots[ 0 ].id, 'workspace:1' );
         assert.equal( diagnostics.issues.length, 1 );
         assert.equal( diagnostics.issues[ 0 ].path.id, 'path:1' );
         assert.equal( diagnostics.issues[ 0 ].path.workspace, 'workspace:1' );
-        assert.equal( diagnostics.issues[ 0 ].path.relativeShape, '<workspace:1>/<file>.js' );
+        assert.equal( diagnostics.issues[ 0 ].path.relativeShape, '<workspace:1>/<dir>/<file>.js' );
         assert.equal( diagnostics.issues[ 0 ].path.extension, '.js' );
         assert.equal( diagnostics.issues[ 0 ].message, 'permission denied <path:1>' );
         assert.equal( diagnostics.issues[ 0 ].code, 'EACCES' );
@@ -5878,6 +5880,36 @@ QUnit.test( "workspace scan keeps ripgrep configuration exit code 2 fatal", func
         assert.equal( harness.warningMessages.length, 0 );
         assert.equal( harness.errorMessages.length, 1 );
         assert.equal( harness.errorMessages[ 0 ].indexOf( 'regex parse error' ) > -1, true );
+    } );
+} );
+
+QUnit.test( "workspace scan keeps empty ripgrep exit code 2 fatal", function( assert )
+{
+    var searchError = new Error( 'ripgrep failed with exit code 2' );
+    searchError.name = 'RipgrepError';
+    searchError.exitCode = 2;
+    searchError.stderr = '';
+    searchError.matchCount = 0;
+    searchError.outputLineCount = 0;
+
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepSearchImpl: function()
+        {
+            return Promise.reject( searchError );
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.provider.replaceCalls.length, 0 );
+        assert.equal( harness.warningMessages.length, 0 );
+        assert.equal( harness.errorMessages.length, 1 );
+        assert.equal( harness.errorMessages[ 0 ].indexOf( 'ripgrep failed with exit code 2' ) > -1, true );
     } );
 } );
 
