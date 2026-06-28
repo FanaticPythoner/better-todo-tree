@@ -175,8 +175,13 @@
                     "group": "navigation@8"
                 },
                 {
-                    "command": "better-todo-tree.toggleTreeExpansion",
-                    "when": "view =~ /todo-tree/ && better-todo-tree-show-expand-button == true && better-todo-tree-collapsible == true && better-todo-tree-expansion-busy == false",
+                    "command": "better-todo-tree.expand",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-show-expand-button == true && better-todo-tree-collapsible == true && better-todo-tree-expanded == false && better-todo-tree-expansion-busy == false",
+                    "group": "navigation@9"
+                },
+                {
+                    "command": "better-todo-tree.collapse",
+                    "when": "view =~ /todo-tree/ && better-todo-tree-show-expand-button == true && better-todo-tree-collapsible == true && better-todo-tree-expanded == true && better-todo-tree-expansion-busy == false",
                     "group": "navigation@9"
                 },
                 {

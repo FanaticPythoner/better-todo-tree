@@ -4389,6 +4389,62 @@ QUnit.test( "toggleTreeExpansion drives live expand and collapse operations on t
     } );
 } );
 
+QUnit.test( "issue #59 expansion commands publish expanded context for title icons", function( assert )
+{
+    var workspaceStateValues = {
+        expanded: false
+    };
+    var workspaceState = {
+        get: function( key, defaultValue )
+        {
+            return Object.prototype.hasOwnProperty.call( workspaceStateValues, key ) ? workspaceStateValues[ key ] : defaultValue;
+        },
+        update: function( key, value )
+        {
+            workspaceStateValues[ key ] = value;
+            return Promise.resolve();
+        }
+    };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        workspaceState: workspaceState,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        fileContents: {}
+    } );
+
+    function expandedContextWrites()
+    {
+        return harness.vscode.executedCommands.filter( function( call )
+        {
+            return call[ 0 ] === 'setContext' && call[ 1 ] === 'better-todo-tree-expanded';
+        } ).map( function( call )
+        {
+            return call[ 2 ];
+        } );
+    }
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.deepEqual( expandedContextWrites(), [ false ] );
+        return harness.vscode.commandHandlers[ 'better-todo-tree.expand' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.deepEqual( expandedContextWrites(), [ false, true ] );
+        return harness.vscode.commandHandlers[ 'better-todo-tree.collapse' ]();
+    } ).then( function()
+    {
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.deepEqual( expandedContextWrites(), [ false, true, false ] );
+    } );
+} );
+
 QUnit.test( "view changes and expansion mutations stay serialized across the actual tree view", function( assert )
 {
     var workspaceStateValues = {
