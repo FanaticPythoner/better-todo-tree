@@ -176,6 +176,58 @@ QUnit.module( "ripgrep streaming search", function( hooks )
         } );
     } );
 
+    QUnit.test( "search exposes exit metadata on ripgrep exit code 2", function( assert )
+    {
+        var regexSource = regexRegistry.pattern( 'todoFixmeCapture' );
+
+        childProcess.spawn = function()
+        {
+            var fakeProcess = createFakeProcess();
+
+            process.nextTick( function()
+            {
+                fakeProcess.stdout.emit( 'data', Buffer.from(
+                    createJsonLine( {
+                        type: 'match',
+                        data: {
+                            path: { text: '/tmp/file.js' },
+                            lines: { text: 'FIXME first' },
+                            line_number: 1,
+                            absolute_offset: 0,
+                            submatches: [ {
+                                match: { text: 'FIXME' },
+                                start: 0,
+                                end: 5
+                            } ]
+                        }
+                    } )
+                ) );
+                fakeProcess.emit( 'close', 2, null );
+            } );
+
+            return fakeProcess;
+        };
+
+        return ripgrep.search( '/', {
+            rgPath: fakeRgPath,
+            regex: regexSource,
+            unquotedRegex: regexSource,
+            additional: '',
+            globs: [],
+            multiline: false
+        } ).then( function()
+        {
+            assert.ok( false, 'expected exit code 2 rejection' );
+        }, function( error )
+        {
+            assert.ok( error instanceof ripgrep.RipgrepError );
+            assert.equal( error.exitCode, 2 );
+            assert.equal( error.matchCount, 1 );
+            assert.equal( error.outputLineCount, 1 );
+            assert.equal( error.stderr, '' );
+        } );
+    } );
+
     QUnit.test( "search rejects invalid cwd with a typed ripgrep error", function( assert )
     {
         return ripgrep.search( '', {

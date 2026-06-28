@@ -15,13 +15,19 @@ var whitespaceCharacterRegex = regexRegistry.createRegExp( 'whitespaceCharacter'
 var MAX_DEBUG_PREVIEW_LINES = 10;
 var MAX_DEBUG_TEXT_LENGTH = 2048;
 
-function RipgrepError( error, stderr, cancelled )
+function RipgrepError( error, stderr, cancelled, details )
 {
+    details = details || {};
     Error.call( this );
     this.name = 'RipgrepError';
     this.message = error;
     this.stderr = stderr;
     this.cancelled = cancelled === true;
+    this.exitCode = details.exitCode;
+    this.signal = details.signal;
+    this.matchCount = details.matchCount;
+    this.outputLineCount = details.outputLineCount;
+    this.summary = details.summary;
 
     if( Error.captureStackTrace )
     {
@@ -260,14 +266,23 @@ function processStdoutChunk( chunk, state, onEvent )
     } );
 }
 
-function toRipgrepError( error, stderr, cancelled )
+function createErrorDetails( state, details )
+{
+    return Object.assign( {
+        matchCount: state && state.matchCount,
+        outputLineCount: state && state.outputLineCount,
+        summary: state && state.summary
+    }, details || {} );
+}
+
+function toRipgrepError( error, stderr, cancelled, details )
 {
     if( error instanceof RipgrepError )
     {
         return error;
     }
 
-    return new RipgrepError( error && error.message ? error.message : String( error ), stderr, cancelled );
+    return new RipgrepError( error && error.message ? error.message : String( error ), stderr, cancelled, details );
 }
 
 function normalizeSearchOptions( options )
@@ -317,11 +332,11 @@ function rejectAfterPatternCleanup( options, state, reject, error, beforeCleanup
     return cleanupPatternFile( options.patternFilePath ).then( function()
     {
         clearCurrentProcess( processRef );
-        reject( toRipgrepError( error, state.stderr, false ) );
+        reject( toRipgrepError( error, state.stderr, false, createErrorDetails( state ) ) );
     }, function( cleanupError )
     {
         clearCurrentProcess( processRef );
-        reject( toRipgrepError( cleanupError, state.stderr, false ) );
+        reject( toRipgrepError( cleanupError, state.stderr, false, createErrorDetails( state ) ) );
     } );
 }
 
@@ -442,7 +457,9 @@ module.exports.search = function ripGrep( cwd, options, onEvent )
 
                     if( state.cancellationRequested === true || signal === 'SIGINT' )
                     {
-                        reject( new RipgrepError( "Search cancelled", state.stderr, true ) );
+                        reject( new RipgrepError( "Search cancelled", state.stderr, true, createErrorDetails( state, {
+                            signal: signal
+                        } ) ) );
                         return;
                     }
 
@@ -452,11 +469,14 @@ module.exports.search = function ripGrep( cwd, options, onEvent )
                         return;
                     }
 
-                    reject( new RipgrepError( "ripgrep failed with exit code " + code, state.stderr, false ) );
+                    reject( new RipgrepError( "ripgrep failed with exit code " + code, state.stderr, false, createErrorDetails( state, {
+                        exitCode: code,
+                        signal: signal
+                    } ) ) );
                 } ).catch( function( error )
                 {
                     clearCurrentProcess( searchProcess );
-                    reject( toRipgrepError( error, state.stderr, false ) );
+                    reject( toRipgrepError( error, state.stderr, false, createErrorDetails( state ) ) );
                 } );
             } );
         } );

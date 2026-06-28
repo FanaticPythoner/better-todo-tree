@@ -445,7 +445,7 @@ function createVscodeStub( options )
             automaticGitRefreshInterval: automaticGitRefreshInterval,
             periodicRefreshInterval: periodicRefreshInterval,
             rootFolder: "",
-            tags: languageMatrix.DEFAULT_TAGS.slice(),
+            tags: ( options.tags || languageMatrix.DEFAULT_TAGS ).slice(),
             statusBar: options.statusBar || 'total',
             showScanningProgress: options.showScanningProgress || 'status bar'
         },
@@ -469,7 +469,7 @@ function createVscodeStub( options )
             statusBarClickBehaviour: '',
             showScanningProgress: options.showScanningProgress || 'status bar',
             showActivityBarBadge: options.showActivityBarBadge === true,
-            tags: languageMatrix.DEFAULT_TAGS.slice(),
+            tags: ( options.tags || languageMatrix.DEFAULT_TAGS ).slice(),
             tagGroups: {},
             schemes: [ 'file' ]
         }, undefined, configurationUpdates );
@@ -1027,6 +1027,10 @@ function createExtensionHarness( options )
             }
 
             return actualUtils.isIncluded( name, includes, excludes );
+        },
+        isExplicitlyIncluded: function( name, includes )
+        {
+            return actualUtils.isExplicitlyIncluded( name, includes );
         },
         isHidden: function( filePath )
         {
@@ -2959,6 +2963,7 @@ QUnit.test( "issue #19 workspace includeGlobs scan detects Vue embedded TODOs", 
 
     harness = createExtensionHarness( {
         scanMode: 'workspace',
+        tags: [ 'NOTE' ],
         resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
         filteringOverrides: {
             includeGlobs: [ '**/*.*' ]
@@ -3045,6 +3050,168 @@ QUnit.test( "issue #87 workspace scan keeps included child folder under excluded
         ] );
         assert.deepEqual( harness.readFileCalls, [ filePath ] );
         assert.deepEqual( getLatestReplaceCallForPath( harness, filePath ).results, fixture );
+    } );
+} );
+
+QUnit.test( "issue #101 workspace includeGlobs scan detects custom JSON and dotenv text", function( assert )
+{
+    var jsonPath = '/workspace/config/settings.json';
+    var envPath = '/workspace/.env';
+    var harness;
+
+    actualUtils.init( matrixHelpers.createConfig( {
+        tagList: [ 'NOTE' ],
+        customCommentPatterns: function()
+        {
+            return [
+                {
+                    id: 'issue101json',
+                    extensions: [ '.json' ],
+                    singleLineComments: [ '//' ]
+                },
+                {
+                    id: 'issue101dotenv',
+                    filenames: [ '.env', '.env.example' ],
+                    filenameGlobs: [ '**/.env*' ],
+                    singleLineComments: [ '#' ]
+                }
+            ];
+        },
+        customEmbeddedDocuments: function()
+        {
+            return [];
+        }
+    } ) );
+
+    harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        filteringOverrides: {
+            includeGlobs: [ '**/*.json', '**/.env', '**/.env*' ]
+        },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [
+            { fsPath: jsonPath },
+            { fsPath: envPath }
+        ],
+        fileContents: {
+            '/workspace/config/settings.json': '// NOTE json item',
+            '/workspace/.env': '# NOTE dotenv item'
+        },
+        scanTextWithStreamingImpl: function( context )
+        {
+            return actualDetection.scanTextWithStreamingContext(
+                actualDetection.createScanContext( context.uri, context.text )
+            );
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        var jsonResults = getLatestReplaceCallForPath( harness, jsonPath ).results;
+        var envResults = getLatestReplaceCallForPath( harness, envPath ).results;
+
+        assert.equal( harness.ripgrepSearchCalls.length, 1 );
+        assert.equal( actualUtils.isHidden( envPath ), true );
+        assert.deepEqual( harness.ripgrepSearchCalls[ 0 ].globs, [
+            '**/*.json',
+            '**/.env',
+            '**/.env*',
+            '!**/node_modules/*/**'
+        ] );
+        assert.deepEqual( harness.readFileCalls.sort(), [ envPath, jsonPath ].sort() );
+        assert.deepEqual(
+            jsonResults.map( function( result )
+            {
+                return [ result.actualTag, result.displayText ];
+            } ),
+            [ [ 'NOTE', 'json item' ] ]
+        );
+        assert.deepEqual(
+            envResults.map( function( result )
+            {
+                return [ result.actualTag, result.displayText ];
+            } ),
+            [ [ 'NOTE', 'dotenv item' ] ]
+        );
+    } );
+} );
+
+QUnit.test( "issue #102 workspace includeGlobs scan detects JSON with hidden files enabled", function( assert )
+{
+    var jsonPath = '/workspace/config/settings.json';
+    var jsoncPath = '/workspace/config/settings.jsonc';
+
+    actualUtils.init( matrixHelpers.createConfig( {
+        tagList: [ 'NOTE' ],
+        customCommentPatterns: function()
+        {
+            return [ {
+                id: 'issue102json',
+                extensions: [ '.json', '.jsonc' ],
+                singleLineComments: [ '//' ]
+            } ];
+        },
+        customEmbeddedDocuments: function()
+        {
+            return [];
+        }
+    } ) );
+
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        tags: [ 'NOTE' ],
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        filteringOverrides: {
+            includeHiddenFiles: true,
+            includeGlobs: [ '**/*.json', '**/*.jsonc' ]
+        },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepMatches: [
+            { fsPath: jsonPath },
+            { fsPath: jsoncPath }
+        ],
+        fileContents: {
+            '/workspace/config/settings.json': '// NOTE json item',
+            '/workspace/config/settings.jsonc': '// NOTE jsonc item'
+        },
+        scanTextWithStreamingImpl: function( context )
+        {
+            return actualDetection.scanTextWithStreamingContext(
+                actualDetection.createScanContext( context.uri, context.text )
+            );
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        var jsonResults = getLatestReplaceCallForPath( harness, jsonPath ).results;
+        var jsoncResults = getLatestReplaceCallForPath( harness, jsoncPath ).results;
+
+        assert.deepEqual( harness.ripgrepSearchCalls[ 0 ].globs, [
+            '**/*.json',
+            '**/*.jsonc',
+            '!**/node_modules/*/**'
+        ] );
+        assert.deepEqual( harness.readFileCalls.sort(), [ jsonPath, jsoncPath ].sort() );
+        assert.deepEqual(
+            jsonResults.map( function( result )
+            {
+                return [ result.actualTag, result.displayText ];
+            } ),
+            [ [ 'NOTE', 'json item' ] ]
+        );
+        assert.deepEqual(
+            jsoncResults.map( function( result )
+            {
+                return [ result.actualTag, result.displayText ];
+            } ),
+            [ [ 'NOTE', 'jsonc item' ] ]
+        );
     } );
 } );
 
@@ -5203,7 +5370,7 @@ QUnit.test( "workspace scan status opens the current file", function( assert )
 
 QUnit.test( "workspace scan read errors are exported in diagnostics", function( assert )
 {
-    var readError = new Error( 'permission denied' );
+    var readError = new Error( 'permission denied /workspace/blocked.js' );
     var diagnosticDocument;
     readError.code = 'EACCES';
 
@@ -5228,7 +5395,10 @@ QUnit.test( "workspace scan read errors are exported in diagnostics", function( 
     {
         assert.ok( harness.warningMessages.some( function( message )
         {
-            return message.indexOf( 'blocked.js' ) >= 0 && message.indexOf( 'permission denied' ) >= 0;
+            return message.indexOf( 'path:1 during candidate scan' ) >= 0 &&
+                message.indexOf( 'permission denied' ) >= 0 &&
+                message.indexOf( '/workspace' ) === -1 &&
+                message.indexOf( 'blocked.js' ) === -1;
         } ) );
         assertScanProgressSurfaceState( assert, harness, { notification: false, tree: false, statusBar: false } );
 
@@ -5237,14 +5407,26 @@ QUnit.test( "workspace scan read errors are exported in diagnostics", function( 
     {
         var diagnostics = JSON.parse( diagnosticDocument.content );
         assert.equal( diagnosticDocument.language, 'json' );
+        assert.equal( diagnostics.schemaVersion, 2 );
+        assert.equal( diagnostics.privacy.publicSafe, true );
+        assert.equal( diagnosticDocument.content.indexOf( '/workspace' ), -1 );
+        assert.equal( diagnosticDocument.content.indexOf( 'blocked.js' ), -1 );
         assert.equal( diagnostics.scan.active, false );
-        assert.equal( diagnostics.scan.roots[ 0 ], '/workspace' );
+        assert.equal( diagnostics.scan.roots[ 0 ].id, 'workspace:1' );
         assert.equal( diagnostics.issues.length, 1 );
-        assert.equal( diagnostics.issues[ 0 ].filePath, '/workspace/blocked.js' );
+        assert.equal( diagnostics.issues[ 0 ].path.id, 'path:1' );
+        assert.equal( diagnostics.issues[ 0 ].path.workspace, 'workspace:1' );
+        assert.equal( diagnostics.issues[ 0 ].path.relativeShape, '<workspace:1>/<file>.js' );
+        assert.equal( diagnostics.issues[ 0 ].path.extension, '.js' );
+        assert.equal( diagnostics.issues[ 0 ].message, 'permission denied <path:1>' );
         assert.equal( diagnostics.issues[ 0 ].code, 'EACCES' );
+        assert.equal( diagnostics.summary.permissionDenied, true );
+        assert.equal( diagnostics.remediation[ 0 ].code, 'permission-denied' );
         assert.ok( diagnostics.events.some( function( event )
         {
-            return event.type === 'file-skipped' && event.filePath === '/workspace/blocked.js';
+            return event.type === 'file-skipped' &&
+                event.filePath &&
+                event.filePath.id === 'path:1';
         } ) );
     } );
 } );
@@ -5575,8 +5757,127 @@ QUnit.test( "workspace scan keeps successful results when one workspace file rea
             '/workspace/good.js'
         ] );
         assert.equal( harness.warningMessages.length, 1 );
-        assert.equal( harness.warningMessages[ 0 ].indexOf( '/workspace/bad.js' ) > -1, true );
+        assert.equal( harness.warningMessages[ 0 ].indexOf( 'path:1 during candidate scan' ) > -1, true );
+        assert.equal( harness.warningMessages[ 0 ].indexOf( '/workspace/bad.js' ), -1 );
         assert.equal( harness.errorMessages.length, 0 );
+    } );
+} );
+
+QUnit.test( "issue #55 workspace scan keeps results when hidden traversal exits 2", function( assert )
+{
+    var searchError = new Error( 'ripgrep failed with exit code 2' );
+    searchError.name = 'RipgrepError';
+    searchError.exitCode = 2;
+    searchError.stderr = '';
+    searchError.matchCount = 1;
+    searchError.outputLineCount = 2;
+
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        filteringOverrides: {
+            includeHiddenFiles: true
+        },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        scanTextImpl: function( uri )
+        {
+            return [ {
+                uri: uri,
+                actualTag: 'NOTE',
+                displayText: path.basename( uri.fsPath ),
+                continuationText: []
+            } ];
+        },
+        ripgrepSearchImpl: function( root, searchOptions, onEvent )
+        {
+            onEvent( {
+                type: 'match',
+                data: {
+                    path: { text: './visible.js' }
+                }
+            } );
+
+            return Promise.reject( searchError );
+        },
+        fileContents: {
+            '/workspace/visible.js': '# NOTE visible'
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.deepEqual( harness.provider.replaceCalls.map( function( call ) { return call.uri.fsPath; } ), [
+            '/workspace/visible.js'
+        ] );
+        assert.equal( harness.errorMessages.length, 0 );
+        assert.equal( harness.warningMessages.length, 1 );
+        assert.equal( harness.warningMessages[ 0 ].indexOf( '/workspace' ), -1 );
+        assert.equal( harness.warningMessages[ 0 ].indexOf( 'path:1 during candidate discovery' ) > -1, true );
+        assert.equal( harness.warningMessages[ 0 ].indexOf( 'ripgrep failed with exit code 2' ) > -1, true );
+    } );
+} );
+
+QUnit.test( "issue #62 workspace scan records permission traversal exit 2", function( assert )
+{
+    var searchError = new Error( 'ripgrep failed with exit code 2' );
+    searchError.name = 'RipgrepError';
+    searchError.exitCode = 2;
+    searchError.stderr = '';
+    searchError.matchCount = 0;
+    searchError.outputLineCount = 1;
+
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepSearchImpl: function()
+        {
+            return Promise.reject( searchError );
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.provider.replaceCalls.length, 0 );
+        assert.equal( harness.errorMessages.length, 0 );
+        assert.equal( harness.warningMessages.length, 1 );
+        assert.equal( harness.warningMessages[ 0 ].indexOf( '/workspace' ), -1 );
+        assert.equal( harness.warningMessages[ 0 ].indexOf( 'path:1 during candidate discovery' ) > -1, true );
+        assert.equal( harness.warningMessages[ 0 ].indexOf( 'ripgrep failed with exit code 2' ) > -1, true );
+    } );
+} );
+
+QUnit.test( "workspace scan keeps ripgrep configuration exit code 2 fatal", function( assert )
+{
+    var searchError = new Error( 'ripgrep failed with exit code 2' );
+    searchError.name = 'RipgrepError';
+    searchError.exitCode = 2;
+    searchError.stderr = 'regex parse error';
+    searchError.matchCount = 0;
+    searchError.outputLineCount = 0;
+
+    var harness = createExtensionHarness( {
+        scanMode: 'workspace',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        ripgrepSearchImpl: function()
+        {
+            return Promise.reject( searchError );
+        }
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.provider.replaceCalls.length, 0 );
+        assert.equal( harness.warningMessages.length, 0 );
+        assert.equal( harness.errorMessages.length, 1 );
+        assert.equal( harness.errorMessages[ 0 ].indexOf( 'regex parse error' ) > -1, true );
     } );
 } );
 
@@ -5789,7 +6090,8 @@ QUnit.test( "workspace scan reports oversized stat errors as workspace scan issu
             "successful files still produce results when a sibling stat fails" );
         assert.equal( harness.warningMessages.length, 1,
             "exactly one summarized warning surfaces stat-failed files" );
-        assert.ok( harness.warningMessages[ 0 ].indexOf( '/workspace/unstattable.js' ) !== -1 );
+        assert.ok( harness.warningMessages[ 0 ].indexOf( 'path:1 during candidate scan' ) !== -1 );
+        assert.equal( harness.warningMessages[ 0 ].indexOf( '/workspace/unstattable.js' ), -1 );
         assert.equal( harness.errorMessages.length, 0 );
     } );
 } );

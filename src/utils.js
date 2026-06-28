@@ -582,6 +582,13 @@ function isIncluded( name, includes, excludes )
     } );
 }
 
+function isExplicitlyIncluded( name, includes )
+{
+    var includeRules = createFilterRules( includes, false );
+
+    return includeRules.length > 0 && filterMatchingRules( name, includeRules ).length > 0;
+}
+
 function formatLabel( template, node, unexpectedPlaceholders )
 {
     var result = template;
@@ -1080,6 +1087,7 @@ module.exports.getRegexSource = getRegexSource;
 module.exports.getRegexForRipGrep = getRegexForRipGrep;
 module.exports.getRegexForEditorSearch = getRegexForEditorSearch;
 module.exports.isIncluded = isIncluded;
+module.exports.isExplicitlyIncluded = isExplicitlyIncluded;
 module.exports.formatLabel = formatLabel;
 module.exports.createFolderGlob = createFolderGlob;
 module.exports.toRipgrepGlobArray = toRipgrepGlobArray;

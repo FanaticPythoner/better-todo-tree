@@ -53,6 +53,13 @@ var pendingDocumentRefreshes = new Map();
 var gitHeadCheckInFlight = new Set();
 var nlsTokenRegex = regexRegistry.createRegExp( 'nlsToken' );
 var workspaceFolderPlaceholderRegex = regexRegistry.createRegExp( 'workspaceFolderPlaceholder', 'g' );
+var diagnosticPathBackslashRegex = regexRegistry.createRegExp( 'pathBackslash', 'g' );
+var diagnosticWindowsDrivePrefixRegex = regexRegistry.createRegExp( 'windowsDrivePrefix' );
+var diagnosticWindowsAbsolutePathRegex = regexRegistry.createRegExp( 'windowsAbsolutePath', 'g' );
+var diagnosticHomeUsersAbsolutePathRegex = regexRegistry.createRegExp( 'homeUsersAbsolutePath', 'g' );
+var diagnosticWindowsAbsoluteGlobRegex = regexRegistry.createRegExp( 'windowsAbsoluteGlob' );
+var diagnosticPathTailSource = regexRegistry.pattern( 'diagnosticPathTail' );
+var permissionDeniedTextRegex = regexRegistry.createRegExp( 'permissionDeniedText', 'i' );
 
 var SCAN_MODE_WORKSPACE_AND_OPEN_FILES = 'workspace';
 var SCAN_MODE_OPEN_FILES = 'open files';
@@ -280,15 +287,37 @@ function activate( context )
         }
     }
 
+    function copyDefinedScanIssueField( target, issue, field )
+    {
+        if( issue[ field ] !== undefined )
+        {
+            target[ field ] = issue[ field ];
+        }
+    }
+
     function cloneScanIssue( issue )
     {
-        return {
-            stage: issue.stage,
-            filePath: issue.filePath,
-            message: issue.message,
-            code: issue.code,
-            timestamp: issue.timestamp
-        };
+        var clone = {};
+
+        [
+            'stage',
+            'filePath',
+            'message',
+            'code',
+            'timestamp',
+            'exitCode',
+            'signal',
+            'matchCount',
+            'outputLineCount',
+            'stderr',
+            'stderrLength',
+            'summary'
+        ].forEach( function( field )
+        {
+            copyDefinedScanIssueField( clone, issue, field );
+        } );
+
+        return clone;
     }
 
     function readScanProgressDiagnostics()
@@ -321,18 +350,443 @@ function activate( context )
         };
     }
 
+    function normalizeDiagnosticPath( value )
+    {
+        return String( value || '' ).replace( diagnosticPathBackslashRegex, '/' );
+    }
+
+    function splitDiagnosticPath( value )
+    {
+        return normalizeDiagnosticPath( value ).split( '/' ).filter( function( segment )
+        {
+            return segment.length > 0;
+        } );
+    }
+
+    function isLikelyWindowsDiagnosticPath( value )
+    {
+        return diagnosticWindowsDrivePrefixRegex.test( normalizeDiagnosticPath( value ) );
+    }
+
+    function compareDiagnosticPathValue( value )
+    {
+        var normalized = normalizeDiagnosticPath( value );
+
+        return isLikelyWindowsDiagnosticPath( normalized ) ? normalized.toLowerCase() : normalized;
+    }
+
+    function diagnosticPathDepth( value )
+    {
+        return splitDiagnosticPath( value ).length;
+    }
+
+    function diagnosticPathBaseName( value )
+    {
+        var segments = splitDiagnosticPath( value );
+
+        return segments.length > 0 ? segments[ segments.length - 1 ] : '';
+    }
+
+    function diagnosticPathExtension( value )
+    {
+        return path.posix.extname( diagnosticPathBaseName( value ) );
+    }
+
+    function isHiddenDiagnosticPath( value )
+    {
+        return splitDiagnosticPath( value ).some( function( segment )
+        {
+            return segment.length > 1 && segment[ 0 ] === '.';
+        } );
+    }
+
+    function diagnosticLeafShape( value )
+    {
+        var baseName = diagnosticPathBaseName( value );
+        var extension = diagnosticPathExtension( value );
+
+        if( baseName.length === 0 )
+        {
+            return '<root>';
+        }
+
+        if( baseName[ 0 ] === '.' )
+        {
+            return extension.length > 0 ? '<dotfile>' + extension : '<dotfile>';
+        }
+
+        return extension.length > 0 ? '<file>' + extension : '<file>';
+    }
+
+    function createPublicDiagnosticContext( roots )
+    {
+        var rootEntries = ( roots || [] ).map( function( rootPath, index )
+        {
+            return {
+                id: 'workspace:' + ( index + 1 ),
+                raw: rootPath,
+                normalized: normalizeDiagnosticPath( rootPath ),
+                comparable: compareDiagnosticPathValue( rootPath ),
+                depth: diagnosticPathDepth( rootPath )
+            };
+        } );
+        var pathEntries = [];
+        var pathLookup = new Map();
+
+        rootEntries.sort( function( left, right )
+        {
+            return right.comparable.length - left.comparable.length;
+        } );
+
+        function rootForPath( filePath )
+        {
+            var comparablePath = compareDiagnosticPathValue( filePath );
+
+            return rootEntries.find( function( root )
+            {
+                return comparablePath === root.comparable ||
+                    comparablePath.indexOf( root.comparable + '/' ) === 0;
+            } );
+        }
+
+        function relativeSegmentsForPath( filePath, root )
+        {
+            var pathSegments = splitDiagnosticPath( filePath );
+
+            return root ? pathSegments.slice( root.depth ) : pathSegments;
+        }
+
+        function relativeShape( filePath, root )
+        {
+            var relativeSegments = relativeSegmentsForPath( filePath, root );
+            var prefix = root ? '<' + root.id + '>' : '<external>';
+            var directoryShapes = relativeSegments.slice( 0, -1 ).map( function()
+            {
+                return '<dir>';
+            } );
+            var leafShape = relativeSegments.length > 0 ?
+                diagnosticLeafShape( relativeSegments[ relativeSegments.length - 1 ] ) :
+                '<root>';
+
+            return [ prefix ].concat( directoryShapes ).concat( [ leafShape ] ).join( '/' );
+        }
+
+        function pathRef( filePath )
+        {
+            if( typeof ( filePath ) !== 'string' || filePath.length === 0 )
+            {
+                return undefined;
+            }
+
+            var normalized = normalizeDiagnosticPath( filePath );
+            if( pathLookup.has( normalized ) )
+            {
+                return pathLookup.get( normalized );
+            }
+
+            var root = rootForPath( normalized );
+            var relativeSegments = relativeSegmentsForPath( normalized, root );
+            var entry = {
+                id: 'path:' + ( pathEntries.length + 1 ),
+                workspace: root && root.id,
+                relativeShape: relativeShape( normalized, root ),
+                extension: diagnosticPathExtension( normalized ),
+                hidden: isHiddenDiagnosticPath( normalized ),
+                depth: relativeSegments.length,
+                kind: relativeSegments.length === 0 ? 'workspace-root' : 'workspace-path'
+            };
+
+            pathEntries.push( entry );
+            pathLookup.set( normalized, entry );
+
+            return entry;
+        }
+
+        function escapeDiagnosticRegex( value )
+        {
+            return regexRegistry.escapeRegexLiteral( String( value ) );
+        }
+
+        function redactRootPathMatches( text )
+        {
+            var redacted = String( text );
+
+            rootEntries.forEach( function( root )
+            {
+                [ root.raw, root.normalized ].forEach( function( rootValue )
+                {
+                    if( !rootValue )
+                    {
+                        return;
+                    }
+
+                    redacted = redacted.replace(
+                        new RegExp( escapeDiagnosticRegex( rootValue ) + diagnosticPathTailSource, 'g' ),
+                        function( match )
+                        {
+                            var ref = pathRef( match );
+
+                            return ref ? '<' + ref.id + '>' : '<' + root.id + '>';
+                        }
+                    );
+                } );
+            } );
+
+            return redacted;
+        }
+
+        function redactAbsolutePaths( text )
+        {
+            var redacted = redactRootPathMatches( text );
+
+            rootEntries.forEach( function( root )
+            {
+                redacted = redacted.split( root.raw ).join( '<' + root.id + '>' );
+                redacted = redacted.split( root.normalized ).join( '<' + root.id + '>' );
+            } );
+
+            if( process.env.HOME )
+            {
+                redacted = redacted.split( process.env.HOME ).join( '<home>' );
+                redacted = redacted.split( normalizeDiagnosticPath( process.env.HOME ) ).join( '<home>' );
+            }
+
+            return redacted
+                .replace( diagnosticWindowsAbsolutePathRegex, '<absolute-path>' )
+                .replace( diagnosticHomeUsersAbsolutePathRegex, '<absolute-path>' );
+        }
+
+        function sanitizeText( text )
+        {
+            if( typeof ( text ) !== 'string' )
+            {
+                return text;
+            }
+
+            return redactAbsolutePaths( text );
+        }
+
+        function sanitizeGlob( glob )
+        {
+            if( typeof ( glob ) !== 'string' )
+            {
+                return glob;
+            }
+
+            if( glob.indexOf( '/' ) === 0 || diagnosticWindowsAbsoluteGlobRegex.test( glob ) )
+            {
+                return '<absolute-glob>';
+            }
+
+            return normalizeDiagnosticPath( glob ).split( '/' ).map( function( segment )
+            {
+                var extension = path.posix.extname( segment );
+
+                if( segment.indexOf( '*' ) !== -1 )
+                {
+                    return segment;
+                }
+
+                if( segment.length > 0 && segment[ 0 ] === '.' )
+                {
+                    return extension.length > 0 ? '<dot-segment>' + extension : '<dot-segment>';
+                }
+
+                return extension.length > 0 ? '<segment>' + extension : '<segment>';
+            } ).join( '/' );
+        }
+
+        function sanitizeProgress( progress )
+        {
+            if( !progress )
+            {
+                return progress;
+            }
+
+            return Object.assign( {}, progress, {
+                currentRoot: pathRef( progress.currentRoot ),
+                currentFile: pathRef( progress.currentFile )
+            } );
+        }
+
+        function sanitizeIssue( issue )
+        {
+            var publicIssue = {
+                stage: issue.stage,
+                path: pathRef( issue.filePath ),
+                message: sanitizeText( issue.message ),
+                code: issue.code,
+                timestamp: issue.timestamp
+            };
+
+            [
+                'exitCode',
+                'signal',
+                'matchCount',
+                'outputLineCount',
+                'stderrLength',
+                'summary'
+            ].forEach( function( field )
+            {
+                copyDefinedScanIssueField( publicIssue, issue, field );
+            } );
+
+            if( issue.stderr )
+            {
+                publicIssue.stderr = sanitizeText( issue.stderr );
+            }
+
+            return publicIssue;
+        }
+
+        function sanitizeEvent( event )
+        {
+            var publicEvent = {};
+
+            Object.keys( event || {} ).forEach( function( key )
+            {
+                var value = event[ key ];
+
+                if( key === 'filePath' || key === 'root' || key === 'currentRoot' || key === 'currentFile' )
+                {
+                    publicEvent[ key ] = pathRef( value );
+                }
+                else if( key === 'roots' && Array.isArray( value ) )
+                {
+                    publicEvent[ key ] = value.map( pathRef );
+                }
+                else if( typeof ( value ) === 'string' )
+                {
+                    publicEvent[ key ] = sanitizeText( value );
+                }
+                else
+                {
+                    publicEvent[ key ] = value;
+                }
+            } );
+
+            return publicEvent;
+        }
+
+        function sanitizeSettings()
+        {
+            var includeGlobs = getSetting( 'filtering.includeGlobs', [] );
+            var excludeGlobs = getSetting( 'filtering.excludeGlobs', [] );
+
+            return {
+                scanMode: config.scanMode(),
+                includeHiddenFiles: getSetting( 'filtering.includeHiddenFiles', false ),
+                passGlobsToRipgrep: getSetting( 'filtering.passGlobsToRipgrep', true ),
+                useBuiltInExcludes: getSetting( 'filtering.useBuiltInExcludes', 'file and search excludes' ),
+                includeGlobCount: includeGlobs.length,
+                excludeGlobCount: excludeGlobs.length,
+                includeGlobs: includeGlobs.map( sanitizeGlob ),
+                excludeGlobs: excludeGlobs.map( sanitizeGlob ),
+                ripgrepArgs: sanitizeText( getSetting( 'ripgrep.ripgrepArgs', '' ) )
+            };
+        }
+
+        return {
+            roots: function()
+            {
+                return rootEntries.slice().sort( function( left, right )
+                {
+                    return left.id < right.id ? -1 : 1;
+                } ).map( function( root )
+                {
+                    return {
+                        id: root.id,
+                        kind: 'workspace-root'
+                    };
+                } );
+            },
+            pathRef: pathRef,
+            issue: sanitizeIssue,
+            event: sanitizeEvent,
+            progress: sanitizeProgress,
+            settings: sanitizeSettings,
+            text: sanitizeText
+        };
+    }
+
+    function summarizeScanDiagnosticIssues( issues )
+    {
+        return {
+            issueCount: issues.length,
+            recoverableRipgrepExit2: issues.some( function( issue )
+            {
+                return issue.exitCode === 2;
+            } ),
+            partialRipgrepOutput: issues.some( function( issue )
+            {
+                return issue.exitCode === 2 && ( issue.matchCount > 0 || issue.outputLineCount > 0 );
+            } ),
+            permissionDenied: issues.some( function( issue )
+            {
+                return issue.code === 'EACCES' ||
+                    permissionDeniedTextRegex.test( issue.message || issue.stderr || '' );
+            } )
+        };
+    }
+
+    function buildScanDiagnosticRemediation( summary )
+    {
+        var remediation = [];
+
+        if( summary.recoverableRipgrepExit2 === true )
+        {
+            remediation.push( {
+                code: 'ripgrep-exit-2',
+                action: 'Inspect inaccessible workspace entries or exclude them with filtering.excludeGlobs.'
+            } );
+        }
+
+        if( summary.permissionDenied === true )
+        {
+            remediation.push( {
+                code: 'permission-denied',
+                action: 'Grant read permission or exclude the inaccessible path.'
+            } );
+        }
+
+        return remediation;
+    }
+
+    function buildPublicScanIssueMessage( issue )
+    {
+        var diagnostics = scanDiagnosticsState || lastScanDiagnosticsSnapshot || {};
+        var publicContext = createPublicDiagnosticContext( diagnostics.roots || [] );
+        var publicIssue = publicContext.issue( issue );
+
+        return ( publicIssue.path ? publicIssue.path.id : 'path:unknown' ) +
+            " during " + publicIssue.stage + " (" + publicIssue.message + ")";
+    }
+
     function buildScanDiagnosticsSnapshot()
     {
         var diagnostics = scanDiagnosticsState || lastScanDiagnosticsSnapshot || {};
         var progress = readScanProgressDiagnostics();
+        var publicContext = createPublicDiagnosticContext( diagnostics.roots || [] );
+        var issues = ( diagnostics.issues || [] ).map( function( issue )
+        {
+            return publicContext.issue( issue );
+        } );
+        var summary = summarizeScanDiagnosticIssues( issues );
 
         return {
-            schemaVersion: 1,
+            schemaVersion: 2,
             generatedAt: new Date().toISOString(),
+            privacy: {
+                publicSafe: true,
+                absolutePaths: 'redacted',
+                rawCommandLines: 'excluded',
+                pathIds: 'ephemeral'
+            },
             extension: {
                 id: packageJson.publisher + "." + packageJson.name,
                 version: packageJson.version
             },
+            settings: publicContext.settings(),
             process: {
                 pid: process.pid,
                 platform: process.platform,
@@ -343,11 +797,13 @@ function activate( context )
                 generation: diagnostics.generation,
                 startedAt: diagnostics.startedAt,
                 finishedAt: diagnostics.finishedAt,
-                roots: diagnostics.roots || [],
-                progress: progress || diagnostics.progress
+                roots: publicContext.roots(),
+                progress: publicContext.progress( progress || diagnostics.progress )
             },
-            issues: ( diagnostics.issues || [] ).map( cloneScanIssue ),
-            events: ( diagnostics.events || [] ).slice()
+            issues: issues,
+            summary: summary,
+            remediation: buildScanDiagnosticRemediation( summary ),
+            events: ( diagnostics.events || [] ).map( publicContext.event )
         };
     }
 
@@ -2080,7 +2536,15 @@ function activate( context )
         };
     }
 
-    function search( cwd, options, onEvent )
+    function isRecoverableWorkspaceRipgrepError( error )
+    {
+        return error &&
+            error.name === 'RipgrepError' &&
+            error.exitCode === 2 &&
+            ( !error.stderr || error.outputLineCount > 0 || error.matchCount > 0 );
+    }
+
+    function search( cwd, options, onEvent, errorOptions )
     {
         var target = options.filename ? options.filename : ".";
         debug( "Searching " + target + "..." );
@@ -2093,6 +2557,11 @@ function activate( context )
         } ).catch( function( error )
         {
             if( isCancelledError( error ) )
+            {
+                throw error;
+            }
+
+            if( errorOptions && errorOptions.allowWorkspaceRipgrepIssue === true && isRecoverableWorkspaceRipgrepError( error ) )
             {
                 throw error;
             }
@@ -2123,13 +2592,38 @@ function activate( context )
             code: error && error.code,
             timestamp: new Date().toISOString()
         };
+        if( error && error.exitCode !== undefined )
+        {
+            issue.exitCode = error.exitCode;
+        }
+        if( error && error.matchCount !== undefined )
+        {
+            issue.matchCount = error.matchCount;
+        }
+        if( error && error.outputLineCount !== undefined )
+        {
+            issue.outputLineCount = error.outputLineCount;
+        }
+        if( error && error.signal !== undefined )
+        {
+            issue.signal = error.signal;
+        }
+        if( error && error.stderr !== undefined )
+        {
+            issue.stderr = error.stderr;
+            issue.stderrLength = error.stderr.length;
+        }
+        if( error && error.summary !== undefined )
+        {
+            issue.summary = error.summary;
+        }
         workspaceScanIssues.push( issue );
         if( scanDiagnosticsState )
         {
             scanDiagnosticsState.issues.push( cloneScanIssue( issue ) );
         }
         appendScanDiagnosticEvent( 'file-skipped', cloneScanIssue( issue ) );
-        debug( "Skipping workspace file during " + stage + ": " + filePath + " (" + message + ")" );
+        debug( "Skipping workspace file: " + buildPublicScanIssueMessage( issue ) );
     }
 
     function handleWorkspaceScanIssue( stage, filePath, error )
@@ -2140,6 +2634,16 @@ function activate( context )
         }
 
         recordWorkspaceScanIssue( stage, filePath, error );
+    }
+
+    function handleWorkspaceRootSearchIssue( stage, rootPath, error )
+    {
+        if( isRecoverableWorkspaceRipgrepError( error ) !== true )
+        {
+            throw error;
+        }
+
+        handleWorkspaceScanIssue( stage, rootPath, error );
     }
 
     function flushWorkspaceScanIssues()
@@ -2160,7 +2664,7 @@ function activate( context )
             vscode.window.showWarningMessage(
                 identity.DISPLAY_NAME + ": skipped " + workspaceScanIssues.length +
                 " workspace file(s) while scanning. Results may be incomplete. First failure: " +
-                firstIssue.filePath + " (" + firstIssue.message + ")",
+                buildPublicScanIssueMessage( firstIssue ),
                 EXPORT_DIAGNOSTICS_BUTTON
             ).then( function( button )
             {
@@ -2996,6 +3500,9 @@ function activate( context )
                         matchedFileSizes.set( filePath, size );
                     }
                 }
+            }, { allowWorkspaceRipgrepIssue: true } ).catch( function( error )
+            {
+                handleWorkspaceRootSearchIssue( 'candidate discovery', rootPath, error );
             } );
         } ).then( function()
         {
@@ -3116,6 +3623,9 @@ function activate( context )
                     matchesByFile.delete( filePath );
                     scheduleFileNormalization( filePath, fileMatches, size );
                 }
+            }, { allowWorkspaceRipgrepIssue: true } ).catch( function( error )
+            {
+                handleWorkspaceRootSearchIssue( 'regex discovery', rootPath, error );
             } );
         } ).then( function()
         {
@@ -3550,10 +4060,13 @@ function activate( context )
                 excludeGlobs = addGlobs( vscode.workspace.getConfiguration( 'search.exclude' ), excludeGlobs );
             }
 
+            var includeCandidates = includeGlobs.concat( tempIncludeGlobs );
+            var excludeCandidates = excludeGlobs.concat( tempExcludeGlobs );
             var isHidden = utils.isHidden( uri.fsPath );
-            var included = utils.isIncluded( uri.fsPath, includeGlobs.concat( tempIncludeGlobs ), excludeGlobs.concat( tempExcludeGlobs ) );
+            var included = utils.isIncluded( uri.fsPath, includeCandidates, excludeCandidates );
+            var explicitlyIncluded = utils.isExplicitlyIncluded( uri.fsPath, includeCandidates );
 
-            return included && ( !isHidden || includeHiddenFiles );
+            return included && ( !isHidden || includeHiddenFiles || explicitlyIncluded );
         }
 
         return false;

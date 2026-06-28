@@ -963,6 +963,10 @@ var DEFAULT_DEFINITION = Object.freeze( {
         globMagicCharacter: '[*?\\[\\]{}()!+@]',
         leadingSlashOneOrMore: '^/+',
         windowsDrivePrefix: '^[A-Za-z]:/',
+        windowsAbsolutePath: '[A-Za-z]:[\\\\/][^\\s"\')]+',
+        windowsAbsoluteGlob: '^[A-Za-z]:[\\\\/]',
+        homeUsersAbsolutePath: '\\/(?:home|Users)\\/[^\\s"\')]+',
+        diagnosticPathTail: '(?:[/\\\\][^\\s"\')]+)?',
         hexColourNoise: '[^\\da-fA-F]',
         iconNameNoise: '[^0-9a-zA-Z]',
         octiconNameNoise: '[^a-z0-9]',
@@ -1483,7 +1487,14 @@ var DEFAULT_DEFINITION = Object.freeze( {
                     '\\)'
                 ] ) ) )
             ] );
-        }
+        },
+        betterTodoTreeLogSuffix: 'Better Todo Tree\\.log$',
+        issueSmokeLogTimePrefix: '^(\\d\\d):(\\d\\d):(\\d\\d)\\.(\\d\\d\\d)',
+        issueSmokeFoundItems: 'Found ([0-9]+) items',
+        issueSmokeSearchProducedMatches: 'Search produced ([0-9]+) matches',
+        issueSmokeTreeItemPathJson: '"path":\\{"text":"([^"]+)"\\}',
+        extensionHostText: 'extension-host|Extension Host',
+        permissionDeniedText: 'permission denied'
     } ),
     patterns: Object.freeze( {
         defaultCommentPrefix: function( builder )
