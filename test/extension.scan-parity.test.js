@@ -3053,51 +3053,63 @@ QUnit.test( "issue #87 workspace scan keeps included child folder under excluded
     } );
 } );
 
-QUnit.test( "issue #101 workspace includeGlobs scan detects custom JSON and dotenv text", function( assert )
-{
-    var jsonPath = '/workspace/config/settings.json';
-    var envPath = '/workspace/.env';
-    var harness;
+var ISSUE101_TAGS = [ 'NOTE', 'TODO', 'BUG', 'HACK', 'FIXME', 'XXX', '[ ]', '[x]' ];
+var ISSUE101_FILE_CONTENTS = {
+    '/workspace/.env': '# NOTE env item\n# [ ] env checkbox',
+    '/workspace/.env.example': '# TODO env example',
+    '/workspace/config/settings.json': [
+        '[',
+        '    // NOTE: this is a test',
+        '    {',
+        '        "name": "test"',
+        '    },',
+        '    // [ ] for @amorenojr: testing',
+        '    // [x] for @amorenojr: testing',
+        ']'
+    ].join( '\n' ),
+    '/workspace/config/settings.jsonc': '// BUG jsonc bug',
+    '/workspace/src/source.py': '# FIXME python item',
+    '/workspace/src/app.cs': '// HACK csharp item',
+    '/workspace/src/view.xml': '<!-- XXX xml item -->',
+    '/workspace/notes.txt': 'NOTE text item'
+};
+var ISSUE101_EXPECTED_RESULTS = {
+    '/workspace/.env': [ [ 'NOTE', 'env item' ], [ '[ ]', 'env checkbox' ] ],
+    '/workspace/.env.example': [ [ 'TODO', 'env example' ] ],
+    '/workspace/config/settings.json': [
+        [ 'NOTE', ': this is a test' ],
+        [ '[ ]', 'for @amorenojr: testing' ],
+        [ '[x]', 'for @amorenojr: testing' ]
+    ],
+    '/workspace/config/settings.jsonc': [ [ 'BUG', 'jsonc bug' ] ],
+    '/workspace/src/source.py': [ [ 'FIXME', 'python item' ] ],
+    '/workspace/src/app.cs': [ [ 'HACK', 'csharp item' ] ],
+    '/workspace/src/view.xml': [ [ 'XXX', 'xml item -->' ] ],
+    '/workspace/notes.txt': [ [ 'NOTE', 'text item' ] ]
+};
 
+function assertIssue101WorkspaceScan( assert, filteringOverrides, expectedGlobs, expectedPaths )
+{
     actualUtils.init( matrixHelpers.createConfig( {
-        tagList: [ 'NOTE' ],
-        customCommentPatterns: function()
-        {
-            return [
-                {
-                    id: 'issue101json',
-                    extensions: [ '.json' ],
-                    singleLineComments: [ '//' ]
-                },
-                {
-                    id: 'issue101dotenv',
-                    filenames: [ '.env', '.env.example' ],
-                    filenameGlobs: [ '**/.env*' ],
-                    singleLineComments: [ '#' ]
-                }
-            ];
-        },
-        customEmbeddedDocuments: function()
-        {
-            return [];
-        }
+        tagList: ISSUE101_TAGS
     } ) );
 
-    harness = createExtensionHarness( {
+    var harness = createExtensionHarness( {
         scanMode: 'workspace',
-        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
-        filteringOverrides: {
-            includeGlobs: [ '**/*.json', '**/.env', '**/.env*' ]
+        tags: ISSUE101_TAGS,
+        resourceConfig: {
+            isDefaultRegex: true,
+            enableMultiLine: false,
+            regexCaseSensitive: true,
+            tagList: ISSUE101_TAGS
         },
+        filteringOverrides: filteringOverrides,
         workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
-        ripgrepMatches: [
-            { fsPath: jsonPath },
-            { fsPath: envPath }
-        ],
-        fileContents: {
-            '/workspace/config/settings.json': '// NOTE json item',
-            '/workspace/.env': '# NOTE dotenv item'
-        },
+        ripgrepMatches: expectedPaths.map( function( fsPath )
+        {
+            return { fsPath: fsPath };
+        } ),
+        fileContents: ISSUE101_FILE_CONTENTS,
         scanTextWithStreamingImpl: function( context )
         {
             return actualDetection.scanTextWithStreamingContext(
@@ -3110,72 +3122,95 @@ QUnit.test( "issue #101 workspace includeGlobs scan detects custom JSON and dote
 
     return matrixHelpers.flushAsyncWork().then( function()
     {
-        var jsonResults = getLatestReplaceCallForPath( harness, jsonPath ).results;
-        var envResults = getLatestReplaceCallForPath( harness, envPath ).results;
-
         assert.equal( harness.ripgrepSearchCalls.length, 1 );
-        assert.equal( actualUtils.isHidden( envPath ), true );
-        assert.deepEqual( harness.ripgrepSearchCalls[ 0 ].globs, [
+        assert.equal( actualUtils.isHidden( '/workspace/.env' ), true );
+        assert.equal( actualUtils.isHidden( '/workspace/.env.example' ), false );
+        assert.deepEqual( harness.ripgrepSearchCalls[ 0 ].globs, expectedGlobs );
+        assert.deepEqual( harness.readFileCalls.sort(), expectedPaths.slice().sort() );
+        expectedPaths.forEach( function( fsPath )
+        {
+            assert.deepEqual(
+                getLatestReplaceCallForPath( harness, fsPath ).results.map( function( result )
+                {
+                    return [ result.actualTag, result.displayText ];
+                } ),
+                ISSUE101_EXPECTED_RESULTS[ fsPath ],
+                fsPath
+            );
+        } );
+    } );
+}
+
+QUnit.test( "issue #101 workspace scan detects config data and source text without custom language settings", function( assert )
+{
+    var paths = Object.keys( ISSUE101_FILE_CONTENTS );
+
+    return assertIssue101WorkspaceScan(
+        assert,
+        { includeHiddenFiles: true, includeGlobs: [] },
+        [ '!**/node_modules/*/**' ],
+        paths
+    );
+} );
+
+QUnit.test( "issue #101 workspace includeGlobs scan detects config data without custom language settings", function( assert )
+{
+    var paths = [
+        '/workspace/.env',
+        '/workspace/.env.example',
+        '/workspace/config/settings.json',
+        '/workspace/config/settings.jsonc'
+    ];
+
+    return assertIssue101WorkspaceScan(
+        assert,
+        { includeGlobs: [ '**/*.json', '**/*.jsonc', '**/.env', '**/.env*' ] },
+        [
             '**/*.json',
+            '**/*.jsonc',
             '**/.env',
             '**/.env*',
             '!**/node_modules/*/**'
-        ] );
-        assert.deepEqual( harness.readFileCalls.sort(), [ envPath, jsonPath ].sort() );
-        assert.deepEqual(
-            jsonResults.map( function( result )
-            {
-                return [ result.actualTag, result.displayText ];
-            } ),
-            [ [ 'NOTE', 'json item' ] ]
-        );
-        assert.deepEqual(
-            envResults.map( function( result )
-            {
-                return [ result.actualTag, result.displayText ];
-            } ),
-            [ [ 'NOTE', 'dotenv item' ] ]
-        );
-    } );
+        ],
+        paths
+    );
 } );
 
-QUnit.test( "issue #102 workspace includeGlobs scan detects JSON with hidden files enabled", function( assert )
+function assertIssue102JsonWorkspaceScan( assert, filteringOverrides, expectedGlobs )
 {
     var jsonPath = '/workspace/config/settings.json';
     var jsoncPath = '/workspace/config/settings.jsonc';
 
     actualUtils.init( matrixHelpers.createConfig( {
-        tagList: [ 'NOTE' ],
-        customCommentPatterns: function()
-        {
-            return [ {
-                id: 'issue102json',
-                extensions: [ '.json', '.jsonc' ],
-                singleLineComments: [ '//' ]
-            } ];
-        },
-        customEmbeddedDocuments: function()
-        {
-            return [];
-        }
+        tagList: [ 'NOTE', '[ ]', '[x]' ]
     } ) );
 
     var harness = createExtensionHarness( {
         scanMode: 'workspace',
-        tags: [ 'NOTE' ],
+        tags: [ 'NOTE', '[ ]', '[x]' ],
         resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
-        filteringOverrides: {
-            includeHiddenFiles: true,
-            includeGlobs: [ '**/*.json', '**/*.jsonc' ]
-        },
+        filteringOverrides: filteringOverrides,
         workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
         ripgrepMatches: [
             { fsPath: jsonPath },
             { fsPath: jsoncPath }
         ],
         fileContents: {
-            '/workspace/config/settings.json': '// NOTE json item',
-            '/workspace/config/settings.jsonc': '// NOTE jsonc item'
+            '/workspace/config/settings.json': [
+                '[',
+                '    // NOTE: this is a test',
+                '    {',
+                '        "name": "test"',
+                '    },',
+                '    // [ ] for @amorenojr: testing',
+                '    // [x] for @amorenojr: testing',
+                ']'
+            ].join( '\n' ),
+            '/workspace/config/settings.jsonc': [
+                '// NOTE: this is a jsonc test',
+                '// [ ] for @amorenojr: jsonc',
+                '// [x] for @amorenojr: jsonc'
+            ].join( '\n' )
         },
         scanTextWithStreamingImpl: function( context )
         {
@@ -3192,27 +3227,53 @@ QUnit.test( "issue #102 workspace includeGlobs scan detects JSON with hidden fil
         var jsonResults = getLatestReplaceCallForPath( harness, jsonPath ).results;
         var jsoncResults = getLatestReplaceCallForPath( harness, jsoncPath ).results;
 
-        assert.deepEqual( harness.ripgrepSearchCalls[ 0 ].globs, [
-            '**/*.json',
-            '**/*.jsonc',
-            '!**/node_modules/*/**'
-        ] );
+        assert.deepEqual( harness.ripgrepSearchCalls[ 0 ].globs, expectedGlobs );
         assert.deepEqual( harness.readFileCalls.sort(), [ jsonPath, jsoncPath ].sort() );
         assert.deepEqual(
             jsonResults.map( function( result )
             {
                 return [ result.actualTag, result.displayText ];
             } ),
-            [ [ 'NOTE', 'json item' ] ]
+            [
+                [ 'NOTE', ': this is a test' ],
+                [ '[ ]', 'for @amorenojr: testing' ],
+                [ '[x]', 'for @amorenojr: testing' ]
+            ]
         );
         assert.deepEqual(
             jsoncResults.map( function( result )
             {
                 return [ result.actualTag, result.displayText ];
             } ),
-            [ [ 'NOTE', 'jsonc item' ] ]
+            [
+                [ 'NOTE', ': this is a jsonc test' ],
+                [ '[ ]', 'for @amorenojr: jsonc' ],
+                [ '[x]', 'for @amorenojr: jsonc' ]
+            ]
         );
     } );
+}
+
+QUnit.test( "issue #102 workspace scan detects JSON comments without custom language settings", function( assert )
+{
+    return assertIssue102JsonWorkspaceScan(
+        assert,
+        { includeHiddenFiles: true, includeGlobs: [] },
+        [ '!**/node_modules/*/**' ]
+    );
+} );
+
+QUnit.test( "issue #102 workspace includeGlobs scan detects JSON comments without custom language settings", function( assert )
+{
+    return assertIssue102JsonWorkspaceScan(
+        assert,
+        { includeHiddenFiles: true, includeGlobs: [ '**/*.json', '**/*.jsonc' ] },
+        [
+            '**/*.json',
+            '**/*.jsonc',
+            '!**/node_modules/*/**'
+        ]
+    );
 } );
 
 QUnit.test( "workspace includeGlobs scan detects Svelte and Astro embedded TODOs", function( assert )
