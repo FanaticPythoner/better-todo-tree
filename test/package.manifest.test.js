@@ -218,6 +218,35 @@ QUnit.test( 'view title busy placeholders are scoped to the active control inste
     assert.ok( groupBySubTagEntry.when.indexOf( 'better-todo-tree-grouping-busy == false' ) >= 0 );
 } );
 
+QUnit.test( 'issue #59 view title expansion control swaps icon commands by expanded context', function( assert )
+{
+    var packageJson = readPackageJson();
+    var titleMenu = packageJson.contributes.menus[ 'view/title' ];
+    var expansionEntries = titleMenu.filter( function( entry )
+    {
+        return entry.group === 'navigation@9' &&
+            (
+                entry.command === 'better-todo-tree.expand' ||
+                entry.command === 'better-todo-tree.collapse' ||
+                entry.command === 'better-todo-tree.toggleTreeExpansion'
+            );
+    } );
+    var commands = packageJson.contributes.commands.reduce( function( byName, entry )
+    {
+        byName[ entry.command ] = entry;
+        return byName;
+    }, {} );
+
+    assert.deepEqual( expansionEntries.map( function( entry ) { return entry.command; } ), [
+        'better-todo-tree.expand',
+        'better-todo-tree.collapse'
+    ] );
+    assert.equal( expansionEntries[ 0 ].when, "view =~ /todo-tree/ && better-todo-tree-show-expand-button == true && better-todo-tree-collapsible == true && better-todo-tree-expanded == false && better-todo-tree-expansion-busy == false" );
+    assert.equal( expansionEntries[ 1 ].when, "view =~ /todo-tree/ && better-todo-tree-show-expand-button == true && better-todo-tree-collapsible == true && better-todo-tree-expanded == true && better-todo-tree-expansion-busy == false" );
+    assert.equal( commands[ 'better-todo-tree.expand' ].icon, '$(expand-all)' );
+    assert.equal( commands[ 'better-todo-tree.collapse' ].icon, '$(collapse-all)' );
+} );
+
 QUnit.test( 'busy and composite tree commands have localization entries in both english and zh-cn bundles', function( assert )
 {
     var english = readPackageNls( 'package.nls.json' );
