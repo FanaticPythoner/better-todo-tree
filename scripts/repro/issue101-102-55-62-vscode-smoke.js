@@ -7,9 +7,13 @@ const regexRegistry = require('../../src/regexRegistry.js');
 
 const DEFAULT_WAIT_MS = 30000;
 const POLL_MS = 1000;
-const EXPECTED_FILES = [
-    './.env',
-    './.env.example',
+const ISSUE_INCLUDE_GLOBS = [
+    '**/*.json',
+    '**/*.jsonc',
+    '**/.env',
+    '**/.env*'
+];
+const EXPECTED_PREVIEW_FILES = [
     './config/settings.json',
     './config/settings.jsonc'
 ];
@@ -210,53 +214,29 @@ function splitLines(text) {
     return text.split(lineBreakRegex).filter((line) => line.length > 0);
 }
 
-function createSettings(includeHiddenFiles) {
+function createSettings(options) {
     return {
         'better-todo-tree.general.debug': true,
         'better-todo-tree.general.tags': [
-            'NOTE'
+            'NOTE',
+            'TODO',
+            'BUG',
+            'HACK',
+            'FIXME',
+            'XXX',
+            '[ ]',
+            '[x]'
         ],
         'better-todo-tree.tree.scanAtStartup': true,
         'better-todo-tree.tree.scanMode': 'workspace',
         'better-todo-tree.tree.showCountsInTree': true,
-        'better-todo-tree.filtering.includeHiddenFiles': includeHiddenFiles,
-        'better-todo-tree.filtering.includeGlobs': [
-            '**/*.json',
-            '**/*.jsonc',
-            '**/.env',
-            '**/.env*'
-        ],
+        'better-todo-tree.filtering.includeHiddenFiles': options.includeHiddenFiles,
+        'better-todo-tree.filtering.includeGlobs': options.includeGlobs,
         'better-todo-tree.filtering.excludeGlobs': [],
         'better-todo-tree.filtering.passGlobsToRipgrep': true,
         'better-todo-tree.filtering.useBuiltInExcludes': 'none',
-        'better-todo-tree.languages.customPatterns': [
-            {
-                id: 'issue-json-comments',
-                extensions: [
-                    '.json',
-                    '.jsonc'
-                ],
-                singleLineComments: [
-                    '//'
-                ]
-            },
-            {
-                id: 'issue-dotenv-comments',
-                filenames: [
-                    '.env',
-                    '.env.example'
-                ],
-                filenameGlobs: [
-                    '**/.env',
-                    '**/.env*'
-                ],
-                singleLineComments: [
-                    '#'
-                ]
-            }
-        ],
         'better-todo-tree.ripgrep.usePatternFile': true,
-        'better-todo-tree.ripgrep.ripgrepArgs': '--no-config',
+        'better-todo-tree.ripgrep.ripgrepArgs': '--no-config --no-ignore-parent',
         'better-todo-tree.general.periodicRefreshInterval': 0,
         'better-todo-tree.general.automaticGitRefreshInterval': 0,
         'security.workspace.trust.enabled': false,
@@ -268,20 +248,38 @@ function createSettings(includeHiddenFiles) {
     };
 }
 
-function createWorkspace(workspacePath, includeHiddenFiles, deniedDirectory) {
+function createWorkspace(workspacePath, scenario) {
     fs.rmSync(workspacePath, {
         recursive: true,
         force: true
     });
 
-    writeJson(path.join(workspacePath, '.vscode', 'settings.json'), createSettings(includeHiddenFiles));
+    writeJson(path.join(workspacePath, '.vscode', 'settings.json'), createSettings(scenario));
     writeText(path.join(workspacePath, '.env'), '# NOTE env item\n');
     writeText(path.join(workspacePath, '.env.example'), '# NOTE env example\n');
-    writeText(path.join(workspacePath, 'config', 'settings.json'), '// NOTE json item\n');
-    writeText(path.join(workspacePath, 'config', 'settings.jsonc'), '// NOTE jsonc item\n');
+    writeText(path.join(workspacePath, 'config', 'settings.json'), [
+        '[',
+        '  // NOTE: this is a test',
+        '  {',
+        '    "name": "test"',
+        '  },',
+        '  // [ ] for @amorenojr: testing',
+        '  // [x] for @amorenojr: testing',
+        ']',
+        ''
+    ].join('\n'));
+    writeText(path.join(workspacePath, 'config', 'settings.jsonc'), [
+        '// NOTE: this is a jsonc test',
+        '// [ ] for @amorenojr: jsonc',
+        '// [x] for @amorenojr: jsonc',
+        ''
+    ].join('\n'));
     writeText(path.join(workspacePath, 'src', 'source.py'), '# NOTE source control item\n');
+    writeText(path.join(workspacePath, 'src', 'app.cs'), '// HACK csharp item\n');
+    writeText(path.join(workspacePath, 'src', 'view.xml'), '<!-- XXX xml item -->\n');
+    writeText(path.join(workspacePath, 'notes.txt'), 'TODO text item\n');
 
-    if (deniedDirectory === true) {
+    if (scenario.deniedDirectory === true) {
         const deniedPath = path.join(workspacePath, '.denied');
         writeText(path.join(deniedPath, 'blocked.json'), '// NOTE denied item\n');
         fs.chmodSync(deniedPath, 0);
@@ -302,7 +300,10 @@ function installVsix(args, scenarioDir) {
 
     mkdirp(path.join(userDataDir, 'User'));
     mkdirp(extensionsDir);
-    writeJson(path.join(userDataDir, 'User', 'settings.json'), createSettings(false));
+    writeJson(path.join(userDataDir, 'User', 'settings.json'), createSettings({
+        includeHiddenFiles: false,
+        includeGlobs: []
+    }));
 
     const install = runCommand(args.codePath, [
         '--user-data-dir',
@@ -497,7 +498,7 @@ function summarizeScenario(name, scenario, install, parsedLog, runtime, killedPi
         name,
         expectedItemCount: scenario.expectedItemCount,
         expectedSearchMatchCount: scenario.expectedSearchMatchCount,
-        expectedFiles: EXPECTED_FILES,
+        expectedPreviewFiles: scenario.expectedPreviewFiles || EXPECTED_PREVIEW_FILES,
         installed: install.installed,
         outputLogCount: parsedLog.outputLogCount,
         foundItemCounts: parsedLog.foundItemCounts,
@@ -514,10 +515,10 @@ function summarizeScenario(name, scenario, install, parsedLog, runtime, killedPi
     };
 }
 
-function assertIncludesAllPaths(result) {
+function assertIncludesAllPaths(result, scenario) {
     const pathSet = new Set(result.rawPaths);
 
-    EXPECTED_FILES.forEach((filePath) => {
+    (scenario.expectedPreviewFiles || EXPECTED_PREVIEW_FILES).forEach((filePath) => {
         if (pathSet.has(filePath) !== true) {
             throw new Error(`${result.name} missing raw match path ${filePath}`);
         }
@@ -546,7 +547,7 @@ function assertScenario(result, scenario) {
     }
 
     if (scenario.assertPreviewPaths !== false) {
-        assertIncludesAllPaths(result);
+        assertIncludesAllPaths(result, scenario);
     }
 
     if (result.statusHasExtensionHost !== true && result.outputLogCount === 0) {
@@ -596,7 +597,7 @@ async function runScenario(args, rootOutDir, name, scenario, redactor) {
         force: true
     });
     mkdirp(scenarioDir);
-    createWorkspace(workspacePath, scenario.includeHiddenFiles, scenario.deniedDirectory);
+    createWorkspace(workspacePath, scenario);
 
     const install = installVsix(args, scenarioDir);
 
@@ -689,19 +690,30 @@ async function main() {
     const rootOutDir = path.resolve(args.outDir);
     const startedAt = Date.now();
     const scenarios = {
+        default_text_scan_hidden_files: {
+            includeHiddenFiles: true,
+            includeGlobs: [],
+            deniedDirectory: false,
+            expectedItemCount: 12,
+            expectedSearchMatchCount: 20,
+            expectRecoverableIssue: false,
+            assertPreviewPaths: false
+        },
         explicit_include_dotfiles: {
             includeHiddenFiles: false,
+            includeGlobs: ISSUE_INCLUDE_GLOBS,
             deniedDirectory: false,
-            expectedItemCount: 4,
-            expectedSearchMatchCount: 4,
+            expectedItemCount: 8,
+            expectedSearchMatchCount: 8,
             expectRecoverableIssue: false,
-            assertPreviewPaths: true
+            assertPreviewPaths: false
         },
         hidden_permission_recovery: {
             includeHiddenFiles: true,
+            includeGlobs: ISSUE_INCLUDE_GLOBS,
             deniedDirectory: true,
-            expectedItemCount: 4,
-            expectedSearchMatchCount: 5,
+            expectedItemCount: 8,
+            expectedSearchMatchCount: 16,
             expectRecoverableIssue: true,
             assertPreviewPaths: false
         }

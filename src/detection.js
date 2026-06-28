@@ -927,6 +927,14 @@ function collectCommentPatternMatches( uri, text, pattern, lineOffsets, resource
     return results;
 }
 
+function hasCommentPatternTokens( pattern )
+{
+    return pattern !== undefined && (
+        ( Array.isArray( pattern.singleLineComment ) && pattern.singleLineComment.length > 0 ) ||
+        ( Array.isArray( pattern.multiLineComment ) && pattern.multiLineComment.length > 0 )
+    );
+}
+
 function resolveMarkdownCommentPattern()
 {
     var markdownCommentPattern = utils.resolveBlockCommentPattern( '.md' ).pattern;
@@ -1345,6 +1353,10 @@ function scanCommentPatternText( uri, text, resourceConfig, patternFileName, opt
         {
             results = [];
         }
+    }
+    else if( options.skipEmbeddedDocuments !== true && hasCommentPatternTokens( pattern ) !== true )
+    {
+        results = runRegexScan( context );
     }
     else
     {
