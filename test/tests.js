@@ -541,6 +541,14 @@ QUnit.test( "utils.isIncluded keeps child folder includes inside parent excludes
     assert.equal( utils.isIncluded( "/workspace/folder1/subfolder2/skip.js", includes, excludes.concat( [ "/folder1/subfolder2/skip.js" ] ) ), false );
 } );
 
+QUnit.test( "utils.isExplicitlyIncluded matches configured includes", function( assert )
+{
+    assert.equal( utils.isExplicitlyIncluded( "/workspace/.env", [ "**/.env", "**/.env*" ] ), true );
+    assert.equal( utils.isExplicitlyIncluded( "/workspace/settings.json", [ "**/*.json" ] ), true );
+    assert.equal( utils.isExplicitlyIncluded( "/workspace/src/app.js", [ "**/*.json" ] ), false );
+    assert.equal( utils.isExplicitlyIncluded( "/workspace/src/app.js", [] ), false );
+} );
+
 QUnit.test( "utils.toRipgrepGlobArray converts absolute and folder globs per root", function( assert )
 {
     assert.deepEqual(

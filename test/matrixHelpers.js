@@ -387,6 +387,31 @@ TestTextBuilder.prototype.addSingleLineCase = function( token, tag, description 
     } );
 };
 
+TestTextBuilder.prototype.addRegexFallbackLineCase = function( token, tag, description )
+{
+    var line = token + ' ' + tag + ' ' + description;
+    var record = this.addLine( line );
+    var tagStartOffset = record.startOffset + token.length + 1;
+
+    this.expectations.push( {
+        actualTag: tag,
+        displayText: description,
+        continuationText: [],
+        before: token,
+        after: description,
+        line: record.lineNumber,
+        column: token.length + 2,
+        endLine: record.lineNumber,
+        endColumn: record.text.length + 1,
+        commentStartOffset: record.startOffset,
+        commentEndOffset: record.startOffset + record.text.length,
+        matchStartOffset: tagStartOffset,
+        matchEndOffset: record.startOffset + record.text.length,
+        tagStartOffset: tagStartOffset,
+        tagEndOffset: tagStartOffset + tag.length
+    } );
+};
+
 TestTextBuilder.prototype.addSingleLineBlockCase = function( token, tag, description, continuation )
 {
     var firstLine = this.addLine( token + ' ' + tag + ' ' + description );
@@ -528,6 +553,15 @@ function buildNegativeText( language )
         ].join( '\n' );
     }
 
+    if( language.singleLineTokens.length === 0 && language.multiLineEntries.length === 0 )
+    {
+        return [
+            'Plain TODO text',
+            'Plain HACK text',
+            '"TODO": "plain data"'
+        ].join( '\n' );
+    }
+
     return [
         'TODO plain text',
         'HACK plain text',
@@ -555,9 +589,14 @@ function buildLanguageScenario( language )
 
     if( language.singleLineTokens.length === 0 && language.multiLineEntries.length === 0 )
     {
+        defaultTags.forEach( function( tag )
+        {
+            builder.addRegexFallbackLineCase( '//', tag, slug + '-' + tagLabel( tag ) + '-regex-fallback-0' );
+        } );
+
         return {
-            text: "",
-            expectations: [],
+            text: builder.toText(),
+            expectations: builder.expectations,
             negativeText: buildNegativeText( language )
         };
     }
