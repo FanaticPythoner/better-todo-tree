@@ -4821,6 +4821,15 @@ function activate( context )
             }
         }
 
+        function windowStateChanged( state )
+        {
+            if( state && state.focused === true )
+            {
+                rememberVisibleTextEditors();
+                triggerHighlightsForVisibleEditors();
+            }
+        }
+
         function validateColours()
         {
             var invalidColourMessage = colours.validateColours( vscode.workspace );
@@ -5433,6 +5442,10 @@ function activate( context )
         if( typeof vscode.window.onDidChangeVisibleTextEditors === 'function' )
         {
             context.subscriptions.push( vscode.window.onDidChangeVisibleTextEditors( visibleTextEditorsChanged ) );
+        }
+        if( typeof vscode.window.onDidChangeWindowState === 'function' )
+        {
+            context.subscriptions.push( vscode.window.onDidChangeWindowState( windowStateChanged ) );
         }
 
         context.subscriptions.push( vscode.workspace.onDidSaveTextDocument( document =>

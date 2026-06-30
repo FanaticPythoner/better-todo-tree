@@ -56,6 +56,7 @@
         "Other"
     ],
     "activationEvents": [
+        "onView:todo-tree-view",
         "onStartupFinished"
     ],
     "main": "./dist/extension",
@@ -1603,12 +1604,12 @@
                         "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
                     },
                     "better-todo-tree.highlights.useColourScheme": {
-                        "default": false,
+                        "default": true,
                         "markdownDescription": "%better-todo-tree.configuration.highlights.useColourScheme.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.highlights.useColourScheme": {
-                        "default": false,
+                        "default": true,
                         "markdownDescription": "%better-todo-tree.configuration.highlights.useColourScheme.markdownDescription%",
                         "type": "boolean",
                         "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",

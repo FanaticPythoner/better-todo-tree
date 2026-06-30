@@ -80,7 +80,7 @@ Found TODOs can also be highlighted in open files.
 
 ## Highlighting
 
->*New!:* If you just want to set different colours for tags, you can now enable `better-todo-tree.highlights.useColourScheme`. This will apply a set of colours (which can be changed) to the tags in the order that they are defined.
+>`better-todo-tree.highlights.useColourScheme` applies foreground and background colour sequences to tags in tag order.
 
 Highlighting tags is configurable. Use `defaultHighlight` to set up highlights for all tags. If you need to configure individual tags differently, use `customHighlight`. If settings are not specified in `customHighlight`, the value from `defaultHighlight` is used.
 
@@ -378,8 +378,8 @@ Set highlights per tag (or tag group). Example:
 }
 ```
 
-**better-todo-tree.highlights.useColourScheme** (`false`)</br>
-Use a simple scheme for colouring highlights. This will simply apply a list of colours in the same order as the tags are defined. Use this as a much simpler alternative to setting up custom highlights for each tag.
+**better-todo-tree.highlights.useColourScheme** (`true`)</br>
+Applies foreground and background colour sequences to tags in tag order. This is a smaller configuration surface than per-tag `customHighlight` entries.
 
 <sup>*Note: The colour scheme overrides the colours defined in* `better-todo-tree.highlights.defaultHighlight` *but not* `better-todo-tree.highlights.customHighlight`*.*</sup>
 

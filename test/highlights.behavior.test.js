@@ -412,6 +412,67 @@ QUnit.module( "behavioral highlights", function( hooks )
         assert.strictEqual( decoration.dark.color, undefined );
     } );
 
+    QUnit.test( "issue #58 default colour scheme emits visible editor highlights", function( assert )
+    {
+        var decorationLog = [];
+        var config = createAttributeConfig( {
+            tagList: [ 'TODO' ],
+            shouldUseColourScheme: function()
+            {
+                return true;
+            },
+            foregroundColourScheme: function()
+            {
+                return [ 'white' ];
+            },
+            backgroundColourScheme: function()
+            {
+                return [ 'red' ];
+            }
+        } );
+
+        actualUtils.init( config );
+        actualAttributes.init( config );
+
+        var highlights = helpers.loadWithStubs( '../src/highlights.js', {
+            vscode: createVscodeStub( { enabled: true }, decorationLog ),
+            './config.js': {
+                customHighlight: config.customHighlight.bind( config ),
+                subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); },
+                tagGroup: function() { return undefined; }
+            },
+            './utils.js': actualUtils,
+            './attributes.js': actualAttributes,
+            './icons.js': {
+                getGutterIcon: function()
+                {
+                    return { dark: '/tmp/gutter-dark.svg', light: '/tmp/gutter-light.svg' };
+                }
+            },
+            './detection.js': {
+                scanDocument: function()
+                {
+                    return [];
+                }
+            },
+            './extensionIdentity.js': {
+                getSetting: function( setting, defaultValue )
+                {
+                    return defaultValue;
+                }
+            }
+        } );
+
+        highlights.init( { subscriptions: { push: function() {} } }, function() {} );
+
+        var decoration = highlights.getDecoration( 'TODO' );
+
+        assert.equal( decoration.light.backgroundColor, 'red' );
+        assert.equal( decoration.dark.backgroundColor, 'red' );
+        assert.equal( decoration.light.color, 'white' );
+        assert.equal( decoration.dark.color, 'white' );
+    } );
+
     QUnit.test( "issue #75 identical yellow backgrounds use identical black foregrounds", function( assert )
     {
         var decorationLog = [];
