@@ -797,6 +797,7 @@ function createVscodeStub( options )
             },
             onDidChangeActiveTextEditor: function( listener ) { return registerListener( workspaceListeners, 'activeEditor', listener ); },
             onDidChangeVisibleTextEditors: function( listener ) { return registerListener( windowListeners, 'visibleTextEditors', listener ); },
+            onDidChangeWindowState: function( listener ) { return registerListener( windowListeners, 'windowState', listener ); },
             onDidChangeVisibleNotebookEditors: function( listener ) { return registerListener( windowListeners, 'visibleNotebookEditors', listener ); }
         },
         informationMessages: informationMessages,
@@ -1943,6 +1944,40 @@ QUnit.test( "refresh command reapplies highlights to visible editors", function(
         {
             return editor.document.fileName;
         } ), [ '/tmp/refresh.js' ] );
+    } );
+} );
+
+QUnit.test( "issue #107 focused window state reapplies visible editor highlights", function( assert )
+{
+    var document = matrixHelpers.createDocument( '/tmp/focus.js', '// TODO focus' );
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        visibleTextEditors: [ { document: document } ],
+        activeTextEditor: { document: document },
+        documentResults: [],
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.highlightCalls.length, 0 );
+        assert.equal( harness.scanDocumentCalls.length, 0 );
+
+        harness.vscode.windowListeners.windowState( { focused: false } );
+        harness.vscode.windowListeners.windowState( { focused: true } );
+
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        assert.deepEqual( harness.highlightCalls.map( function( editor )
+        {
+            return editor.document.fileName;
+        } ), [ '/tmp/focus.js' ] );
+        assert.equal( harness.scanDocumentCalls.length, 0 );
     } );
 } );
 

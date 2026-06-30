@@ -377,7 +377,7 @@ function shouldShowScanModeInTree()
 
 function shouldUseColourScheme()
 {
-    return identity.getSetting( 'highlights.useColourScheme', false );
+    return identity.getSetting( 'highlights.useColourScheme', true );
 }
 
 function foregroundColourScheme()

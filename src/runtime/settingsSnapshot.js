@@ -60,7 +60,7 @@ function buildSettingsSnapshot( context, identity, config, vscode )
         highlightDelay: identity.getSetting( 'highlights.highlightDelay', 500 ),
         customHighlight: identity.getSetting( 'highlights.customHighlight', {} ),
         defaultHighlight: identity.getSetting( 'highlights.defaultHighlight', {} ),
-        useColourScheme: identity.getSetting( 'highlights.useColourScheme', false ),
+        useColourScheme: identity.getSetting( 'highlights.useColourScheme', true ),
         foregroundColourScheme: identity.getSetting( 'highlights.foregroundColourScheme', [] ),
         backgroundColourScheme: identity.getSetting( 'highlights.backgroundColourScheme', [] ),
         customCommentPatterns: identity.getSetting( 'languages.customPatterns', [] ),
