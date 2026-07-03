@@ -2,6 +2,25 @@ var fs = require( 'fs' );
 var path = require( 'path' );
 var regexRegistry = require( '../src/regexRegistry.js' );
 
+var ACTION_REVISIONS = Object.freeze( {
+    actionsCache: Object.freeze( {
+        action: 'actions/cache',
+        ref: '55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
+        version: 'v6.1.0'
+    } ),
+    attestBuildProvenance: Object.freeze( {
+        action: 'actions/attest-build-provenance',
+        ref: '0f67c3f4856b2e3261c31976d6725780e5e4c373',
+        version: 'v4.1.1'
+    } ),
+    codeql: Object.freeze( {
+        actionAnalyze: 'github/codeql-action/analyze',
+        actionInit: 'github/codeql-action/init',
+        ref: '54f647b7e1bb85c95cddabcd46b0c578ec92bc1a',
+        version: 'v4.36.3'
+    } )
+} );
+
 function readWorkflow( workflowName )
 {
     return fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', workflowName ), 'utf8' );
@@ -97,6 +116,25 @@ function assertPinnedAction( assert, references, action, label )
     return reference;
 }
 
+function assertWorkflowActionRevision( assert, workflowName, expectedRevision )
+{
+    var reference = assertPinnedAction(
+        assert,
+        getExternalActionReferences( readWorkflow( workflowName ) ),
+        expectedRevision.action,
+        workflowName
+    );
+
+    assert.equal(
+        reference.ref,
+        expectedRevision.ref,
+        workflowAssertionMessage(
+            workflowName,
+            expectedRevision.action + ' uses ' + expectedRevision.version + ' release SHA'
+        )
+    );
+}
+
 function createActionReference( action, ref )
 {
     if( !isFullCommitSha( ref ) )
@@ -150,8 +188,8 @@ function assertSecurityWorkflowContract( assert, securityWorkflow, label )
 {
     var references = getExternalActionReferences( securityWorkflow );
     var dependencyReview = assertPinnedAction( assert, references, 'actions/dependency-review-action', label );
-    var codeqlInit = assertPinnedAction( assert, references, 'github/codeql-action/init', label );
-    var codeqlAnalyze = assertPinnedAction( assert, references, 'github/codeql-action/analyze', label );
+    var codeqlInit = assertPinnedAction( assert, references, ACTION_REVISIONS.codeql.actionInit, label );
+    var codeqlAnalyze = assertPinnedAction( assert, references, ACTION_REVISIONS.codeql.actionAnalyze, label );
     var dependencyReviewJob = getWorkflowJobBlock( securityWorkflow, 'dependency-review' );
     var codeqlJob = getWorkflowJobBlock( securityWorkflow, 'codeql' );
 
@@ -162,8 +200,11 @@ function assertSecurityWorkflowContract( assert, securityWorkflow, label )
     );
     assert.equal(
         codeqlInit.ref,
-        '8aad20d150bbac5944a9f9d289da16a4b0d87c1e',
-        workflowAssertionMessage( label, 'CodeQL action uses v4.36.2 release SHA' )
+        ACTION_REVISIONS.codeql.ref,
+        workflowAssertionMessage(
+            label,
+            'CodeQL action uses ' + ACTION_REVISIONS.codeql.version + ' release SHA'
+        )
     );
     assert.ok(
         dependencyReviewJob.indexOf( "if: github.event_name == 'pull_request'" ) !== -1,
@@ -230,6 +271,16 @@ QUnit.test( 'release workflow requests provenance-related permissions', function
     assert.ok( contents.indexOf( 'id-token: write' ) !== -1 );
     assert.ok( contents.indexOf( 'attestations: write' ) !== -1 );
     assert.ok( contents.indexOf( 'contents: write' ) !== -1 );
+} );
+
+QUnit.test( 'cache and provenance workflow actions use Dependabot release SHAs', function( assert )
+{
+    [ 'ci.yml', 'latest.yml', 'release.yml' ].forEach( function( workflowName )
+    {
+        assertWorkflowActionRevision( assert, workflowName, ACTION_REVISIONS.actionsCache );
+    } );
+
+    assertWorkflowActionRevision( assert, 'release.yml', ACTION_REVISIONS.attestBuildProvenance );
 } );
 
 QUnit.test( 'latest workflow publishes a moving prerelease from master', function( assert )
@@ -343,15 +394,15 @@ QUnit.test( 'dependency review and latest CodeQL action revisions satisfy securi
             ]
         },
         {
-            name: 'CodeQL v4.36.2',
+            name: 'CodeQL ' + ACTION_REVISIONS.codeql.version,
             revisions: [
                 {
-                    action: 'github/codeql-action/init',
-                    ref: '8aad20d150bbac5944a9f9d289da16a4b0d87c1e'
+                    action: ACTION_REVISIONS.codeql.actionInit,
+                    ref: ACTION_REVISIONS.codeql.ref
                 },
                 {
-                    action: 'github/codeql-action/analyze',
-                    ref: '8aad20d150bbac5944a9f9d289da16a4b0d87c1e'
+                    action: ACTION_REVISIONS.codeql.actionAnalyze,
+                    ref: ACTION_REVISIONS.codeql.ref
                 }
             ]
         }
