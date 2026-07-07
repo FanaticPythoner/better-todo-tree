@@ -5,6 +5,7 @@ var regexRegistry = require( '../src/regexRegistry.js' );
 var languageMatrix = require( './languageMatrix.js' );
 var issue888Helpers = require( './issue888Helpers.js' );
 var matrixHelpers = require( './matrixHelpers.js' );
+var moduleHelpers = require( './moduleHelpers.js' );
 var stubs = require( './stubs.js' );
 
 function tagRegexWithTail( tail )
@@ -266,6 +267,49 @@ QUnit.module( "detection regex matrix", function()
         assert.equal( utils.formatLabel( '${tag} ${after}', normalized ), utils.formatLabel( '${tag} ${after}', scanned ) );
         assert.equal( normalized.before, '//' );
         assert.equal( normalized.after, 'workspace-visible text' );
+    } );
+
+    QUnit.test( "issue #119 workspace normalization skips indices when the host rejects the flag", function( assert )
+    {
+        var config = matrixHelpers.createConfig( {
+            tagList: [ 'TODO' ],
+            regexSource: regexRegistry.pattern( 'legacyMarkdownCompatibilityTodo' ),
+            subTagRegexString: regexRegistry.pattern( 'subTagPrefix' )
+        } );
+        var uri = matrixHelpers.createUri( '/tmp/issue-119.typ' );
+        var text = '// TODO typst-project item';
+        var normalized;
+
+        try
+        {
+            moduleHelpers.withRegExpWithoutIndices( function()
+            {
+                utils.clearRegExpFeatureCache();
+                utils.init( config );
+
+                normalized = detection.normalizeWorkspaceRegexMatch( uri, {
+                    fsPath: uri.fsPath,
+                    line: 1,
+                    column: 1,
+                    lines: text,
+                    match: '// TODO',
+                    absoluteOffset: 0,
+                    submatches: [ {
+                        match: '// TODO',
+                        start: 0,
+                        end: 7
+                    } ]
+                } );
+            } );
+        }
+        finally
+        {
+            utils.clearRegExpFeatureCache();
+        }
+
+        assert.equal( normalized.actualTag, 'TODO' );
+        assert.equal( normalized.displayText, 'typst-project item' );
+        assert.equal( normalized.column, 4 );
     } );
 
     QUnit.test( "issue #36 comment-prefix labels match reload labels", function( assert )

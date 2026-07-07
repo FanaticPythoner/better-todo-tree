@@ -50,9 +50,28 @@ function supportsRegExpIndices()
         return regExpIndicesSupported;
     }
 
-    regExpIndicesSupported = Object.prototype.hasOwnProperty.call( RegExp.prototype, 'hasIndices' );
+    try
+    {
+        var regex = regexRegistry.createRegExp( 'empty', 'd' );
+        var match = regex.exec( '' );
+        regExpIndicesSupported = regex.hasIndices === true && match !== null && Array.isArray( match.indices );
+    }
+    catch( error )
+    {
+        if( !( error instanceof SyntaxError ) )
+        {
+            throw error;
+        }
+
+        regExpIndicesSupported = false;
+    }
 
     return regExpIndicesSupported;
+}
+
+function clearRegExpFeatureCache()
+{
+    regExpIndicesSupported = undefined;
 }
 
 function isHexColour( colour )
@@ -1079,6 +1098,7 @@ module.exports.getLanguageConfigurationSignature = getLanguageConfigurationSigna
 module.exports.getResourceConfig = getResourceConfig;
 module.exports.getTagRegexSource = getTagRegexSource;
 module.exports.supportsRegExpIndices = supportsRegExpIndices;
+module.exports.clearRegExpFeatureCache = clearRegExpFeatureCache;
 module.exports.DEFAULT_REGEX_SOURCE = DEFAULT_REGEX_SOURCE;
 module.exports.LEGACY_MARKDOWN_TASK_FRAGMENT = regexRegistry.LEGACY_MARKDOWN_TASK_FRAGMENT;
 module.exports.extractTag = extractTag;

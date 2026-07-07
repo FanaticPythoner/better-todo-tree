@@ -375,6 +375,16 @@ QUnit.test( 'VSIX builder stages one ripgrep-universal binary for each native ta
     assert.ok( buildScript.indexOf( 'finally {\n        resetRipgrepStage();\n    }' ) !== -1 );
 } );
 
+QUnit.test( 'VSIX builder removes stale selected target outputs before packing', function( assert )
+{
+    var buildScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'build-vsix.mjs' ), 'utf8' );
+
+    assert.ok( buildScript.indexOf( 'function isSelectedTargetPackage' ) !== -1 );
+    assert.ok( buildScript.indexOf( 'function cleanSelectedTargetOutputs' ) !== -1 );
+    assert.ok( buildScript.indexOf( 'fs.unlinkSync(path.join(directory, fileName))' ) !== -1 );
+    assert.ok( buildScript.indexOf( 'cleanSelectedTargetOutputs(outputDirectory, packageJson.name, selectedTargets)' ) !== -1 );
+} );
+
 QUnit.test( 'security workflow keeps dependency review and CodeQL coverage pinned', function( assert )
 {
     assertSecurityWorkflowContract( assert, readWorkflow( 'security.yml' ) );
