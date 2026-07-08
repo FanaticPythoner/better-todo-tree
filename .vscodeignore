@@ -25,3 +25,4 @@ buildCodiconNames.js
 old-*.js
 *.bak
 *~
+.devcontainer/
