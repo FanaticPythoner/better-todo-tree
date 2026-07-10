@@ -6238,6 +6238,89 @@ QUnit.test( "workspace scan custom-regex path normalizes oversized ripgrep match
     } );
 } );
 
+QUnit.test( "issue #119 workspace scan applies raw regex results when indices are unavailable", function( assert )
+{
+    var filePath = '/workspace/issue-119.typ';
+    var text = '// TODO typst-project item\n';
+    var regexSource = actualRegexRegistry.pattern( 'legacyMarkdownCompatibilityTodo' );
+    var config = matrixHelpers.createConfig( {
+        tagList: [ 'TODO' ],
+        regexSource: regexSource,
+        shouldBeCaseSensitive: true,
+        subTagRegexString: actualRegexRegistry.pattern( 'subTagPrefix' )
+    } );
+
+    return helpers.withRegExpWithoutIndices( function()
+    {
+        actualUtils.clearRegExpFeatureCache();
+        actualUtils.init( config );
+
+        var harness = createExtensionHarness( {
+            scanMode: 'workspace',
+            regexSource: regexSource,
+            resourceConfig: { isDefaultRegex: false, enableMultiLine: false, regexCaseSensitive: true },
+            workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+            normalizeWorkspaceResult: function( match, uri, snapshot )
+            {
+                return actualDetection.normalizeWorkspaceRegexMatch( uri, match, snapshot );
+            },
+            ripgrepMatches: [ {
+                fsPath: filePath,
+                line: 1,
+                column: 1,
+                match: '// TODO',
+                lines: text,
+                absoluteOffset: 0,
+                submatches: [ {
+                    match: '// TODO',
+                    start: 0,
+                    end: 7
+                } ]
+            } ],
+            fileContents: {
+                '/workspace/issue-119.typ': text
+            },
+            fileStats: {
+                '/workspace/issue-119.typ': { size: 9999999 }
+            },
+            streamScannerOverrides: {
+                maxInMemoryBytes: 16,
+                chunkBytes: 12,
+                overlapBytes: 4
+            }
+        } );
+
+        harness.extension.activate( harness.context );
+
+        return matrixHelpers.flushAsyncWork().then( function()
+        {
+            assert.equal( harness.errorMessages.length, 0 );
+            assert.equal( harness.warningMessages.length, 0 );
+            assert.equal( harness.normalizeWorkspaceCalls.length, 1 );
+            assert.equal( harness.readFileCalls.indexOf( filePath ), -1 );
+
+            var replaceCalls = harness.provider.replaceCalls.filter( function( call )
+            {
+                return call.uri.fsPath === filePath;
+            } );
+
+            assert.equal( replaceCalls.length, 1 );
+
+            var result = replaceCalls[ 0 ].results[ 0 ];
+            assert.equal( result.actualTag, 'TODO' );
+            assert.equal( result.displayText, 'typst-project item' );
+            assert.equal( result.column, 4 );
+        } );
+    } ).then( function()
+    {
+        actualUtils.clearRegExpFeatureCache();
+    }, function( error )
+    {
+        actualUtils.clearRegExpFeatureCache();
+        throw error;
+    } );
+} );
+
 QUnit.test( "workspace scan reports oversized stat errors as workspace scan issues without crashing", function( assert )
 {
     var harness = createExtensionHarness( {

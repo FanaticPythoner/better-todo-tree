@@ -6,6 +6,7 @@ var utils = require( '../src/utils.js' );
 var attributes = require( '../src/attributes.js' );
 var regexRegistry = require( '../src/regexRegistry.js' );
 var stubs = require( './stubs.js' );
+var moduleHelpers = require( './moduleHelpers.js' );
 var searchResults = require( '../src/searchResults.js' );
 
 QUnit.test( "utils.isHexColour", function( assert )
@@ -388,6 +389,34 @@ QUnit.test( "utils.getRegexForEditorSearch requests indices only when the host s
     var regex = utils.getRegexForEditorSearch( true, uri, { includeIndices: true } );
 
     assert.equal( regex.flags.indexOf( 'd' ) !== -1, utils.supportsRegExpIndices() );
+} );
+
+QUnit.test( "utils.getRegexForEditorSearch skips indices when the constructor rejects the flag", function( assert )
+{
+    var testConfig = stubs.getTestConfig();
+    var uri = { toString: function() { return "/tmp/no-indices.js"; } };
+    var regex;
+
+    try
+    {
+        moduleHelpers.withRegExpWithoutIndices( function()
+        {
+            utils.clearRegExpFeatureCache();
+            utils.init( testConfig );
+
+            assert.equal( utils.supportsRegExpIndices(), false );
+            assert.equal( Object.prototype.hasOwnProperty.call( RegExp.prototype, 'hasIndices' ), true );
+            assert.equal( function()
+            {
+                regex = utils.getRegexForEditorSearch( true, uri, { includeIndices: true } );
+                return regex.flags;
+            }(), 'gim' );
+        } );
+    }
+    finally
+    {
+        utils.clearRegExpFeatureCache();
+    }
 } );
 
 QUnit.test( "utils.isIncluded returns true when no includes or excludes are specified", function( assert )

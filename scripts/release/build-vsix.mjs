@@ -77,6 +77,30 @@ function ensureOutputDirectory(directory) {
     fs.mkdirSync(directory, { recursive: true });
 }
 
+function isSelectedTargetPackage(fileName, packageName, selectedTargets) {
+    const extension = '.vsix';
+    const prefix = `${packageName}-`;
+
+    if (!fileName.startsWith(prefix) || !fileName.endsWith(extension)) {
+        return false;
+    }
+
+    const versionAndTarget = fileName.slice(prefix.length, -extension.length);
+
+    return selectedTargets.some((target) => {
+        const suffix = `-${target}`;
+        return versionAndTarget.endsWith(suffix) && versionAndTarget.length > suffix.length;
+    });
+}
+
+function cleanSelectedTargetOutputs(directory, packageName, selectedTargets) {
+    fs.readdirSync(directory)
+        .filter((fileName) => isSelectedTargetPackage(fileName, packageName, selectedTargets))
+        .forEach((fileName) => {
+            fs.unlinkSync(path.join(directory, fileName));
+        });
+}
+
 function ripgrepPlatformDirectory(platform) {
     return `${platform.os}-${platform.arch}`;
 }
@@ -157,6 +181,7 @@ async function main() {
     const selectedTargets = normalizeRequestedTargets(process.argv.slice(2), supportedTargets);
 
     ensureOutputDirectory(outputDirectory);
+    cleanSelectedTargetOutputs(outputDirectory, packageJson.name, selectedTargets);
 
     try {
         if (process.env.SKIP_PREPUBLISH !== '1') {
