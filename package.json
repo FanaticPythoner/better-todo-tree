@@ -2414,7 +2414,7 @@
         "ovsx": "^1.0.2",
         "parse-code-context": "^1.0.0",
         "qunit": "^2.26.0",
-        "webpack": "^5.108.3",
+        "webpack": "^5.108.4",
         "webpack-cli": "^7.1.0"
     },
     "overrides": {
