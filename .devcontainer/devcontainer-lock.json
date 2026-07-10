@@ -1,0 +1,9 @@
+{
+  "features": {
+    "ghcr.io/devcontainers-extra/features/curl-apt-get:1": {
+      "version": "1.0.18",
+      "resolved": "ghcr.io/devcontainers-extra/features/curl-apt-get@sha256:7fb32e4ebdd440369a598e7a27b1ed56c9e73eb6b4f595d30969862d2fc68e40",
+      "integrity": "sha256:7fb32e4ebdd440369a598e7a27b1ed56c9e73eb6b4f595d30969862d2fc68e40"
+    }
+  }
+}
