@@ -12,18 +12,22 @@ var ACTION_REVISIONS = Object.freeze( {
         action: 'actions/attest-build-provenance',
         ref: '0f67c3f4856b2e3261c31976d6725780e5e4c373',
         version: 'v4.1.1'
-    } ),
-    codeql: Object.freeze( {
-        actionAnalyze: 'github/codeql-action/analyze',
-        actionInit: 'github/codeql-action/init',
-        ref: '54f647b7e1bb85c95cddabcd46b0c578ec92bc1a',
-        version: 'v4.36.3'
     } )
 } );
 
+var CODEQL_ACTIONS = Object.freeze( {
+    analyze: 'github/codeql-action/analyze',
+    init: 'github/codeql-action/init'
+} );
+
+function readRepositoryFile( relativePath )
+{
+    return fs.readFileSync( path.join( __dirname, '..', relativePath ), 'utf8' );
+}
+
 function readWorkflow( workflowName )
 {
-    return fs.readFileSync( path.join( __dirname, '..', '.github', 'workflows', workflowName ), 'utf8' );
+    return readRepositoryFile( path.join( '.github', 'workflows', workflowName ) );
 }
 
 function getWorkflowPaths()
@@ -78,6 +82,15 @@ function getActionReferences( references, action )
     } );
 }
 
+function codeqlActionRevisionsMatch( references )
+{
+    var initReferences = getActionReferences( references, CODEQL_ACTIONS.init );
+    var analyzeReferences = getActionReferences( references, CODEQL_ACTIONS.analyze );
+
+    return initReferences.length === 1 && analyzeReferences.length === 1 &&
+        initReferences[ 0 ].ref === analyzeReferences[ 0 ].ref;
+}
+
 function workflowAssertionMessage( label, message )
 {
     return label ? label + ': ' + message : message;
@@ -86,6 +99,16 @@ function workflowAssertionMessage( label, message )
 function isFullCommitSha( ref )
 {
     return regexRegistry.createRegExp( 'sha1Lowercase' ).test( ref );
+}
+
+function createAlternateFullCommitSha( ref )
+{
+    if( !isFullCommitSha( ref ) )
+    {
+        throw new Error( 'workflow action revision fixture: full commit SHA required' );
+    }
+
+    return ( ref[ 0 ] === '0' ? '1' : '0' ) + ref.slice( 1 );
 }
 
 function assertFullCommitSha( assert, ref, message )
@@ -165,6 +188,44 @@ function withActionRevisions( contents, revisions )
     }, contents );
 }
 
+function withCodeqlRevision( contents, ref )
+{
+    return withActionRevisions( contents, [
+        {
+            action: CODEQL_ACTIONS.init,
+            ref: ref
+        },
+        {
+            action: CODEQL_ACTIONS.analyze,
+            ref: ref
+        }
+    ] );
+}
+
+function getDependabotUpdateBlocks( contents, packageEcosystem )
+{
+    var lines = contents.split( regexRegistry.createRegExp( 'optionalCarriageReturnLineBreak' ) );
+    var header = '  - package-ecosystem: ' + packageEcosystem;
+    var starts = lines.reduce( function( indices, line, index )
+    {
+        if( line.indexOf( '  - package-ecosystem: ' ) === 0 )
+        {
+            indices.push( index );
+        }
+        return indices;
+    }, [] );
+
+    return starts.reduce( function( blocks, start, index )
+    {
+        if( lines[ start ] === header )
+        {
+            var end = starts[ index + 1 ] === undefined ? lines.length : starts[ index + 1 ];
+            blocks.push( lines.slice( start, end ).join( '\n' ) );
+        }
+        return blocks;
+    }, [] );
+}
+
 function getWorkflowJobBlock( contents, jobName )
 {
     var lines = contents.split( regexRegistry.createRegExp( 'optionalCarriageReturnLineBreak' ) );
@@ -188,23 +249,14 @@ function assertSecurityWorkflowContract( assert, securityWorkflow, label )
 {
     var references = getExternalActionReferences( securityWorkflow );
     var dependencyReview = assertPinnedAction( assert, references, 'actions/dependency-review-action', label );
-    var codeqlInit = assertPinnedAction( assert, references, ACTION_REVISIONS.codeql.actionInit, label );
-    var codeqlAnalyze = assertPinnedAction( assert, references, ACTION_REVISIONS.codeql.actionAnalyze, label );
+    var codeqlInit = assertPinnedAction( assert, references, CODEQL_ACTIONS.init, label );
+    var codeqlAnalyze = assertPinnedAction( assert, references, CODEQL_ACTIONS.analyze, label );
     var dependencyReviewJob = getWorkflowJobBlock( securityWorkflow, 'dependency-review' );
     var codeqlJob = getWorkflowJobBlock( securityWorkflow, 'codeql' );
 
-    assert.equal(
-        codeqlInit.ref,
-        codeqlAnalyze.ref,
+    assert.ok(
+        codeqlActionRevisionsMatch( references ),
         workflowAssertionMessage( label, 'CodeQL init and analyze use the same action revision' )
-    );
-    assert.equal(
-        codeqlInit.ref,
-        ACTION_REVISIONS.codeql.ref,
-        workflowAssertionMessage(
-            label,
-            'CodeQL action uses ' + ACTION_REVISIONS.codeql.version + ' release SHA'
-        )
     );
     assert.ok(
         dependencyReviewJob.indexOf( "if: github.event_name == 'pull_request'" ) !== -1,
@@ -217,6 +269,14 @@ function assertSecurityWorkflowContract( assert, securityWorkflow, label )
     assert.ok(
         codeqlJob.indexOf( 'security-events: write' ) !== -1,
         workflowAssertionMessage( label, 'CodeQL job can write code scanning results' )
+    );
+    assert.ok(
+        codeqlJob.indexOf( codeqlInit.text ) !== -1,
+        workflowAssertionMessage( label, 'CodeQL job uses the pinned init reference' )
+    );
+    assert.ok(
+        codeqlJob.indexOf( codeqlAnalyze.text ) !== -1,
+        workflowAssertionMessage( label, 'CodeQL job uses the pinned analyze reference' )
     );
     assert.ok(
         codeqlJob.indexOf( 'fail-fast: true' ) !== -1,
@@ -262,6 +322,29 @@ QUnit.test( 'external workflow actions are pinned to full commit SHAs', function
             );
         } );
     } );
+} );
+
+QUnit.test( 'Dependabot groups CodeQL action revisions atomically', function( assert )
+{
+    var githubActionsUpdates = getDependabotUpdateBlocks(
+        readRepositoryFile( path.join( '.github', 'dependabot.yml' ) ),
+        'github-actions'
+    );
+    var githubActionsUpdate = githubActionsUpdates[ 0 ] || '';
+    var expectedGroup = [
+        '    groups:',
+        '      codeql-action:',
+        '        applies-to: version-updates',
+        '        patterns:',
+        '          - "github/codeql-action"',
+        '          - "github/codeql-action/*"'
+    ].join( '\n' );
+
+    assert.equal( githubActionsUpdates.length, 1, 'github-actions update configuration exists once' );
+    assert.ok(
+        githubActionsUpdate.indexOf( expectedGroup ) !== -1,
+        'CodeQL action paths share one version-update group'
+    );
 } );
 
 QUnit.test( 'release workflow requests provenance-related permissions', function( assert )
@@ -390,42 +473,59 @@ QUnit.test( 'security workflow keeps dependency review and CodeQL coverage pinne
     assertSecurityWorkflowContract( assert, readWorkflow( 'security.yml' ) );
 } );
 
-QUnit.test( 'dependency review and latest CodeQL action revisions satisfy security workflow contract', function( assert )
+QUnit.test( 'dependency review action revision satisfies security workflow contract', function( assert )
 {
     var securityWorkflow = readWorkflow( 'security.yml' );
-    var regressionFixtures = [
-        {
-            name: 'PR 20 dependency review',
-            revisions: [
-                {
-                    action: 'actions/dependency-review-action',
-                    ref: 'a1d282b36b6f3519aa1f3fc636f609c47dddb294'
-                }
-            ]
-        },
-        {
-            name: 'CodeQL ' + ACTION_REVISIONS.codeql.version,
-            revisions: [
-                {
-                    action: ACTION_REVISIONS.codeql.actionInit,
-                    ref: ACTION_REVISIONS.codeql.ref
-                },
-                {
-                    action: ACTION_REVISIONS.codeql.actionAnalyze,
-                    ref: ACTION_REVISIONS.codeql.ref
-                }
-            ]
-        }
-    ];
+    var dependencyReview = assertPinnedAction(
+        assert,
+        getExternalActionReferences( securityWorkflow ),
+        'actions/dependency-review-action',
+        'dependency review fixture source'
+    );
+    var dependencyReviewWorkflow = withActionRevision(
+        securityWorkflow,
+        'actions/dependency-review-action',
+        createAlternateFullCommitSha( dependencyReview.ref )
+    );
 
-    regressionFixtures.forEach( function( fixture )
-    {
-        assertSecurityWorkflowContract(
-            assert,
-            withActionRevisions( securityWorkflow, fixture.revisions ),
-            fixture.name
-        );
-    } );
+    assertSecurityWorkflowContract( assert, dependencyReviewWorkflow, 'PR 20 dependency review' );
+} );
+
+QUnit.test( 'CodeQL revision contract accepts only atomic action updates', function( assert )
+{
+    var securityWorkflow = readWorkflow( 'security.yml' );
+    var codeqlInit = assertPinnedAction(
+        assert,
+        getExternalActionReferences( securityWorkflow ),
+        CODEQL_ACTIONS.init,
+        'CodeQL fixture source'
+    );
+    var alternateRevision = createAlternateFullCommitSha( codeqlInit.ref );
+    var initOnly = withActionRevision(
+        securityWorkflow,
+        CODEQL_ACTIONS.init,
+        alternateRevision
+    );
+    var analyzeOnly = withActionRevision(
+        securityWorkflow,
+        CODEQL_ACTIONS.analyze,
+        alternateRevision
+    );
+    var paired = withCodeqlRevision( securityWorkflow, alternateRevision );
+
+    assert.notOk(
+        codeqlActionRevisionsMatch( getExternalActionReferences( initOnly ) ),
+        'init-only revision violates CodeQL parity'
+    );
+    assert.notOk(
+        codeqlActionRevisionsMatch( getExternalActionReferences( analyzeOnly ) ),
+        'analyze-only revision violates CodeQL parity'
+    );
+    assert.ok(
+        codeqlActionRevisionsMatch( getExternalActionReferences( paired ) ),
+        'paired revision preserves CodeQL parity'
+    );
+    assertSecurityWorkflowContract( assert, paired, 'paired CodeQL revision' );
 } );
 
 QUnit.test( 'workflow action revision fixtures fail on invalid input', function( assert )
