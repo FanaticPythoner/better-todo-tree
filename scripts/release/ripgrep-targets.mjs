@@ -19,25 +19,8 @@ function executableName(platform) {
     return platform.os === 'win32' ? 'rg.exe' : 'rg';
 }
 
-function uniqueNativePlatforms(targets) {
-    const byDirectory = new Map();
-
-    targets.forEach((target) => {
-        if (!ripgrepTargetPlatforms.has(target)) {
-            throw new Error(`Unsupported ripgrep target "${target}".`);
-        }
-
-        const platform = ripgrepTargetPlatforms.get(target);
-        if (platform !== undefined) {
-            byDirectory.set(platformDirectory(platform), platform);
-        }
-    });
-    return Array.from(byDirectory.values());
-}
-
 export {
     executableName,
     platformDirectory,
-    ripgrepTargetPlatforms,
-    uniqueNativePlatforms
+    ripgrepTargetPlatforms
 };

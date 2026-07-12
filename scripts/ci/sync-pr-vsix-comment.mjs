@@ -391,27 +391,27 @@ function renderReadyComment({ repository, run, artifact, targets }) {
         throw new PrVsixInvariantError('targets: expected a non-empty target list');
     }
 
-    const desktopTargets = targets.filter((target) => target !== 'web');
     return [
         renderMarker(run, artifact),
         '### PR VSIX: ready',
         '',
         `Full CI passed for [\`${run.headSha.slice(0, 12)}\`](${commitUrl(repository, run.headSha)}).`,
         '',
-        `[Download the cross-platform VSIX](${artifactUrl(repository, run.id, artifact.id)})`,
+        `[Download all ${targets.length} platform-specific VSIX files](${artifactUrl(repository, run.id, artifact.id)})`,
         '',
         '**Security:** This VSIX contains unreviewed code from this pull request. Use an isolated VS Code profile and a disposable test workspace without production credentials.',
         '',
-        `Desktop targets: ${desktopTargets.map((target) => `\`${target}\``).join(', ')}`,
+        `Bundle targets: ${targets.map((target) => `\`${target}\``).join(', ')}`,
         '',
         `Artifact digest: \`${artifact.digest}\`  `,
         `Expires: \`${artifact.expires_at}\``,
         '',
         'Installation:',
-        '1. Download the `.vsix` file while signed in to GitHub.',
-        '2. Run `Profiles: Create a Temporary Profile` from the VS Code Command Palette.',
-        '3. Open a disposable test workspace without production credentials.',
-        '4. Run `Extensions: Install from VSIX...` from the Command Palette.',
+        '1. Download and extract the artifact while signed in to GitHub.',
+        '2. Select the `.vsix` whose target suffix matches the test platform.',
+        '3. Run `Profiles: Create a Temporary Profile` from the VS Code Command Palette.',
+        '4. Open a disposable test workspace without production credentials.',
+        '5. Run `Extensions: Install from VSIX...` from the Command Palette.',
         '',
         `[Workflow run](${runUrl(repository, run.id)})`
     ].join('\n');

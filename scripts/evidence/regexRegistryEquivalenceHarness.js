@@ -211,6 +211,32 @@ function readBaselineFile( baselineRef, relativePath )
     return runGit( [ 'show', baselineRef + ':' + relativePath ] );
 }
 
+function baselineFileExists( baselineRef, relativePath )
+{
+    var result = childProcess.spawnSync( 'git', [ 'cat-file', '-e', baselineRef + ':' + relativePath ], {
+        cwd: REPO_ROOT,
+        encoding: 'utf8',
+        stdio: [ 'ignore', 'pipe', 'pipe' ]
+    } );
+
+    if( result.error )
+    {
+        throw new Error( 'baseline file lookup failed: ' + result.error.message );
+    }
+    if( result.status === 0 )
+    {
+        return true;
+    }
+    if( result.status === 128 )
+    {
+        return false;
+    }
+    throw new Error(
+        'baseline file lookup exited with status ' + result.status + ': ' +
+        String( result.stderr || '' ).trim()
+    );
+}
+
 function parseJavaScript( source, filename )
 {
     try
@@ -333,20 +359,13 @@ function collectBaselineRegexEntries( baselineRef )
 
     listBaselineFiles().forEach( function( file )
     {
-        try
+        if( baselineFileExists( baselineRef, file ) === true )
         {
             entries = entries.concat( extractRegexEntries(
                 baselineRef,
                 file,
                 readBaselineFile( baselineRef, file )
             ) );
-        }
-        catch( error )
-        {
-            if( error.message.indexOf( 'exists on disk, but not in' ) === -1 )
-            {
-                throw error;
-            }
         }
     } );
 

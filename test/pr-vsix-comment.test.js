@@ -355,7 +355,7 @@ function renderedReadyComment( module, run, item )
 
 QUnit.module( 'PR VSIX comment synchronization' );
 
-QUnit.test( 'successful current run publishes one raw VSIX link and removes duplicate namespace artifacts', async function( assert )
+QUnit.test( 'successful current run publishes one platform bundle and removes duplicate namespace artifacts', async function( assert )
 {
     var module = await modulePromise;
     var current = artifact();
@@ -373,8 +373,10 @@ QUnit.test( 'successful current run publishes one raw VSIX link and removes dupl
 
     assert.deepEqual( results, [ { pullRequestNumber: 19, applied: true, removedArtifacts: 1 } ] );
     assert.ok( body.indexOf( 'actions/runs/200/artifacts/300' ) !== -1 );
+    assert.ok( body.indexOf( 'Download all 10 platform-specific VSIX files' ) !== -1 );
     assert.ok( body.indexOf( '`win32-x64`' ) !== -1 );
-    assert.ok( body.indexOf( '`web`' ) === -1 );
+    assert.ok( body.indexOf( '`web`' ) !== -1 );
+    assert.ok( body.indexOf( 'Download and extract the artifact' ) !== -1 );
     assert.ok( body.indexOf( 'unreviewed code from this pull request' ) !== -1 );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 299 ] );
 } );
