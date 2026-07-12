@@ -481,31 +481,35 @@ QUnit.test( 'release workflows build and publish from the resolved release ref',
     assert.ok( verifyMarketplaceScript.indexOf( 'verify-vscode-marketplace.py' ) !== -1 );
 } );
 
-QUnit.test( 'trusted PR workflow builds one verified cross-platform VSIX after all gates', function( assert )
+QUnit.test( 'trusted PR workflow builds every verified platform VSIX after all gates', function( assert )
 {
     var buildWorkflow = readWorkflow( 'pr-vsix-build.yml' );
     var testIndex = buildWorkflow.indexOf( 'run: npm test' );
     var bundleIndex = buildWorkflow.indexOf( 'run: npm run vscode:prepublish' );
-    var previewIndex = buildWorkflow.indexOf( 'node scripts/release/build-vsix.mjs pr-preview' );
+    var platformBuildIndex = buildWorkflow.indexOf( 'node scripts/release/build-vsix.mjs all' );
     var verifyIndex = buildWorkflow.indexOf( 'node scripts/ci/verify-pr-vsix.mjs' );
-    var uploadIndex = buildWorkflow.indexOf( 'name: Upload PR VSIX bundle' );
+    var uploadIndex = buildWorkflow.indexOf( 'name: Upload platform VSIX bundle' );
 
     assert.ok( buildWorkflow.indexOf( 'rm -rf artifacts/vsix' ) !== -1 );
-    [ testIndex, bundleIndex, previewIndex, verifyIndex, uploadIndex ].forEach( function( index )
+    [ testIndex, bundleIndex, platformBuildIndex, verifyIndex, uploadIndex ].forEach( function( index )
     {
         assert.ok( index >= 0 );
     } );
     assert.ok( testIndex < bundleIndex );
-    assert.ok( bundleIndex < previewIndex );
-    assert.ok( previewIndex < verifyIndex );
+    assert.ok( bundleIndex < platformBuildIndex );
+    assert.ok( platformBuildIndex < verifyIndex );
     assert.ok( verifyIndex < uploadIndex );
     assert.ok( buildWorkflow.indexOf( 'name: better-todo-tree-pr-${{ steps.context.outputs.pull-request-number }}.vsix' ) !== -1 );
-    assert.ok( buildWorkflow.indexOf( 'path: artifacts/vsix/better-todo-tree-pr-${{ steps.context.outputs.pull-request-number }}.vsix' ) !== -1 );
-    assert.ok( buildWorkflow.indexOf( 'retention-days: 90' ) !== -1 );
-    assert.ok( buildWorkflow.indexOf( 'archive: false' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'path: artifacts/vsix/*.vsix' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'retention-days: 30' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'archive: true' ) !== -1 );
     assert.ok( buildWorkflow.indexOf( 'overwrite: true' ) !== -1 );
-    assert.ok( buildWorkflow.indexOf( 'compression-level:' ) === -1 );
+    assert.ok( buildWorkflow.indexOf( 'compression-level: 0' ) !== -1 );
     assert.ok( buildWorkflow.indexOf( 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a' ) !== -1 );
+    assert.equal(
+        buildWorkflow.split( 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a' ).length - 1,
+        1
+    );
     assert.ok( buildWorkflow.indexOf( 'actions/cache' ) === -1 );
     assert.ok( buildWorkflow.indexOf( 'timeout-minutes: 30' ) !== -1 );
     [
@@ -513,8 +517,8 @@ QUnit.test( 'trusted PR workflow builds one verified cross-platform VSIX after a
         'Install dependencies',
         'Run test suite',
         'Build production bundle',
-        'Build PR VSIX bundle',
-        'Upload PR VSIX bundle'
+        'Build platform VSIX bundle',
+        'Upload platform VSIX bundle'
     ].forEach( function( stepName )
     {
         assert.ok(
@@ -618,6 +622,8 @@ QUnit.test( 'privileged PR VSIX publisher executes trusted metadata code only', 
     assert.ok( refreshWorkflow.indexOf( 'actions: read' ) !== -1 );
     assert.ok( refreshWorkflow.indexOf( 'contents: write' ) !== -1 );
     assert.ok( refreshWorkflow.indexOf( 'node scripts/ci/refresh-pr-vsix.mjs' ) !== -1 );
+    assert.ok( refreshWorkflow.indexOf( 'PR_VSIX_ARTIFACT_RETENTION_DAYS: 30' ) !== -1 );
+    assert.ok( refreshWorkflow.indexOf( 'PR_VSIX_RENEWAL_DAYS: 7' ) !== -1 );
     assert.ok( refreshWorkflow.indexOf( 'timeout-minutes: 180' ) !== -1 );
     assert.ok( refreshWorkflow.indexOf( 'PR_VSIX_DISPATCH_INTERVAL_MS: 1000' ) !== -1 );
     assert.ok( refreshWorkflow.indexOf( 'PR_VSIX_REFRESH_BATCH_SIZE: 400' ) !== -1 );
@@ -641,19 +647,19 @@ QUnit.test( 'VSIX builder stages one ripgrep-universal binary for each native ta
     assert.ok( buildScript.indexOf( 'finally {\n        resetRipgrepStage();\n    }' ) !== -1 );
 } );
 
-QUnit.test( 'VSIX builder exposes an untargeted universal PR preview mode', function( assert )
+QUnit.test( 'PR VSIX builder uses the canonical release target pipeline', function( assert )
 {
     var buildScript = readRepositoryFile( path.join( 'scripts', 'release', 'build-vsix.mjs' ) );
     var targetScript = readRepositoryFile( path.join( 'scripts', 'release', 'ripgrep-targets.mjs' ) );
     var verifyScript = readRepositoryFile( path.join( 'scripts', 'ci', 'verify-pr-vsix.mjs' ) );
 
-    assert.ok( buildScript.indexOf( "const previewTarget = 'pr-preview'" ) !== -1 );
-    assert.ok( buildScript.indexOf( 'stageRipgrepForPreview(selectedTargets)' ) !== -1 );
-    assert.ok( buildScript.indexOf( 'await packageTarget(undefined, outputPath)' ) !== -1 );
-    assert.ok( buildScript.indexOf( 'PR_VSIX_FILENAME' ) !== -1 );
-    assert.ok( targetScript.indexOf( 'function uniqueNativePlatforms' ) !== -1 );
+    assert.ok( buildScript.indexOf( 'pr-preview' ) === -1 );
+    assert.ok( buildScript.indexOf( 'PR_VSIX_FILENAME' ) === -1 );
+    assert.ok( buildScript.indexOf( 'await packageTarget(target, outputPath)' ) !== -1 );
+    assert.ok( targetScript.indexOf( 'function uniqueNativePlatforms' ) === -1 );
+    assert.ok( verifyScript.indexOf( 'verifyPrVsixBundle' ) !== -1 );
     assert.ok( verifyScript.indexOf( 'TargetPlatform=' ) !== -1 );
-    assert.ok( verifyScript.indexOf( "runUnzip(['-tqq', resolvedPath])" ) !== -1 );
+    assert.ok( verifyScript.indexOf( "runUnzip(['-tqq', vsixPath])" ) !== -1 );
 } );
 
 QUnit.test( 'VSIX builder removes stale selected target outputs before packing', function( assert )

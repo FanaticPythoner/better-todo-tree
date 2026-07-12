@@ -7,8 +7,7 @@ import { binPathFor } from '@vscode/ripgrep-universal';
 import {
     executableName as ripgrepExecutableName,
     platformDirectory as ripgrepPlatformDirectory,
-    ripgrepTargetPlatforms,
-    uniqueNativePlatforms
+    ripgrepTargetPlatforms
 } from './ripgrep-targets.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -21,7 +20,6 @@ const targetsPath = path.join(__dirname, 'targets.json');
 const defaultOutputDirectory = path.join(repoRoot, 'artifacts', 'vsix');
 const ripgrepPackageRoot = path.join(repoRoot, 'node_modules', '@vscode', 'ripgrep-universal');
 const ripgrepStageRoot = path.join(repoRoot, 'dist', 'ripgrep');
-const previewTarget = 'pr-preview';
 
 function readJson(filePath) {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -166,20 +164,6 @@ function stageRipgrepForTarget(target) {
     });
 }
 
-function stageRipgrepForPreview(targets) {
-    const packageJson = readJson(path.join(ripgrepPackageRoot, 'package.json'));
-
-    resetRipgrepStage();
-    const platforms = uniqueNativePlatforms(targets).map(copyRipgrepPlatform);
-    copyRipgrepMetadata();
-    writeRipgrepManifest({
-        package: '@vscode/ripgrep-universal',
-        version: packageJson.version,
-        target: previewTarget,
-        platforms: platforms
-    });
-}
-
 async function packageTarget(target, outputPath) {
     const options = {
         cwd: repoRoot,
@@ -200,40 +184,20 @@ async function main() {
     const packageJson = readJson(packageJsonPath);
     const supportedTargets = readJson(targetsPath);
     const outputDirectory = process.env.VSIX_OUTDIR ? path.resolve(repoRoot, process.env.VSIX_OUTDIR) : defaultOutputDirectory;
-    const requested = process.argv.slice(2).flatMap((value) => value.split(','))
-        .map((value) => value.trim().replace(/^--/, ''))
-        .filter(Boolean);
-    const previewRequested = requested.includes(previewTarget);
-    if (previewRequested && (requested.length !== 1 || requested[0] !== previewTarget)) {
-        throw new Error(`${previewTarget} cannot be combined with release targets.`);
-    }
-    const selectedTargets = previewRequested ? supportedTargets : normalizeRequestedTargets(requested, supportedTargets);
+    const selectedTargets = normalizeRequestedTargets(process.argv.slice(2), supportedTargets);
 
     ensureOutputDirectory(outputDirectory);
-    if (!previewRequested) {
-        cleanSelectedTargetOutputs(outputDirectory, packageJson.name, selectedTargets);
-    }
+    cleanSelectedTargetOutputs(outputDirectory, packageJson.name, selectedTargets);
 
     try {
         if (process.env.SKIP_PREPUBLISH !== '1') {
             run('npm', ['run', 'vscode:prepublish']);
         }
 
-        if (previewRequested) {
-            const fileName = process.env.PR_VSIX_FILENAME || `${packageJson.name}-${packageJson.version}-${previewTarget}.vsix`;
-            if (path.basename(fileName) !== fileName || !/^[A-Za-z0-9._-]+\.vsix$/.test(fileName)) {
-                throw new Error('PR_VSIX_FILENAME must be a portable VSIX basename.');
-            }
-            const outputPath = path.join(outputDirectory, fileName);
-            fs.rmSync(outputPath, { force: true });
-            stageRipgrepForPreview(selectedTargets);
-            await packageTarget(undefined, outputPath);
-        } else {
-            for (const target of selectedTargets) {
-                stageRipgrepForTarget(target);
-                const outputPath = path.join(outputDirectory, `${packageJson.name}-${packageJson.version}-${target}.vsix`);
-                await packageTarget(target, outputPath);
-            }
+        for (const target of selectedTargets) {
+            stageRipgrepForTarget(target);
+            const outputPath = path.join(outputDirectory, `${packageJson.name}-${packageJson.version}-${target}.vsix`);
+            await packageTarget(target, outputPath);
         }
     } finally {
         resetRipgrepStage();

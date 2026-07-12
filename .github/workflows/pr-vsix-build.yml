@@ -63,22 +63,21 @@ jobs:
         if: steps.context.outputs.build == 'true'
         run: npm run vscode:prepublish
 
-      - name: Build PR VSIX bundle
+      - name: Build platform VSIX bundle
         if: steps.context.outputs.build == 'true'
-        env:
-          PR_VSIX_FILENAME: better-todo-tree-pr-${{ steps.context.outputs.pull-request-number }}.vsix
         run: |
           rm -rf artifacts/vsix
-          SKIP_PREPUBLISH=1 node scripts/release/build-vsix.mjs pr-preview
-          node scripts/ci/verify-pr-vsix.mjs "artifacts/vsix/$PR_VSIX_FILENAME"
+          SKIP_PREPUBLISH=1 node scripts/release/build-vsix.mjs all
+          node scripts/ci/verify-pr-vsix.mjs artifacts/vsix
 
-      - name: Upload PR VSIX bundle
+      - name: Upload platform VSIX bundle
         if: steps.context.outputs.build == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: better-todo-tree-pr-${{ steps.context.outputs.pull-request-number }}.vsix
-          path: artifacts/vsix/better-todo-tree-pr-${{ steps.context.outputs.pull-request-number }}.vsix
+          path: artifacts/vsix/*.vsix
           if-no-files-found: error
-          retention-days: 90
-          archive: false
+          retention-days: 30
+          compression-level: 0
+          archive: true
           overwrite: true
