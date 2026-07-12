@@ -2,6 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { monitorWorkflow, requireMonitorOptions } from './pr-vsix-monitor.mjs';
+import { renderProgressTable, workflowProgress } from './pr-vsix-progress.mjs';
+
 const API_VERSION = '2026-03-10';
 const BOT_LOGIN = 'github-actions[bot]';
 const COMMENT_MARKER = '<!-- better-todo-tree-pr-vsix';
@@ -614,14 +617,64 @@ async function publishSynchronizationFailure({ api, repository, run, error, reta
     throw error;
 }
 
-function renderPendingComment({ repository, run }) {
+function renderBuildIdentity({ repository, run, observedAt, workflowLabel }) {
+    const observed = observedAt || run.updatedAt || run.startedAt;
+    timestamp(observed, 'progress observation time');
+    return [
+        `| Source | [\`${run.headSha.slice(0, 12)}\`](${commitUrl(repository, run.headSha)}) |`,
+        `| Merge | \`${run.mergeSha}\` |`,
+        `| ${workflowLabel} | [Run ${run.id}](${runUrl(repository, run.id)}) |`,
+        `| Started | \`${run.startedAt}\` |`,
+        `| Last observed | \`${observed}\` |`
+    ];
+}
+
+function renderPendingComment({ repository, run, observedAt }) {
+    const lifecycle = run.source === 'lifecycle';
     return [
         renderMarker(run),
-        '### PR VSIX: building',
+        lifecycle ? '### PR VSIX: queued' : '### PR VSIX: starting',
         '',
-        `CI is testing [\`${run.headSha.slice(0, 12)}\`](${commitUrl(repository, run.headSha)}).`,
+        lifecycle ? '**Current stage:** Immutable merge verified. Waiting for build workflow.' :
+            '**Current stage:** Build workflow started. Waiting for live job state.',
         '',
-        'The download link remains withheld until every test, bundle, package, and archive check passes.'
+        '| Field | Value |',
+        '| --- | --- |',
+        ...renderBuildIdentity({
+            repository,
+            run,
+            observedAt,
+            workflowLabel: lifecycle ? 'Orchestration' : 'Build workflow'
+        }),
+        '',
+        '| Gate | State |',
+        '| --- | --- |',
+        '| Build workflow | **WAITING** |',
+        '',
+        'Artifact link withheld until test, bundle, package, upload, and archive gates pass.'
+    ].join('\n');
+}
+
+function renderBuildProgressComment({ repository, run, jobs, observedAt }) {
+    const progress = workflowProgress(jobs);
+    return [
+        renderMarker(run),
+        run.status === 'in_progress' ? '### PR VSIX: running' : '### PR VSIX: queued',
+        '',
+        `**Current stage:** ${progress.stage}`,
+        '',
+        '| Field | Value |',
+        '| --- | --- |',
+        ...renderBuildIdentity({
+            repository,
+            run,
+            observedAt,
+            workflowLabel: 'Build workflow'
+        }),
+        '',
+        renderProgressTable(progress),
+        '',
+        'Artifact link withheld until every displayed gate reaches a terminal passing state.'
     ].join('\n');
 }
 
@@ -633,7 +686,9 @@ function renderTransitionComment({ repository, run }) {
         '',
         `Full CI passed for [\`${run.headSha.slice(0, 12)}\`](${commitUrl(repository, run.headSha)}).`,
         '',
-        'The verified download link is being synchronized.'
+        `**Current stage:** Verifying artifact metadata and publishing download link.`,
+        '',
+        `[Open completed build workflow](${runUrl(repository, run.id)})`
     ].join('\n');
 }
 
@@ -698,6 +753,14 @@ function apiRetryFromEnvironment(environment = process.env) {
         attempts: environment.PR_VSIX_API_RETRY_ATTEMPTS,
         baseDelayMs: environment.PR_VSIX_API_RETRY_BASE_MS,
         maxDelayMs: environment.PR_VSIX_API_RETRY_MAX_MS
+    });
+}
+
+function monitorOptionsFromEnvironment(environment = process.env) {
+    return requireMonitorOptions({
+        pollIntervalMs: environment.PR_VSIX_MONITOR_POLL_MS,
+        heartbeatMs: environment.PR_VSIX_MONITOR_HEARTBEAT_MS,
+        timeoutMs: environment.PR_VSIX_MONITOR_TIMEOUT_MS
     });
 }
 
@@ -891,6 +954,9 @@ function createGitHubApi({
         listRunArtifacts(runId) {
             return listPaginated(`${repositoryPath}/actions/runs/${requireInteger(runId, 'workflow run id')}/artifacts`, 'artifacts');
         },
+        listWorkflowRunJobs(runId) {
+            return listPaginated(`${repositoryPath}/actions/runs/${requireInteger(runId, 'workflow run id')}/jobs`, 'jobs');
+        },
         listWorkflowRuns(workflow, filters) {
             return listPaginated(
                 `${repositoryPath}/actions/workflows/${requireWorkflowSelector(workflow)}/runs${workflowRunQuery(filters)}`,
@@ -1048,7 +1114,7 @@ function ciRunFromRaw(rawRun) {
     if (!context || !CI_ACTIONS.has(context.action)) {
         return undefined;
     }
-    return Object.freeze({ ...workflowRun, ...context, source: 'ci' });
+    return Object.freeze({ ...workflowRun, ...context, source: 'ci', rawRun });
 }
 
 async function associatedPullRequest(api, workflowRun, repository, mergeRetry, options = {}) {
@@ -1102,6 +1168,123 @@ async function latestCiRun(api, workflow, pullRequest, repository, options = {})
     return matching.reduce((candidate, run) =>
         !candidate || compareSequence(run, candidate) > 0 ? run : candidate
     , undefined);
+}
+
+async function monitorLifecycleBuild({
+    api,
+    repository,
+    lifecycleRun,
+    targets,
+    mergeRetry,
+    monitorOptions
+}) {
+    const normalizedLifecycleRun = requireWorkflowRun(lifecycleRun);
+    const lifecycleContext = parseLifecycleRunName(normalizedLifecycleRun.displayTitle);
+    if (!lifecycleContext) {
+        throw new PrVsixInvariantError('lifecycle workflow run: expected a canonical PR identity');
+    }
+    const pullRequestNumber = lifecycleContext.pullRequestNumber;
+    const pullRequest = await api.getPullRequest(pullRequestNumber);
+    if (pullRequest.state !== 'open' || !automaticBuildAllowed(pullRequest) ||
+        !pullRequest.base || !pullRequest.base.repo || pullRequest.base.repo.full_name !== repository) {
+        return [];
+    }
+    const comments = await api.listIssueComments(pullRequestNumber);
+    const currentContext = pullRequestContext(pullRequest);
+    const pending = comments.filter((comment) => comment && comment.user && comment.user.login === BOT_LOGIN)
+        .map((comment) => parseCommentMetadata(comment.body))
+        .filter((metadata) => metadata && metadata.phase === 'pending' && metadata.mergeSha !== 'none' &&
+            metadata.headSha === currentContext.headSha && metadata.baseSha === currentContext.baseSha)
+        .sort((left, right) => compareCommentState(right, left))[0];
+    if (!pending) {
+        return [];
+    }
+    const stable = await waitForStablePullRequest({
+        api,
+        pullRequestNumber,
+        expectedHeadSha: pending.headSha,
+        expectedBaseSha: pending.baseSha,
+        retry: mergeRetry
+    });
+    if (!stable.buildable || stable.context.mergeSha !== pending.mergeSha) {
+        return [];
+    }
+
+    const queuedRun = Object.freeze({
+        ...normalizedLifecycleRun,
+        pullRequestNumber,
+        headSha: pending.headSha,
+        baseSha: pending.baseSha,
+        mergeSha: pending.mergeSha,
+        action: pending.action,
+        source: 'lifecycle',
+        phase: 'pending'
+    });
+    let observedRun;
+    try {
+        return await monitorWorkflow({
+            options: monitorOptions,
+            findRun: () => latestCiRun(
+                api,
+                'pr-vsix-build.yml',
+                stable.pullRequest,
+                repository,
+                {
+                    actions: new Set([pending.action]),
+                    createdAfter: queuedRun.createdAt,
+                    expectedMergeSha: pending.mergeSha
+                }
+            ),
+            readJobs: (run) => api.listWorkflowRunJobs(run.id),
+            onWaiting: async (observedAt) => upsertComment(
+                api,
+                pullRequestNumber,
+                renderPendingComment({ repository, run: queuedRun, observedAt }),
+                queuedRun
+            ),
+            onProgress: async (run, jobs, observedAt) => {
+                observedRun = run;
+                const progressRun = Object.freeze({ ...run, phase: 'pending' });
+                return upsertComment(
+                    api,
+                    pullRequestNumber,
+                    renderBuildProgressComment({ repository, run: progressRun, jobs, observedAt }),
+                    progressRun
+                );
+            },
+            onCompleted: async (run) => {
+                observedRun = run;
+                return synchronizeWorkflowRun({
+                    api,
+                    repository,
+                    run: run.rawRun,
+                    targets,
+                    mergeRetry
+                });
+            }
+        });
+    } catch (error) {
+        const failureRun = Object.freeze({
+            ...(observedRun || queuedRun),
+            phase: 'blocked',
+            failureState: true
+        });
+        try {
+            await upsertComment(
+                api,
+                pullRequestNumber,
+                renderUnavailableComment({
+                    repository,
+                    run: failureRun,
+                    reason: `Progress monitor stopped: ${error.message || String(error)}`
+                }),
+                failureRun
+            );
+        } catch (commentError) {
+            throw new AggregateError([error, commentError], 'PR VSIX monitor and comment reconciliation failed');
+        }
+        throw error;
+    }
 }
 
 async function upsertComment(
@@ -1276,10 +1459,7 @@ async function removeRunArtifacts(api, artifacts, run, pullRequestNumber) {
     return removals.length;
 }
 
-async function removeCompletedRunArtifacts(api, run, action) {
-    if (action !== 'completed') {
-        return 0;
-    }
+async function removeCompletedRunArtifacts(api, run) {
     const artifacts = await api.listRunArtifacts(run.id);
     return removeRunArtifacts(api, artifacts, run, run.pullRequestNumber);
 }
@@ -1330,7 +1510,7 @@ async function synchronizeCompletedRun({ api, repository, run, pullRequest, arti
     });
 }
 
-async function synchronizeWorkflowRun({ api, repository, run, targets, action, mergeRetry }) {
+async function synchronizeWorkflowRun({ api, repository, run, targets, mergeRetry }) {
     const identity = classifyWorkflowRun(run);
     if (identity.source !== 'ci') {
         throw new PrVsixInvariantError('PR VSIX build workflow run: unexpected workflow identity');
@@ -1342,8 +1522,7 @@ async function synchronizeWorkflowRun({ api, repository, run, targets, action, m
     }
     const workflowRun = Object.freeze({ ...rawRun, ...context, source: 'ci' });
     const renewal = workflowRun.action === 'renewal';
-    const preservesRenewal = renewal &&
-        (action === 'in_progress' || action === 'completed' && workflowRun.conclusion !== 'success');
+    const preservesRenewal = renewal && workflowRun.conclusion !== 'success';
     let pullRequest;
     try {
         pullRequest = await associatedPullRequest(
@@ -1358,7 +1537,7 @@ async function synchronizeWorkflowRun({ api, repository, run, targets, action, m
         );
     } catch (error) {
         if (error && error.code === ERROR_CODE_CONTEXT_CHANGED) {
-            await removeCompletedRunArtifacts(api, workflowRun, action);
+            await removeCompletedRunArtifacts(api, workflowRun);
             return [];
         }
         if (renewal && (!error || error.code !== ERROR_CODE_MERGE_CHANGED)) {
@@ -1370,18 +1549,15 @@ async function synchronizeWorkflowRun({ api, repository, run, targets, action, m
             run: workflowRun,
             error,
             retainedRun: error && error.code === ERROR_CODE_MERGE_CHANGED ? undefined : workflowRun,
-            onStale: () => removeCompletedRunArtifacts(api, workflowRun, action),
+            onStale: () => removeCompletedRunArtifacts(api, workflowRun),
             mergeRetry
         });
     }
     if (!pullRequest) {
-        await removeCompletedRunArtifacts(api, workflowRun, action);
+        await removeCompletedRunArtifacts(api, workflowRun);
         return [];
     }
 
-    if (!['in_progress', 'completed'].includes(action)) {
-        throw new PrVsixInvariantError(`PR VSIX build workflow action: unsupported ${action}`);
-    }
     const currentContext = pullRequestContext(pullRequest);
     if (pullRequest.state === 'closed') {
         const closedRun = Object.freeze({ ...workflowRun, ...currentContext, phase: 'closed' });
@@ -1418,11 +1594,7 @@ async function synchronizeWorkflowRun({ api, repository, run, targets, action, m
             run: blockedRun
         })];
     }
-    if (workflowRun.action === 'renewal' && action === 'in_progress') {
-        return [];
-    }
-
-    const artifacts = action === 'completed' ? await api.listRunArtifacts(workflowRun.id) : [];
+    const artifacts = await api.listRunArtifacts(workflowRun.id);
 
     const latest = await latestCiRun(
         api,
@@ -1438,31 +1610,13 @@ async function synchronizeWorkflowRun({ api, repository, run, targets, action, m
     const currentGeneration = latest && latest.id === workflowRun.id &&
         latest.runAttempt === workflowRun.runAttempt;
     if (!currentGeneration) {
-        if (action === 'completed') {
-            await removeRunArtifacts(api, artifacts, workflowRun, pullRequest.number);
-        }
-        return [];
-    }
-
-    if (workflowRun.action === 'renewal' &&
-        action === 'completed' && workflowRun.conclusion !== 'success') {
         await removeRunArtifacts(api, artifacts, workflowRun, pullRequest.number);
         return [];
     }
-    if (action === 'in_progress') {
-        const pendingRun = Object.freeze({ ...workflowRun, phase: 'pending' });
-        const comment = await upsertComment(
-            api,
-            pullRequest.number,
-            renderPendingComment({ repository, run: pendingRun }),
-            pendingRun,
-            () => removePreviewArtifacts(api, pullRequest.number, undefined, workflowRun)
-        );
-        return [Object.freeze({
-            pullRequestNumber: pullRequest.number,
-            applied: comment.applied,
-            removedArtifacts: comment.removedArtifacts
-        })];
+
+    if (workflowRun.action === 'renewal' && workflowRun.conclusion !== 'success') {
+        await removeRunArtifacts(api, artifacts, workflowRun, pullRequest.number);
+        return [];
     }
     const completedRun = Object.freeze({ ...workflowRun, phase: 'completed' });
     return [await synchronizeCompletedRun({
@@ -1712,20 +1866,33 @@ async function main() {
         attempts: Number(process.env.PR_VSIX_MERGE_ATTEMPTS),
         intervalMs: Number(process.env.PR_VSIX_MERGE_INTERVAL_MS)
     });
-    const results = identity.source === 'ci' ? await synchronizeWorkflowRun({
-        api,
-        repository,
-        run: event.workflow_run,
-        targets,
-        action: event.action,
-        mergeRetry
-    }) : await synchronizeLifecycleRun({
+    if (identity.source === 'ci') {
+        const results = await synchronizeWorkflowRun({
+            api,
+            repository,
+            run: event.workflow_run,
+            targets,
+            mergeRetry
+        });
+        process.stdout.write(`${JSON.stringify({ synchronized: results.length, results })}\n`);
+        return;
+    }
+    const lifecycleResults = await synchronizeLifecycleRun({
         api,
         repository,
         run: event.workflow_run,
         targets,
         mergeRetry
     });
+    const monitorResults = await monitorLifecycleBuild({
+        api,
+        repository,
+        lifecycleRun: event.workflow_run,
+        targets,
+        mergeRetry,
+        monitorOptions: monitorOptionsFromEnvironment()
+    });
+    const results = [...lifecycleResults, ...monitorResults];
     process.stdout.write(`${JSON.stringify({ synchronized: results.length, results })}\n`);
 }
 
@@ -1744,11 +1911,14 @@ export {
     automaticBuildAllowed,
     compareSequence,
     createGitHubApi,
+    monitorLifecycleBuild,
+    monitorOptionsFromEnvironment,
     parseCiRunName,
     parseCommentMetadata,
     previewArtifactName,
     pullRequestContext,
     renderClosedComment,
+    renderBuildProgressComment,
     renderPendingComment,
     renderReadyComment,
     renderUnavailableComment,

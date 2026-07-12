@@ -568,7 +568,8 @@ QUnit.test( 'privileged PR VSIX publisher executes trusted metadata code only', 
     assert.ok( workflow.indexOf( 'pull_request_target:' ) === -1 );
     assert.ok( workflow.indexOf( '      - PR VSIX Build' ) !== -1 );
     assert.ok( workflow.indexOf( '      - PR VSIX Event' ) !== -1 );
-    assert.ok( workflow.indexOf( '      - in_progress\n      - completed' ) !== -1 );
+    assert.ok( workflow.indexOf( '    types:\n      - completed' ) !== -1 );
+    assert.ok( workflow.indexOf( '      - in_progress' ) === -1 );
     assert.ok( workflow.indexOf( "github.event.workflow_run.event == 'repository_dispatch'" ) !== -1 );
     assert.ok( workflow.indexOf( "github.event.workflow_run.event == 'pull_request_target'" ) !== -1 );
     assert.ok( workflow.indexOf( "github.event.workflow_run.event == 'pull_request'" ) !== -1 );
@@ -588,6 +589,9 @@ QUnit.test( 'privileged PR VSIX publisher executes trusted metadata code only', 
     assert.ok( workflow.indexOf( "if: needs.resolve.outputs.processable == 'true'" ) !== -1 );
     assert.ok( workflow.indexOf( 'group: pr-vsix-comment-${{ needs.resolve.outputs.pull-request-number }}' ) !== -1 );
     assert.ok( workflow.indexOf( 'cancel-in-progress: false' ) !== -1 );
+    assert.ok( workflow.indexOf( 'PR_VSIX_MONITOR_POLL_MS: 10000' ) !== -1 );
+    assert.ok( workflow.indexOf( 'PR_VSIX_MONITOR_HEARTBEAT_MS: 60000' ) !== -1 );
+    assert.ok( workflow.indexOf( 'PR_VSIX_MONITOR_TIMEOUT_MS: 2400000' ) !== -1 );
     assert.ok( workflow.indexOf( 'timeout-minutes: 75' ) !== -1 );
     assert.ok( workflow.indexOf( 'PR_VSIX_API_RETRY_ATTEMPTS: 4' ) !== -1 );
     assert.ok( workflow.indexOf( 'github.event.workflow_run.head_sha }}\n          fetch-depth' ) === -1 );

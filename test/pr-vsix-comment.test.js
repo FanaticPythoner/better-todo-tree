@@ -159,6 +159,7 @@ function apiFixture( options )
         mergeRefReads: [],
         pullRequestReads: [],
         runArtifactReads: [],
+        workflowJobReads: [],
         workflowQueries: [],
         order: []
     };
@@ -229,12 +230,21 @@ function apiFixture( options )
             {
                 throw settings.workflowRunsError;
             }
-            return ( settings.workflowRuns || [ activeRun ] ).filter( function( item )
+            var runs = Array.isArray( settings.workflowRunResponses ) ? settings.workflowRunResponses[ Math.min(
+                calls.workflowQueries.length - 1,
+                settings.workflowRunResponses.length - 1
+            ) ] : settings.workflowRuns || [ activeRun ];
+            return runs.filter( function( item )
             {
                 return ( !filters || !filters.createdAfter ||
                     Date.parse( item.created_at ) >= Date.parse( filters.createdAfter ) ) &&
                     ( !filters || !filters.headSha || item.head_sha === filters.headSha );
             } );
+        },
+        listWorkflowRunJobs: async function( runId )
+        {
+            calls.workflowJobReads.push( runId );
+            return settings.workflowJobs || [];
         },
         listArtifactsByName: async function( name )
         {
@@ -293,7 +303,7 @@ function apiFixture( options )
     };
 }
 
-function synchronize( module, fixture, run, action, mergeRetry )
+function synchronize( module, fixture, run, mergeRetry )
 {
     fixture.setActiveRun( run );
     return module.synchronizeWorkflowRun( {
@@ -301,7 +311,6 @@ function synchronize( module, fixture, run, action, mergeRetry )
         repository: REPOSITORY,
         run: run,
         targets: TARGETS,
-        action: action || 'completed',
         mergeRetry: mergeRetry || { attempts: 1, intervalMs: 0 }
     } );
 }
@@ -520,66 +529,6 @@ QUnit.test( 'non-dispatch build workflow identity fails closed', async function(
     } );
 } );
 
-QUnit.test( 'new same-context CI generation replaces completed state immediately', async function( assert )
-{
-    var module = await modulePromise;
-    var oldRun = workflowRun( {
-        id: 199,
-        run_number: 19,
-        created_at: '2026-07-11T09:50:00Z',
-        run_started_at: '2026-07-11T09:50:00Z',
-        updated_at: '2026-07-11T09:56:00Z'
-    } );
-    var oldArtifact = artifact( {
-        id: 299,
-        created_at: '2026-07-11T09:55:00Z',
-        workflow_run: { id: 199, head_sha: SHA_B }
-    } );
-    var currentRun = workflowRun( {
-        id: 202,
-        run_number: 22,
-        status: 'in_progress',
-        conclusion: null,
-        created_at: '2026-07-11T10:10:00Z',
-        run_started_at: '2026-07-11T10:10:00Z',
-        updated_at: '2026-07-11T10:10:00Z'
-    } );
-    var fixture = apiFixture( {
-        comments: [ {
-            id: 401,
-            body: renderedReadyComment( module, oldRun, oldArtifact ),
-            user: { login: 'github-actions[bot]' }
-        } ],
-        repositoryArtifacts: [ oldArtifact ]
-    } );
-
-    assert.deepEqual( await synchronize( module, fixture, currentRun, 'in_progress' ), [
-        { pullRequestNumber: 19, applied: true, removedArtifacts: 1 }
-    ] );
-    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: building' ) !== -1 );
-    assert.deepEqual( fixture.calls.deletedArtifacts, [ 299 ] );
-} );
-
-QUnit.test( 'completed state blocks a delayed pending callback from the same generation', async function( assert )
-{
-    var module = await modulePromise;
-    var run = workflowRun( { status: 'in_progress', conclusion: null } );
-    var current = artifact();
-    var fixture = apiFixture( {
-        comments: [ {
-            id: 401,
-            body: renderedReadyComment( module, workflowRun(), current ),
-            user: { login: 'github-actions[bot]' }
-        } ],
-        repositoryArtifacts: [ current ]
-    } );
-
-    assert.deepEqual( await synchronize( module, fixture, run, 'in_progress' ), [
-        { pullRequestNumber: 19, applied: false, removedArtifacts: 0 }
-    ] );
-    assert.deepEqual( fixture.calls.deletedArtifacts, [] );
-} );
-
 QUnit.test( 'completed cleanup preserves an artifact from a concurrently newer generation', async function( assert )
 {
     var module = await modulePromise;
@@ -636,7 +585,6 @@ QUnit.test( 'superseded rerun attempt deletes its exact attempt artifact', async
         repository: REPOSITORY,
         run: oldRun,
         targets: TARGETS,
-        action: 'completed',
         mergeRetry: { attempts: 1, intervalMs: 0 }
     } ), [] );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
@@ -663,7 +611,6 @@ QUnit.test( 'superseded attempt callback cannot delete the newer attempt artifac
         repository: REPOSITORY,
         run: oldRun,
         targets: TARGETS,
-        action: 'completed',
         mergeRetry: { attempts: 1, intervalMs: 0 }
     } ), [] );
     assert.deepEqual( fixture.calls.deletedArtifacts, [] );
@@ -692,7 +639,6 @@ QUnit.test( 'superseded same-SHA workflow generation deletes its artifact', asyn
         repository: REPOSITORY,
         run: oldRun,
         targets: TARGETS,
-        action: 'completed',
         mergeRetry: { attempts: 1, intervalMs: 0 }
     } ), [] );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
@@ -730,7 +676,6 @@ QUnit.test( 'repository dispatch callback retries a transient missing merge ref'
         module,
         fixture,
         workflowRun(),
-        'completed',
         { attempts: 2, intervalMs: 0 }
     ) )[ 0 ].applied, true );
     assert.deepEqual( fixture.calls.mergeRefReads, [ 19, 19 ] );
@@ -823,7 +768,7 @@ QUnit.test( 'delayed callback failure preserves a newer ready rerun', async func
     assert.deepEqual( fixture.calls.deletedArtifacts, [] );
 } );
 
-QUnit.test( 'terminal callback failure blocks a delayed pending callback', async function( assert )
+QUnit.test( 'terminal callback failure publishes unavailable state', async function( assert )
 {
     var module = await modulePromise;
     var run = workflowRun();
@@ -837,17 +782,7 @@ QUnit.test( 'terminal callback failure blocks a delayed pending callback', async
     var unavailableBody = fixture.calls.createdComments[ 0 ].body;
     assert.ok( unavailableBody.indexOf( 'PR VSIX: unavailable' ) !== -1 );
 
-    fixture.settings.comments = [ {
-        id: 401,
-        body: unavailableBody,
-        user: { login: 'github-actions[bot]' }
-    } ];
-    fixture.settings.mergeRefSha = SHA_C;
-    run.status = 'in_progress';
-    run.conclusion = null;
-    assert.equal( ( await synchronize( module, fixture, run, 'in_progress' ) )[ 0 ].applied, false );
     assert.deepEqual( fixture.calls.updatedComments, [] );
-    assert.equal( fixture.settings.comments[ 0 ].body, unavailableBody );
 } );
 
 QUnit.test( 'repository dispatch callback rejects a rotated merge ref', async function( assert )
@@ -1367,14 +1302,14 @@ QUnit.test( 'metadata-only CI edit is ignored without artifact mutation', async 
     assert.deepEqual( fixture.calls.deletedArtifacts, [] );
 } );
 
-QUnit.test( 'renewal preserves the valid artifact through pending and failed builds', async function( assert )
+QUnit.test( 'failed renewal preserves the valid artifact', async function( assert )
 {
     var module = await modulePromise;
     var current = artifact();
     var run = workflowRun( {
         display_title: ciTitle( { action: 'renewal' } ),
-        status: 'in_progress',
-        conclusion: null
+        status: 'completed',
+        conclusion: 'failure'
     } );
     var fixture = apiFixture( {
         repositoryArtifacts: [ current ],
@@ -1385,54 +1320,16 @@ QUnit.test( 'renewal preserves the valid artifact through pending and failed bui
         } ]
     } );
 
-    assert.deepEqual( await synchronize( module, fixture, run, 'in_progress' ), [] );
-    run.status = 'completed';
-    run.conclusion = 'failure';
     fixture.setActiveRun( run );
     assert.deepEqual( await module.synchronizeWorkflowRun( {
         api: fixture.api,
         repository: REPOSITORY,
         run: run,
         targets: TARGETS,
-        action: 'completed',
         mergeRetry: { attempts: 1, intervalMs: 0 }
     } ), [] );
     assert.deepEqual( fixture.calls.updatedComments, [] );
     assert.deepEqual( fixture.calls.deletedArtifacts, [] );
-} );
-
-QUnit.test( 'renewal association failure preserves the last verified preview', async function( assert )
-{
-    var module = await modulePromise;
-    var current = artifact();
-    var run = workflowRun( {
-        display_title: ciTitle( { action: 'renewal' } ),
-        status: 'in_progress',
-        conclusion: null
-    } );
-    var apiError = new module.PrVsixInvariantError(
-        'GitHub API GET /repos/FanaticPythoner/better-todo-tree/pulls/19: HTTP 502: upstream failure'
-    );
-    var readyBody = renderedReadyComment( module, workflowRun(), current );
-    var fixture = apiFixture( {
-        pullRequestError: apiError,
-        repositoryArtifacts: [ current ],
-        comments: [ {
-            id: 401,
-            body: readyBody,
-            user: { login: 'github-actions[bot]' }
-        } ]
-    } );
-
-    await assert.rejects( synchronize( module, fixture, run, 'in_progress' ), function( error )
-    {
-        return error === apiError;
-    } );
-    assert.deepEqual( fixture.calls.createdComments, [] );
-    assert.deepEqual( fixture.calls.updatedComments, [] );
-    assert.equal( fixture.settings.comments[ 0 ].body, readyBody );
-    assert.deepEqual( fixture.calls.deletedArtifacts, [] );
-    assert.deepEqual( fixture.calls.mergeRefReads, [] );
 } );
 
 QUnit.test( 'successful renewal association failure preserves both preview generations', async function( assert )
@@ -1848,49 +1745,7 @@ QUnit.test( 'authorization cleanup deletes artifacts after comment API failure',
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
 } );
 
-QUnit.test( 'base-push conflict invalidates the previous merge artifact', async function( assert )
-{
-    var module = await modulePromise;
-    var old = artifact( {
-        id: 299,
-        created_at: '2026-07-11T09:55:00Z',
-        workflow_run: { id: 199, head_sha: SHA_B }
-    } );
-    var oldRun = workflowRun( {
-        id: 199,
-        run_number: 19,
-        created_at: '2026-07-11T09:50:00Z',
-        run_started_at: '2026-07-11T09:50:00Z',
-        updated_at: '2026-07-11T09:56:00Z'
-    } );
-    var run = workflowRun( {
-        id: 202,
-        run_number: 22,
-        status: 'in_progress',
-        conclusion: null,
-        display_title: ciTitle( { merge: 'none', action: 'base-push' } )
-    } );
-    var fixture = apiFixture( {
-        pullRequests: [ pullRequest( {
-            mergeable: false,
-            mergeable_state: 'dirty',
-            merge_commit_sha: null
-        } ) ],
-        repositoryArtifacts: [ old ],
-        comments: [ {
-            id: 401,
-            body: renderedReadyComment( module, oldRun, old ),
-            user: { login: 'github-actions[bot]' }
-        } ]
-    } );
-
-    assert.equal( ( await synchronize( module, fixture, run, 'in_progress' ) )[ 0 ].applied, true );
-    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: building' ) !== -1 );
-    assert.deepEqual( fixture.calls.deletedArtifacts, [ 299 ] );
-    assert.deepEqual( fixture.calls.mergeRefReads, [] );
-} );
-
-QUnit.test( 'trusted lifecycle marker posts building state and removes the prior slot', async function( assert )
+QUnit.test( 'trusted lifecycle marker posts queued state and removes the prior slot', async function( assert )
 {
     var module = await modulePromise;
     var marker = lifecycleArtifact( 'synchronize' );
@@ -1904,11 +1759,139 @@ QUnit.test( 'trusted lifecycle marker posts building state and removes the prior
     assert.deepEqual( await synchronizeLifecycle( module, fixture, lifecycleRun() ), [
         { pullRequestNumber: 19, applied: true, removedArtifacts: 1 }
     ] );
-    assert.ok( fixture.calls.createdComments[ 0 ].body.indexOf( 'PR VSIX: building' ) !== -1 );
+    assert.ok( fixture.calls.createdComments[ 0 ].body.indexOf( 'PR VSIX: queued' ) !== -1 );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 299, 600 ] );
 } );
 
-QUnit.test( 'merge ref exhaustion replaces building state and retains retry identity', async function( assert )
+QUnit.test( 'lifecycle monitor finalizes a completed build without a completion callback', async function( assert )
+{
+    var module = await modulePromise;
+    var buildRun = workflowRun( {
+        created_at: '2026-07-11T10:00:03Z',
+        run_started_at: '2026-07-11T10:00:03Z'
+    } );
+    var current = artifact( { created_at: '2026-07-11T10:05:00Z' } );
+    var pendingBody = module.renderPendingComment( {
+        repository: REPOSITORY,
+        run: {
+            id: 500,
+            runAttempt: 1,
+            runNumber: 50,
+            startedAt: '2026-07-11T10:00:01Z',
+            headSha: SHA_A,
+            baseSha: SHA_B,
+            mergeSha: SHA_C,
+            pullRequestNumber: 19,
+            action: 'synchronize',
+            source: 'lifecycle',
+            phase: 'pending',
+            conclusion: 'success'
+        }
+    } );
+    var fixture = apiFixture( {
+        workflowRuns: [ buildRun ],
+        runArtifacts: [ current ],
+        repositoryArtifacts: [ current ],
+        comments: [ { id: 401, body: pendingBody, user: { login: 'github-actions[bot]' } } ]
+    } );
+
+    assert.deepEqual( await module.monitorLifecycleBuild( {
+        api: fixture.api,
+        repository: REPOSITORY,
+        lifecycleRun: lifecycleRun(),
+        targets: TARGETS,
+        mergeRetry: { attempts: 1, intervalMs: 0 },
+        monitorOptions: {
+            pollIntervalMs: 10000,
+            heartbeatMs: 60000,
+            timeoutMs: 120000,
+            now: function() { return Date.parse( '2026-07-11T10:06:01Z' ); },
+            sleep: async function() { throw new Error( 'completed build must not sleep' ); }
+        }
+    } ), [ { pullRequestNumber: 19, applied: true, removedArtifacts: 0 } ] );
+    assert.equal( fixture.calls.workflowJobReads.length, 0 );
+    assert.ok( fixture.calls.updatedComments.some( function( comment )
+    {
+        return comment.body.indexOf( 'PR VSIX: ready' ) !== -1;
+    } ) );
+} );
+
+QUnit.test( 'lifecycle monitor publishes real build steps before terminal synchronization', async function( assert )
+{
+    var module = await modulePromise;
+    var clock = Date.parse( '2026-07-11T10:00:04Z' );
+    var running = workflowRun( {
+        status: 'in_progress',
+        conclusion: null,
+        created_at: '2026-07-11T10:00:03Z',
+        run_started_at: '2026-07-11T10:00:03Z',
+        updated_at: '2026-07-11T10:00:04Z'
+    } );
+    var completed = workflowRun( {
+        created_at: '2026-07-11T10:00:03Z',
+        run_started_at: '2026-07-11T10:00:03Z'
+    } );
+    var pendingBody = module.renderPendingComment( {
+        repository: REPOSITORY,
+        run: {
+            id: 500,
+            runAttempt: 1,
+            runNumber: 50,
+            startedAt: '2026-07-11T10:00:01Z',
+            headSha: SHA_A,
+            baseSha: SHA_B,
+            mergeSha: SHA_C,
+            pullRequestNumber: 19,
+            action: 'synchronize',
+            source: 'lifecycle',
+            phase: 'pending',
+            conclusion: 'success'
+        }
+    } );
+    var fixture = apiFixture( {
+        workflowRunResponses: [ [ running ], [ completed ] ],
+        workflowJobs: [ {
+            id: 700,
+            name: 'Build and verify',
+            status: 'in_progress',
+            conclusion: null,
+            steps: [
+                { number: 1, name: 'Test extension', status: 'completed', conclusion: 'success' },
+                { number: 2, name: 'Package VSIX', status: 'in_progress', conclusion: null }
+            ]
+        } ],
+        runArtifacts: [ artifact() ],
+        repositoryArtifacts: [ artifact() ],
+        comments: [ { id: 401, body: pendingBody, user: { login: 'github-actions[bot]' } } ]
+    } );
+
+    assert.deepEqual( await module.monitorLifecycleBuild( {
+        api: fixture.api,
+        repository: REPOSITORY,
+        lifecycleRun: lifecycleRun(),
+        targets: TARGETS,
+        mergeRetry: { attempts: 1, intervalMs: 0 },
+        monitorOptions: {
+            pollIntervalMs: 10000,
+            heartbeatMs: 60000,
+            timeoutMs: 120000,
+            now: function() { return clock; },
+            sleep: async function( delay ) { clock += delay; }
+        }
+    } ), [ { pullRequestNumber: 19, applied: true, removedArtifacts: 0 } ] );
+    assert.deepEqual( fixture.calls.workflowJobReads, [ 200 ] );
+    assert.ok( fixture.calls.updatedComments.some( function( comment )
+    {
+        return comment.body.indexOf( 'PR VSIX: running' ) !== -1 &&
+            comment.body.indexOf( 'Build and verify: Package VSIX | **RUNNING**' ) !== -1;
+    } ) );
+    assert.ok( fixture.calls.updatedComments.some( function( comment )
+    {
+        return comment.body.indexOf( 'PR VSIX: ready' ) !== -1;
+    } ) );
+} );
+
+QUnit.test( 'merge ref exhaustion publishes unavailable state and retains retry identity', async function( assert )
 {
     var module = await modulePromise;
     var pendingBody = module.renderPendingComment( {
@@ -1954,7 +1937,7 @@ QUnit.test( 'merge ref exhaustion replaces building state and retains retry iden
     assert.equal( fixture.calls.updatedComments[ 0 ].id, 401 );
     assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: unavailable' ) !== -1 );
     assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'immutable merge ref' ) !== -1 );
-    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: building' ) === -1 );
+    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: queued' ) === -1 );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 299 ] );
 
     fixture.settings.mergeRefSha = SHA_C;
@@ -1968,7 +1951,7 @@ QUnit.test( 'merge ref exhaustion replaces building state and retains retry iden
         { pullRequestNumber: 19, applied: true, removedArtifacts: 0 }
     ] );
     assert.equal( fixture.calls.dispatchedEvents.length, 1 );
-    assert.ok( fixture.calls.updatedComments[ 1 ].body.indexOf( 'PR VSIX: building' ) !== -1 );
+    assert.ok( fixture.calls.updatedComments[ 1 ].body.indexOf( 'PR VSIX: queued' ) !== -1 );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 299, 600 ] );
 } );
 
@@ -2546,6 +2529,40 @@ QUnit.test( 'GitHub API adapter paginates and dispatches refresh events', async 
     assert.equal( requests[ 0 ].options.headers.Authorization, 'Bearer token' );
     assert.equal( requests[ 0 ].options.headers[ 'X-GitHub-Api-Version' ], '2026-03-10' );
     assert.equal( JSON.parse( requests[ 2 ].options.body ).event_type, 'refresh-pr-vsix' );
+} );
+
+QUnit.test( 'GitHub API adapter paginates workflow jobs with step metadata', async function( assert )
+{
+    var module = await modulePromise;
+    var requests = [];
+    var pageValues = Array.from( { length: 100 }, function( _, index )
+    {
+        return { id: index + 1, name: 'Job ' + ( index + 1 ), steps: [] };
+    } );
+    var api = module.createGitHubApi( {
+        token: 'token',
+        repository: REPOSITORY,
+        fetchImpl: async function( url )
+        {
+            var requestUrl = new URL( url );
+            requests.push( requestUrl );
+            return new Response( JSON.stringify( {
+                jobs: requestUrl.searchParams.get( 'page' ) === '1' ? pageValues : [ {
+                    id: 101,
+                    name: 'Package',
+                    steps: [ { number: 1, name: 'Pack VSIX', status: 'in_progress', conclusion: null } ]
+                } ]
+            } ), { status: 200 } );
+        }
+    } );
+
+    var jobs = await api.listWorkflowRunJobs( 200 );
+    assert.equal( jobs.length, 101 );
+    assert.equal( jobs[ 100 ].steps[ 0 ].name, 'Pack VSIX' );
+    assert.ok( requests.every( function( request )
+    {
+        return request.pathname.endsWith( '/actions/runs/200/jobs' );
+    } ) );
 } );
 
 QUnit.test( 'GitHub API adapter resolves the versioned pull request merge ref', async function( assert )
