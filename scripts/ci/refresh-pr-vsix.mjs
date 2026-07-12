@@ -37,6 +37,10 @@ function metadataMatchesContext(metadata, context) {
         metadata.mergeSha === context.mergeSha;
 }
 
+function metadataMatchesSource(metadata, context) {
+    return metadata.headSha === context.headSha && metadata.baseSha === context.baseSha;
+}
+
 function scheduledRefreshCause({ pullRequest, context, comments, artifacts, now, renewalWindowMs, pendingWindowMs }) {
     const metadata = managedMetadata(comments).find((candidate) =>
         metadataMatchesContext(candidate, context)
@@ -74,7 +78,7 @@ function scheduledRefreshCause({ pullRequest, context, comments, artifacts, now,
 }
 
 function requiresScheduledRefresh(options) {
-    return scheduledRefreshCause({ ...options, context: pullRequestContext(options.pullRequest) }) !== undefined;
+    return scheduledRefreshCause(options) !== undefined;
 }
 
 function refreshPayload(context, cause) {
@@ -207,7 +211,7 @@ function groupScheduledState(pullRequests, comments, artifacts) {
 function requiresAuthorizationRevocation({ pullRequest, comments, artifacts }) {
     const context = pullRequestContext(pullRequest);
     const metadata = managedMetadata(comments);
-    const currentBlocked = metadata.length === 1 && metadataMatchesContext(metadata[0], context) &&
+    const currentBlocked = metadata.length === 1 && metadataMatchesSource(metadata[0], context) &&
         metadata[0].phase === 'blocked';
     return !currentBlocked || artifacts.length > 0;
 }
@@ -268,21 +272,6 @@ async function refreshOpenPullRequests({
             }
             return 'unsafe';
         }
-        let cause = 'base-push';
-        if (scheduled) {
-            cause = scheduledRefreshCause({
-                pullRequest: listedPullRequest,
-                context: pullRequestContext(listedPullRequest),
-                comments,
-                artifacts,
-                now,
-                renewalWindowMs,
-                pendingWindowMs
-            });
-            if (!cause) {
-                return 'current';
-            }
-        }
         const stable = await waitForStablePullRequest({
             api,
             pullRequestNumber: listedPullRequest.number,
@@ -290,11 +279,34 @@ async function refreshOpenPullRequests({
             expectedBaseSha: listedPullRequest.base.sha,
             retry: mergeRetry
         });
+        if (stable.pullRequest.state === 'closed') {
+            await dispatchRepositoryEvent(
+                'refresh-pr-vsix',
+                refreshPayload(stable.context, 'closed-repair')
+            );
+            return 'closed-repaired';
+        }
         if (stable.pullRequest.state !== 'open') {
             return 'skipped';
         }
         if (!automaticBuildAllowed(stable.pullRequest)) {
-            return 'unsafe';
+            await dispatchRepositoryEvent(
+                'refresh-pr-vsix',
+                refreshPayload(stable.context, 'approval-revoked')
+            );
+            return 'revoked';
+        }
+        const cause = scheduled ? scheduledRefreshCause({
+            pullRequest: stable.pullRequest,
+            context: stable.context,
+            comments,
+            artifacts,
+            now,
+            renewalWindowMs,
+            pendingWindowMs
+        }) : 'base-push';
+        if (!cause) {
+            return 'current';
         }
         await dispatchRepositoryEvent('refresh-pr-vsix', refreshPayload(stable.context, cause));
         return 'dispatched';
@@ -344,7 +356,8 @@ async function refreshOpenPullRequests({
         skipped: decisions.filter((decision) => decision === 'skipped').length,
         revoked: decisions.filter((decision) => decision === 'revoked').length,
         unsafe: decisions.filter((decision) => decision === 'unsafe').length,
-        closedRepaired: closedDecisions.filter((decision) => decision === 'repaired').length,
+        closedRepaired: decisions.filter((decision) => decision === 'closed-repaired').length +
+            closedDecisions.filter((decision) => decision === 'repaired').length,
         ...(continuation ? { continuation } : {})
     });
 }

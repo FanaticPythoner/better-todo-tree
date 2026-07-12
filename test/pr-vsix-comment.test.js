@@ -13,6 +13,7 @@ var SHA_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 var SHA_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 var SHA_C = 'cccccccccccccccccccccccccccccccccccccccc';
 var SHA_D = 'dddddddddddddddddddddddddddddddddddddddd';
+var SHA_E = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 var TARGETS = require( '../scripts/release/targets.json' );
 
 function resolveWorkflowEvent( run )
@@ -81,7 +82,7 @@ function pullRequest( overrides )
         closed_at: null,
         mergeable: true,
         mergeable_state: 'clean',
-        merge_commit_sha: SHA_C,
+        merge_commit_sha: null,
         author_association: 'OWNER',
         labels: [],
         head: { sha: SHA_A, ref: 'fix/issue-19', repo: { id: 99 } },
@@ -134,7 +135,7 @@ function lifecycleArtifact( action, overrides )
     return Object.assign( {
         id: 600,
         name: 'better-todo-tree-pr-vsix-event-19-head-' + SHA_A + '-base-' + SHA_B +
-            '-merge-' + SHA_C + '-' + action + '-run-500-attempt-1',
+            '-merge-none-' + action + '-run-500-attempt-1',
         expired: false,
         size_in_bytes: 100,
         digest: 'sha256:' + 'f'.repeat( 64 ),
@@ -150,27 +151,71 @@ function apiFixture( options )
     var activeRun = workflowRun();
     var calls = {
         createdComments: [],
+        commitReads: [],
         updatedComments: [],
         deletedComments: [],
         deletedArtifacts: [],
         dispatchedEvents: [],
+        mergeRefReads: [],
+        pullRequestReads: [],
+        runArtifactReads: [],
         workflowQueries: [],
         order: []
     };
     var api = {
         getPullRequest: async function( number )
         {
+            calls.pullRequestReads.push( number );
+            if( settings.pullRequestError )
+            {
+                throw settings.pullRequestError;
+            }
+            if( Array.isArray( settings.pullRequestResponses ) )
+            {
+                var response = settings.pullRequestResponses[ Math.min(
+                    calls.pullRequestReads.length - 1,
+                    settings.pullRequestResponses.length - 1
+                ) ];
+                if( response instanceof Error )
+                {
+                    throw response;
+                }
+                return response;
+            }
             return ( settings.pullRequests || [ pullRequest() ] ).find( function( item )
             {
                 return item.number === number;
             } );
         },
-        getCommit: async function()
+        getPullRequestMergeSha: async function( number )
         {
-            return settings.mergeCommit || { sha: SHA_C, parents: [ { sha: SHA_B }, { sha: SHA_A } ] };
+            calls.mergeRefReads.push( number );
+            if( Array.isArray( settings.mergeRefShas ) )
+            {
+                return settings.mergeRefShas[ Math.min(
+                    calls.mergeRefReads.length - 1,
+                    settings.mergeRefShas.length - 1
+                ) ];
+            }
+            return Object.prototype.hasOwnProperty.call( settings, 'mergeRefSha' ) ?
+                settings.mergeRefSha : SHA_C;
+        },
+        getCommit: async function( sha )
+        {
+            calls.commitReads.push( sha );
+            if( settings.mergeCommitError )
+            {
+                throw settings.mergeCommitError;
+            }
+            return settings.mergeCommit || { sha: sha, parents: [ { sha: SHA_B }, { sha: SHA_A } ] };
         },
         listRunArtifacts: async function( runId )
         {
+            calls.runArtifactReads.push( runId );
+            if( settings.runArtifactsError )
+            {
+                throw settings.runArtifactsError;
+            }
             if( settings.runArtifactsByRun )
             {
                 return settings.runArtifactsByRun[ runId ] || [];
@@ -180,6 +225,10 @@ function apiFixture( options )
         listWorkflowRuns: async function( workflow, filters )
         {
             calls.workflowQueries.push( { workflow: workflow, filters: filters } );
+            if( settings.workflowRunsError )
+            {
+                throw settings.workflowRunsError;
+            }
             return ( settings.workflowRuns || [ activeRun ] ).filter( function( item )
             {
                 return ( !filters || !filters.createdAfter ||
@@ -217,11 +266,19 @@ function apiFixture( options )
         {
             calls.updatedComments.push( { id: id, body: body } );
             calls.order.push( 'update-comment-' + id );
+            if( settings.updateCommentError )
+            {
+                throw settings.updateCommentError;
+            }
             return { id: id };
         },
         deleteIssueComment: async function( id )
         {
             calls.deletedComments.push( id );
+            if( settings.deleteCommentError )
+            {
+                throw settings.deleteCommentError;
+            }
         },
         dispatchRepositoryEvent: async function( name, payload )
         {
@@ -236,7 +293,7 @@ function apiFixture( options )
     };
 }
 
-function synchronize( module, fixture, run, action )
+function synchronize( module, fixture, run, action, mergeRetry )
 {
     fixture.setActiveRun( run );
     return module.synchronizeWorkflowRun( {
@@ -244,7 +301,8 @@ function synchronize( module, fixture, run, action )
         repository: REPOSITORY,
         run: run,
         targets: TARGETS,
-        action: action || 'completed'
+        action: action || 'completed',
+        mergeRetry: mergeRetry || { attempts: 1, intervalMs: 0 }
     } );
 }
 
@@ -309,6 +367,24 @@ QUnit.test( 'successful current run publishes one raw VSIX link and removes dupl
     assert.ok( body.indexOf( '`win32-x64`' ) !== -1 );
     assert.ok( body.indexOf( '`web`' ) === -1 );
     assert.ok( body.indexOf( 'unreviewed code from this pull request' ) !== -1 );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 299 ] );
+} );
+
+QUnit.test( 'successful cleanup removes a late artifact from an older workflow run', async function( assert )
+{
+    var module = await modulePromise;
+    var current = artifact();
+    var lateOld = artifact( {
+        id: 299,
+        created_at: '2026-07-11T10:05:30Z',
+        workflow_run: { id: 199, head_sha: SHA_B }
+    } );
+    var fixture = apiFixture( {
+        runArtifacts: [ current ],
+        repositoryArtifacts: [ current, lateOld ]
+    } );
+
+    assert.equal( ( await synchronize( module, fixture, workflowRun() ) )[ 0 ].applied, true );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 299 ] );
 } );
 
@@ -560,7 +636,8 @@ QUnit.test( 'superseded rerun attempt deletes its exact attempt artifact', async
         repository: REPOSITORY,
         run: oldRun,
         targets: TARGETS,
-        action: 'completed'
+        action: 'completed',
+        mergeRetry: { attempts: 1, intervalMs: 0 }
     } ), [] );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
 } );
@@ -586,7 +663,8 @@ QUnit.test( 'superseded attempt callback cannot delete the newer attempt artifac
         repository: REPOSITORY,
         run: oldRun,
         targets: TARGETS,
-        action: 'completed'
+        action: 'completed',
+        mergeRetry: { attempts: 1, intervalMs: 0 }
     } ), [] );
     assert.deepEqual( fixture.calls.deletedArtifacts, [] );
 } );
@@ -614,7 +692,8 @@ QUnit.test( 'superseded same-SHA workflow generation deletes its artifact', asyn
         repository: REPOSITORY,
         run: oldRun,
         targets: TARGETS,
-        action: 'completed'
+        action: 'completed',
+        mergeRetry: { attempts: 1, intervalMs: 0 }
     } ), [] );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
 } );
@@ -633,7 +712,649 @@ QUnit.test( 'repository dispatch run validates immutable PR context', async func
     var fixture = apiFixture( { runArtifacts: [ current ], repositoryArtifacts: [ current ] } );
 
     assert.equal( ( await synchronize( module, fixture, run ) )[ 0 ].applied, true );
+    assert.deepEqual( fixture.calls.commitReads, [ SHA_C ] );
     assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: ready' ) !== -1 );
+} );
+
+QUnit.test( 'repository dispatch callback retries a transient missing merge ref', async function( assert )
+{
+    var module = await modulePromise;
+    var current = artifact( { workflow_run: { id: 200, head_sha: SHA_B } } );
+    var fixture = apiFixture( {
+        mergeRefShas: [ undefined, SHA_C ],
+        runArtifacts: [ current ],
+        repositoryArtifacts: [ current ]
+    } );
+
+    assert.equal( ( await synchronize(
+        module,
+        fixture,
+        workflowRun(),
+        'completed',
+        { attempts: 2, intervalMs: 0 }
+    ) )[ 0 ].applied, true );
+    assert.deepEqual( fixture.calls.mergeRefReads, [ 19, 19 ] );
+    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: ready' ) !== -1 );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [] );
+} );
+
+QUnit.test( 'repository dispatch ref exhaustion preserves its artifact for callback retry', async function( assert )
+{
+    var module = await modulePromise;
+    var run = workflowRun();
+    var current = artifact( { workflow_run: { id: 200, head_sha: SHA_B } } );
+    var prior = artifact( {
+        id: 299,
+        created_at: '2026-07-11T09:55:00Z',
+        workflow_run: { id: 199, head_sha: SHA_B }
+    } );
+    var fixture = apiFixture( {
+        mergeRefSha: undefined,
+        runArtifacts: [ current ],
+        repositoryArtifacts: [ current, prior ],
+        comments: [ {
+            id: 401,
+            body: module.renderPendingComment( {
+                repository: REPOSITORY,
+                run: commentRun( module, run, 'pending' )
+            } ),
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, run ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message === 'pull request 19: merge context did not stabilize';
+    } );
+    assert.equal( fixture.calls.updatedComments.length, 1 );
+    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: unavailable' ) !== -1 );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 299 ] );
+
+    fixture.settings.mergeRefSha = SHA_C;
+    fixture.settings.repositoryArtifacts = [ current ];
+    fixture.settings.comments = [ {
+        id: 401,
+        body: fixture.calls.updatedComments[ 0 ].body,
+        user: { login: 'github-actions[bot]' }
+    } ];
+    assert.equal( ( await synchronize( module, fixture, run ) )[ 0 ].applied, true );
+    assert.ok( fixture.calls.updatedComments[ fixture.calls.updatedComments.length - 1 ].body
+        .indexOf( 'PR VSIX: ready' ) !== -1 );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 299 ] );
+} );
+
+QUnit.test( 'delayed callback failure preserves a newer ready rerun', async function( assert )
+{
+    var module = await modulePromise;
+    var oldRun = workflowRun();
+    var oldArtifact = artifact();
+    var newerRun = workflowRun( {
+        run_attempt: 2,
+        run_started_at: '2026-07-11T11:00:00Z',
+        updated_at: '2026-07-11T11:06:00Z'
+    } );
+    var newerArtifact = artifact( {
+        id: 301,
+        created_at: '2026-07-11T11:05:00Z'
+    } );
+    var newerBody = renderedReadyComment( module, newerRun, newerArtifact );
+    var apiError = new module.PrVsixInvariantError(
+        'GitHub API GET /repos/FanaticPythoner/better-todo-tree/commits/' + SHA_C +
+        ': HTTP 502: upstream failure'
+    );
+    var fixture = apiFixture( {
+        mergeCommitError: apiError,
+        repositoryArtifacts: [ oldArtifact, newerArtifact ],
+        comments: [ {
+            id: 401,
+            body: newerBody,
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, oldRun ), function( error )
+    {
+        return error === apiError;
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.deepEqual( fixture.calls.updatedComments, [] );
+    assert.equal( fixture.settings.comments[ 0 ].body, newerBody );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [] );
+} );
+
+QUnit.test( 'terminal callback failure blocks a delayed pending callback', async function( assert )
+{
+    var module = await modulePromise;
+    var run = workflowRun();
+    var fixture = apiFixture( { mergeRefSha: undefined } );
+
+    await assert.rejects( synchronize( module, fixture, run ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message === 'pull request 19: merge context did not stabilize';
+    } );
+    var unavailableBody = fixture.calls.createdComments[ 0 ].body;
+    assert.ok( unavailableBody.indexOf( 'PR VSIX: unavailable' ) !== -1 );
+
+    fixture.settings.comments = [ {
+        id: 401,
+        body: unavailableBody,
+        user: { login: 'github-actions[bot]' }
+    } ];
+    fixture.settings.mergeRefSha = SHA_C;
+    run.status = 'in_progress';
+    run.conclusion = null;
+    assert.equal( ( await synchronize( module, fixture, run, 'in_progress' ) )[ 0 ].applied, false );
+    assert.deepEqual( fixture.calls.updatedComments, [] );
+    assert.equal( fixture.settings.comments[ 0 ].body, unavailableBody );
+} );
+
+QUnit.test( 'repository dispatch callback rejects a rotated merge ref', async function( assert )
+{
+    var module = await modulePromise;
+    var current = artifact( { workflow_run: { id: 200, head_sha: SHA_B } } );
+    var fixture = apiFixture( {
+        mergeRefSha: SHA_D,
+        mergeCommit: { sha: SHA_D, parents: [ { sha: SHA_B }, { sha: SHA_A } ] },
+        runArtifacts: [ current ],
+        repositoryArtifacts: [ current ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, workflowRun() ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message === 'pull request 19: merge context changed before publication';
+    } );
+    assert.equal( fixture.calls.createdComments.length, 1 );
+    assert.ok( fixture.calls.createdComments[ 0 ].body.indexOf(
+        'The pull request merge ref changed before preview publication.'
+    ) !== -1 );
+    assert.deepEqual( fixture.calls.updatedComments, [] );
+    assert.deepEqual( fixture.calls.commitReads, [ SHA_D, SHA_D ] );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
+} );
+
+QUnit.test( 'rotated merge replay removes its previously ready link before cleanup', async function( assert )
+{
+    var module = await modulePromise;
+    var run = workflowRun();
+    var current = artifact( { workflow_run: { id: 200, head_sha: SHA_B } } );
+    var fixture = apiFixture( {
+        mergeRefSha: SHA_D,
+        mergeCommit: { sha: SHA_D, parents: [ { sha: SHA_B }, { sha: SHA_A } ] },
+        runArtifacts: [ current ],
+        repositoryArtifacts: [ current ],
+        comments: [ {
+            id: 401,
+            body: renderedReadyComment( module, run, current ),
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, run ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message === 'pull request 19: merge context changed before publication';
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.equal( fixture.calls.updatedComments.length, 1 );
+    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: unavailable' ) !== -1 );
+    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( '/artifacts/' ) === -1 );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
+    assert.deepEqual( fixture.calls.order, [ 'update-comment-401', 'delete-artifact-300' ] );
+} );
+
+QUnit.test( 'rotated merge failure cannot overwrite a concurrently newer source', async function( assert )
+{
+    var module = await modulePromise;
+    var staleRun = workflowRun();
+    var staleArtifact = artifact();
+    var newerRun = workflowRun( {
+        id: 202,
+        run_number: 22,
+        created_at: '2026-07-11T10:10:00Z',
+        run_started_at: '2026-07-11T10:10:00Z',
+        updated_at: '2026-07-11T10:16:00Z',
+        display_title: ciTitle( { head: SHA_D, merge: SHA_E } )
+    } );
+    var newerArtifact = artifact( {
+        id: 301,
+        created_at: '2026-07-11T10:15:00Z',
+        workflow_run: { id: 202, head_sha: SHA_B }
+    } );
+    var newerBody = renderedReadyComment( module, newerRun, newerArtifact );
+    var fixture = apiFixture( {
+        mergeRefSha: SHA_D,
+        mergeCommit: { sha: SHA_D, parents: [ { sha: SHA_B }, { sha: SHA_A } ] },
+        pullRequestResponses: [
+            pullRequest(),
+            pullRequest(),
+            pullRequest( { head: { sha: SHA_D, ref: 'fix/issue-19', repo: { id: 99 } } } )
+        ],
+        runArtifacts: [ staleArtifact ],
+        repositoryArtifacts: [ staleArtifact, newerArtifact ],
+        comments: [ {
+            id: 401,
+            body: newerBody,
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, staleRun ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message === 'pull request 19: merge context changed before publication';
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.deepEqual( fixture.calls.updatedComments, [] );
+    assert.equal( fixture.settings.comments[ 0 ].body, newerBody );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
+} );
+
+QUnit.test( 'rotated merge failure preserves a newer same-source merge generation', async function( assert )
+{
+    var module = await modulePromise;
+    var oldRun = workflowRun( {
+        run_started_at: '2026-07-11T10:20:00Z',
+        updated_at: '2026-07-11T10:26:00Z'
+    } );
+    var oldArtifact = artifact( {
+        created_at: '2026-07-11T10:25:00Z'
+    } );
+    var newerRun = workflowRun( {
+        id: 202,
+        run_number: 21,
+        created_at: '2026-07-11T10:05:00Z',
+        run_started_at: '2026-07-11T10:10:00Z',
+        updated_at: '2026-07-11T10:16:00Z',
+        display_title: ciTitle( { merge: SHA_D } )
+    } );
+    var newerArtifact = artifact( {
+        id: 301,
+        created_at: '2026-07-11T10:15:00Z',
+        workflow_run: { id: 202, head_sha: SHA_B }
+    } );
+    var newerBody = renderedReadyComment( module, newerRun, newerArtifact );
+    var fixture = apiFixture( {
+        mergeRefSha: SHA_D,
+        mergeCommit: { sha: SHA_D, parents: [ { sha: SHA_B }, { sha: SHA_A } ] },
+        runArtifacts: [ oldArtifact ],
+        repositoryArtifacts: [ oldArtifact, newerArtifact ],
+        comments: [ {
+            id: 401,
+            body: newerBody,
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, oldRun ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message === 'pull request 19: merge context changed before publication';
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.deepEqual( fixture.calls.updatedComments, [] );
+    assert.equal( fixture.settings.comments[ 0 ].body, newerBody );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
+} );
+
+QUnit.test( 'rotated merge failure invalidates a newer run for the obsolete merge', async function( assert )
+{
+    var module = await modulePromise;
+    var oldRun = workflowRun();
+    var oldArtifact = artifact();
+    var newerRun = workflowRun( {
+        id: 202,
+        run_number: 21,
+        created_at: '2026-07-11T10:05:00Z',
+        run_started_at: '2026-07-11T10:10:00Z',
+        updated_at: '2026-07-11T10:16:00Z'
+    } );
+    var newerArtifact = artifact( {
+        id: 301,
+        created_at: '2026-07-11T10:15:00Z',
+        workflow_run: { id: 202, head_sha: SHA_B }
+    } );
+    var fixture = apiFixture( {
+        mergeRefSha: SHA_D,
+        mergeCommit: { sha: SHA_D, parents: [ { sha: SHA_B }, { sha: SHA_A } ] },
+        runArtifacts: [ oldArtifact ],
+        repositoryArtifacts: [ oldArtifact, newerArtifact ],
+        comments: [ {
+            id: 401,
+            body: renderedReadyComment( module, newerRun, newerArtifact ),
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, oldRun ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message === 'pull request 19: merge context changed before publication';
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.equal( fixture.calls.updatedComments.length, 1 );
+    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: unavailable' ) !== -1 );
+    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( '/artifacts/' ) === -1 );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 300, 301 ] );
+    assert.deepEqual( fixture.calls.order, [
+        'update-comment-401',
+        'delete-artifact-300',
+        'delete-artifact-301'
+    ] );
+} );
+
+QUnit.test( 'rotated merge failure retains an older artifact for the canonical merge', async function( assert )
+{
+    var module = await modulePromise;
+    var failedRun = workflowRun( {
+        id: 202,
+        run_number: 22,
+        created_at: '2026-07-11T10:00:00Z',
+        run_started_at: '2026-07-11T10:00:00Z',
+        updated_at: '2026-07-11T10:06:00Z'
+    } );
+    var failedArtifact = artifact( {
+        id: 301,
+        workflow_run: { id: 202, head_sha: SHA_B }
+    } );
+    var canonicalRun = workflowRun( {
+        id: 199,
+        run_number: 19,
+        created_at: '2026-07-11T09:50:00Z',
+        run_started_at: '2026-07-11T09:50:00Z',
+        updated_at: '2026-07-11T09:56:00Z',
+        display_title: ciTitle( { merge: SHA_D } )
+    } );
+    var canonicalArtifact = artifact( {
+        id: 299,
+        created_at: '2026-07-11T09:55:00Z',
+        workflow_run: { id: 199, head_sha: SHA_B }
+    } );
+    var canonicalBody = renderedReadyComment( module, canonicalRun, canonicalArtifact );
+    var fixture = apiFixture( {
+        mergeRefSha: SHA_D,
+        mergeCommit: { sha: SHA_D, parents: [ { sha: SHA_B }, { sha: SHA_A } ] },
+        runArtifacts: [ failedArtifact ],
+        repositoryArtifacts: [ canonicalArtifact, failedArtifact ],
+        comments: [ {
+            id: 401,
+            body: canonicalBody,
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, failedRun ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message === 'pull request 19: merge context changed before publication';
+    } );
+    assert.deepEqual( fixture.calls.updatedComments, [] );
+    assert.equal( fixture.settings.comments[ 0 ].body, canonicalBody );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 301 ] );
+} );
+
+QUnit.test( 'canonical ready duplicate outranks a pending comment', async function( assert )
+{
+    var module = await modulePromise;
+    var failedRun = workflowRun();
+    var failedArtifact = artifact();
+    var canonicalRun = workflowRun( {
+        id: 202,
+        run_number: 22,
+        created_at: '2026-07-11T10:10:00Z',
+        run_started_at: '2026-07-11T10:10:00Z',
+        updated_at: '2026-07-11T10:16:00Z',
+        display_title: ciTitle( { merge: SHA_D } )
+    } );
+    var canonicalArtifact = artifact( {
+        id: 301,
+        created_at: '2026-07-11T10:15:00Z',
+        workflow_run: { id: 202, head_sha: SHA_B }
+    } );
+    var canonicalCommentRun = commentRun( module, canonicalRun );
+    var readyBody = renderedReadyComment( module, canonicalRun, canonicalArtifact );
+    var fixture = apiFixture( {
+        mergeRefSha: SHA_D,
+        mergeCommit: { sha: SHA_D, parents: [ { sha: SHA_B }, { sha: SHA_A } ] },
+        runArtifacts: [ failedArtifact ],
+        repositoryArtifacts: [ failedArtifact, canonicalArtifact ],
+        comments: [ {
+            id: 401,
+            body: module.renderPendingComment( {
+                repository: REPOSITORY,
+                run: Object.assign( {}, canonicalCommentRun, { phase: 'pending' } )
+            } ),
+            user: { login: 'github-actions[bot]' }
+        }, {
+            id: 402,
+            body: readyBody,
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, failedRun ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message === 'pull request 19: merge context changed before publication';
+    } );
+    assert.deepEqual( fixture.calls.updatedComments, [ { id: 401, body: readyBody } ] );
+    assert.deepEqual( fixture.calls.deletedComments, [ 401 ] );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
+} );
+
+QUnit.test( 'merge ref revalidation follows a second rotation', async function( assert )
+{
+    var module = await modulePromise;
+    var failedArtifact = artifact();
+    var canonicalRun = workflowRun( {
+        id: 202,
+        run_number: 22,
+        created_at: '2026-07-11T10:10:00Z',
+        run_started_at: '2026-07-11T10:10:00Z',
+        updated_at: '2026-07-11T10:16:00Z',
+        display_title: ciTitle( { merge: SHA_E } )
+    } );
+    var canonicalArtifact = artifact( {
+        id: 301,
+        created_at: '2026-07-11T10:15:00Z',
+        workflow_run: { id: 202, head_sha: SHA_B }
+    } );
+    var canonicalBody = renderedReadyComment( module, canonicalRun, canonicalArtifact );
+    var fixture = apiFixture( {
+        mergeRefShas: [ SHA_D, SHA_E ],
+        runArtifacts: [ failedArtifact ],
+        repositoryArtifacts: [ failedArtifact, canonicalArtifact ],
+        comments: [ {
+            id: 401,
+            body: canonicalBody,
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, workflowRun() ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.canonicalMergeSha === SHA_E;
+    } );
+    assert.deepEqual( fixture.calls.mergeRefReads, [ 19, 19 ] );
+    assert.deepEqual( fixture.calls.updatedComments, [] );
+    assert.equal( fixture.settings.comments[ 0 ].body, canonicalBody );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
+} );
+
+QUnit.test( 'merge ref ABA revalidation resumes the original build callback', async function( assert )
+{
+    var module = await modulePromise;
+    var current = artifact();
+    var fixture = apiFixture( {
+        mergeRefShas: [ SHA_D, SHA_C ],
+        runArtifacts: [ current ],
+        repositoryArtifacts: [ current ]
+    } );
+
+    var result = await synchronize( module, fixture, workflowRun() );
+    assert.equal( result[ 0 ].applied, true );
+    assert.deepEqual( fixture.calls.mergeRefReads, [ 19, 19 ] );
+    assert.equal( fixture.calls.createdComments.length, 1 );
+    assert.ok( fixture.calls.createdComments[ 0 ].body.indexOf( 'PR VSIX: preparing' ) !== -1 );
+    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: ready' ) !== -1 );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [] );
+} );
+
+QUnit.test( 'repository dispatch source drift cannot replace newer ready state', async function( assert )
+{
+    var module = await modulePromise;
+    var staleRun = workflowRun();
+    var staleArtifact = artifact();
+    var newerRun = workflowRun( {
+        id: 202,
+        run_number: 22,
+        created_at: '2026-07-11T10:10:00Z',
+        run_started_at: '2026-07-11T10:10:00Z',
+        updated_at: '2026-07-11T10:16:00Z',
+        display_title: ciTitle( { head: SHA_D, merge: SHA_D } )
+    } );
+    var newerArtifact = artifact( {
+        id: 301,
+        created_at: '2026-07-11T10:15:00Z',
+        workflow_run: { id: 202, head_sha: SHA_B }
+    } );
+    var newerBody = renderedReadyComment( module, newerRun, newerArtifact );
+    var fixture = apiFixture( {
+        pullRequestResponses: [
+            pullRequest(),
+            pullRequest( { head: { sha: SHA_D, ref: 'fix/issue-19', repo: { id: 99 } } } )
+        ],
+        runArtifacts: [ staleArtifact ],
+        repositoryArtifacts: [ staleArtifact, newerArtifact ],
+        comments: [ {
+            id: 401,
+            body: newerBody,
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    assert.deepEqual( await synchronize( module, fixture, staleRun ), [] );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.deepEqual( fixture.calls.updatedComments, [] );
+    assert.equal( fixture.settings.comments[ 0 ].body, newerBody );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
+} );
+
+QUnit.test( 'unassociated API failure cannot mutate a newer source generation', async function( assert )
+{
+    var module = await modulePromise;
+    var staleRun = workflowRun();
+    var staleArtifact = artifact();
+    var newerRun = workflowRun( {
+        id: 202,
+        run_number: 22,
+        created_at: '2026-07-11T10:10:00Z',
+        run_started_at: '2026-07-11T10:10:00Z',
+        updated_at: '2026-07-11T10:16:00Z',
+        display_title: ciTitle( { head: SHA_D, merge: SHA_E } )
+    } );
+    var newerArtifact = artifact( {
+        id: 301,
+        created_at: '2026-07-11T10:15:00Z',
+        workflow_run: { id: 202, head_sha: SHA_B }
+    } );
+    var newerBody = renderedReadyComment( module, newerRun, newerArtifact );
+    var apiError = new module.PrVsixInvariantError(
+        'GitHub API GET /repos/FanaticPythoner/better-todo-tree/pulls/19: HTTP 502: upstream failure'
+    );
+    var fixture = apiFixture( {
+        pullRequestResponses: [
+            apiError,
+            pullRequest( { head: { sha: SHA_D, ref: 'fix/issue-19', repo: { id: 99 } } } )
+        ],
+        runArtifacts: [ staleArtifact ],
+        repositoryArtifacts: [ staleArtifact, newerArtifact ],
+        comments: [ {
+            id: 401,
+            body: newerBody,
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, staleRun ), function( error )
+    {
+        return error === apiError;
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.deepEqual( fixture.calls.updatedComments, [] );
+    assert.equal( fixture.settings.comments[ 0 ].body, newerBody );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
+} );
+
+QUnit.test( 'revalidated source can replace a later stale context after a force-push reversal', async function( assert )
+{
+    var module = await modulePromise;
+    var currentRun = workflowRun();
+    var staleRun = workflowRun( {
+        id: 202,
+        run_number: 22,
+        created_at: '2026-07-11T10:10:00Z',
+        run_started_at: '2026-07-11T10:10:00Z',
+        updated_at: '2026-07-11T10:16:00Z',
+        display_title: ciTitle( { head: SHA_D, merge: SHA_E } )
+    } );
+    var staleArtifact = artifact( {
+        id: 301,
+        created_at: '2026-07-11T10:15:00Z',
+        workflow_run: { id: 202, head_sha: SHA_B }
+    } );
+    var staleBody = renderedReadyComment( module, staleRun, staleArtifact );
+    var apiError = new module.PrVsixInvariantError(
+        'GitHub API GET /repos/FanaticPythoner/better-todo-tree/commits/' + SHA_C +
+        ': HTTP 502: upstream failure'
+    );
+    var fixture = apiFixture( {
+        mergeCommitError: apiError,
+        repositoryArtifacts: [ staleArtifact ],
+        comments: [ {
+            id: 401,
+            body: staleBody,
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, currentRun ), function( error )
+    {
+        return error === apiError;
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.equal( fixture.calls.updatedComments.length, 1 );
+    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: unavailable' ) !== -1 );
+    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( SHA_A.slice( 0, 12 ) ) !== -1 );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 301 ] );
+} );
+
+QUnit.test( 'merge context requires exact commit identity and ordered parents', async function( assert )
+{
+    var module = await modulePromise;
+    var invalidCommits = [
+        { sha: SHA_D, parents: [ { sha: SHA_B }, { sha: SHA_A } ] },
+        { sha: SHA_C, parents: [ { sha: SHA_A }, { sha: SHA_B } ] }
+    ];
+
+    for( var index = 0; index < invalidCommits.length; index++ )
+    {
+        var fixture = apiFixture( { mergeCommit: invalidCommits[ index ] } );
+        await assert.rejects( module.waitForStablePullRequest( {
+            api: fixture.api,
+            pullRequestNumber: 19,
+            expectedHeadSha: SHA_A,
+            expectedBaseSha: SHA_B,
+            retry: { attempts: 1, intervalMs: 0 }
+        } ), function( error )
+        {
+            return error instanceof module.PrVsixInvariantError &&
+                error.message === 'pull request 19: merge context did not stabilize';
+        } );
+    }
 } );
 
 QUnit.test( 'metadata-only CI edit is ignored without artifact mutation', async function( assert )
@@ -673,10 +1394,130 @@ QUnit.test( 'renewal preserves the valid artifact through pending and failed bui
         repository: REPOSITORY,
         run: run,
         targets: TARGETS,
-        action: 'completed'
+        action: 'completed',
+        mergeRetry: { attempts: 1, intervalMs: 0 }
     } ), [] );
     assert.deepEqual( fixture.calls.updatedComments, [] );
     assert.deepEqual( fixture.calls.deletedArtifacts, [] );
+} );
+
+QUnit.test( 'renewal association failure preserves the last verified preview', async function( assert )
+{
+    var module = await modulePromise;
+    var current = artifact();
+    var run = workflowRun( {
+        display_title: ciTitle( { action: 'renewal' } ),
+        status: 'in_progress',
+        conclusion: null
+    } );
+    var apiError = new module.PrVsixInvariantError(
+        'GitHub API GET /repos/FanaticPythoner/better-todo-tree/pulls/19: HTTP 502: upstream failure'
+    );
+    var readyBody = renderedReadyComment( module, workflowRun(), current );
+    var fixture = apiFixture( {
+        pullRequestError: apiError,
+        repositoryArtifacts: [ current ],
+        comments: [ {
+            id: 401,
+            body: readyBody,
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, run, 'in_progress' ), function( error )
+    {
+        return error === apiError;
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.deepEqual( fixture.calls.updatedComments, [] );
+    assert.equal( fixture.settings.comments[ 0 ].body, readyBody );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [] );
+    assert.deepEqual( fixture.calls.mergeRefReads, [] );
+} );
+
+QUnit.test( 'successful renewal association failure preserves both preview generations', async function( assert )
+{
+    var module = await modulePromise;
+    var oldRun = workflowRun( {
+        id: 199,
+        run_number: 19,
+        created_at: '2026-07-11T09:50:00Z',
+        run_started_at: '2026-07-11T09:50:00Z',
+        updated_at: '2026-07-11T09:56:00Z'
+    } );
+    var oldArtifact = artifact( {
+        id: 299,
+        created_at: '2026-07-11T09:55:00Z',
+        workflow_run: { id: 199, head_sha: SHA_B }
+    } );
+    var renewalRun = workflowRun( {
+        display_title: ciTitle( { action: 'renewal' } )
+    } );
+    var renewalArtifact = artifact();
+    var readyBody = renderedReadyComment( module, oldRun, oldArtifact );
+    var fixture = apiFixture( {
+        mergeRefSha: undefined,
+        runArtifacts: [ renewalArtifact ],
+        repositoryArtifacts: [ oldArtifact, renewalArtifact ],
+        comments: [ {
+            id: 401,
+            body: readyBody,
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, renewalRun ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message === 'pull request 19: merge context did not stabilize';
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.deepEqual( fixture.calls.updatedComments, [] );
+    assert.equal( fixture.settings.comments[ 0 ].body, readyBody );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [] );
+} );
+
+QUnit.test( 'successful renewal invalidates artifacts for a rotated merge ref', async function( assert )
+{
+    var module = await modulePromise;
+    var oldRun = workflowRun( {
+        id: 199,
+        run_number: 19,
+        created_at: '2026-07-11T09:50:00Z',
+        run_started_at: '2026-07-11T09:50:00Z',
+        updated_at: '2026-07-11T09:56:00Z'
+    } );
+    var oldArtifact = artifact( {
+        id: 299,
+        created_at: '2026-07-11T09:55:00Z',
+        workflow_run: { id: 199, head_sha: SHA_B }
+    } );
+    var renewalRun = workflowRun( {
+        display_title: ciTitle( { action: 'renewal' } )
+    } );
+    var renewalArtifact = artifact();
+    var fixture = apiFixture( {
+        mergeRefSha: SHA_D,
+        mergeCommit: { sha: SHA_D, parents: [ { sha: SHA_B }, { sha: SHA_A } ] },
+        runArtifacts: [ renewalArtifact ],
+        repositoryArtifacts: [ oldArtifact, renewalArtifact ],
+        comments: [ {
+            id: 401,
+            body: renderedReadyComment( module, oldRun, oldArtifact ),
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, renewalRun ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message === 'pull request 19: merge context changed before publication';
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.equal( fixture.calls.updatedComments.length, 1 );
+    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: unavailable' ) !== -1 );
+    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( '/artifacts/' ) === -1 );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 299, 300 ] );
 } );
 
 QUnit.test( 'publisher revokes a fork artifact when approval changes during the build', async function( assert )
@@ -698,17 +1539,217 @@ QUnit.test( 'publisher revokes a fork artifact when approval changes during the 
     assert.ok( fixture.calls.createdComments[ 0 ].body.indexOf( 'safe-to-test' ) !== -1 );
     assert.ok( fixture.calls.createdComments[ 0 ].body.indexOf( '/artifacts/' ) === -1 );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
+    assert.deepEqual( fixture.calls.mergeRefReads, [] );
+} );
+
+QUnit.test( 'failure revalidation revokes external fork artifact access', async function( assert )
+{
+    var module = await modulePromise;
+    var allowed = pullRequest( {
+        author_association: 'NONE',
+        labels: [ { name: 'safe-to-test' } ],
+        head: { sha: SHA_A, ref: 'fork/issue-19', repo: { id: 2 } }
+    } );
+    var revoked = pullRequest( {
+        author_association: 'NONE',
+        labels: [],
+        head: { sha: SHA_A, ref: 'fork/issue-19', repo: { id: 2 } }
+    } );
+    var current = artifact();
+    var prior = artifact( {
+        id: 299,
+        created_at: '2026-07-11T09:55:00Z',
+        workflow_run: { id: 199, head_sha: SHA_B }
+    } );
+    var newer = artifact( {
+        id: 301,
+        created_at: '2026-07-11T10:15:00Z',
+        workflow_run: { id: 202, head_sha: SHA_B }
+    } );
+    var apiError = new module.PrVsixInvariantError(
+        'GitHub API GET /repos/FanaticPythoner/better-todo-tree/commits/' + SHA_C +
+        ': HTTP 502: upstream failure'
+    );
+    var fixture = apiFixture( {
+        pullRequestResponses: [ allowed, allowed, revoked ],
+        mergeCommitError: apiError,
+        repositoryArtifacts: [ current, prior, newer ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, workflowRun() ), function( error )
+    {
+        return error === apiError;
+    } );
+    assert.equal( fixture.calls.createdComments.length, 1 );
+    assert.ok( fixture.calls.createdComments[ 0 ].body.indexOf( 'safe-to-test' ) !== -1 );
+    assert.ok( fixture.calls.createdComments[ 0 ].body.indexOf( '/artifacts/' ) === -1 );
+    assert.deepEqual( fixture.calls.deletedArtifacts.sort(), [ 299, 300, 301 ] );
+} );
+
+QUnit.test( 'authorization revocation overrides concurrent source drift and ready state', async function( assert )
+{
+    var module = await modulePromise;
+    var allowed = pullRequest( {
+        author_association: 'NONE',
+        labels: [ { name: 'safe-to-test' } ],
+        head: { sha: SHA_A, ref: 'fork/issue-19', repo: { id: 2 } }
+    } );
+    var revoked = pullRequest( {
+        author_association: 'NONE',
+        labels: [],
+        head: { sha: SHA_D, ref: 'fork/issue-19', repo: { id: 2 } },
+        base: {
+            sha: SHA_E,
+            ref: 'master',
+            repo: { id: 1, full_name: REPOSITORY, default_branch: 'master' }
+        }
+    } );
+    var prior = artifact( {
+        id: 299,
+        created_at: '2026-07-11T09:55:00Z',
+        workflow_run: { id: 199, head_sha: SHA_B }
+    } );
+    var current = artifact();
+    var newerRun = workflowRun( {
+        id: 202,
+        run_number: 22,
+        head_sha: SHA_E,
+        created_at: '2026-07-11T10:10:00Z',
+        run_started_at: '2026-07-11T10:10:00Z',
+        updated_at: '2026-07-11T10:16:00Z',
+        display_title: ciTitle( { head: SHA_D, base: SHA_E } )
+    } );
+    var newer = artifact( {
+        id: 301,
+        created_at: '2026-07-11T10:15:00Z',
+        workflow_run: { id: 202, head_sha: SHA_E }
+    } );
+    var apiError = new module.PrVsixInvariantError(
+        'GitHub API GET /repos/FanaticPythoner/better-todo-tree/commits/' + SHA_C +
+        ': HTTP 502: upstream failure'
+    );
+    var fixture = apiFixture( {
+        pullRequestResponses: [ allowed, allowed, revoked ],
+        mergeCommitError: apiError,
+        repositoryArtifacts: [ prior, current, newer ],
+        comments: [ {
+            id: 401,
+            body: renderedReadyComment( module, newerRun, newer ),
+            user: { login: 'github-actions[bot]' }
+        }, {
+            id: 402,
+            body: renderedReadyComment( module, newerRun, newer ),
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, workflowRun() ), function( error )
+    {
+        return error === apiError;
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.equal( fixture.calls.updatedComments.length, 2 );
+    var body = fixture.calls.updatedComments[ 0 ].body;
+    var metadata = module.parseCommentMetadata( body );
+    assert.ok( body.indexOf( 'safe-to-test' ) !== -1 );
+    assert.ok( body.indexOf( '/artifacts/' ) === -1 );
+    assert.ok( body.indexOf( '/commit/' + SHA_D ) !== -1 );
+    assert.ok( body.indexOf( '/commit/' + SHA_A ) === -1 );
+    assert.equal( metadata.headSha, SHA_D );
+    assert.equal( metadata.baseSha, SHA_E );
+    assert.equal( metadata.mergeSha, 'none' );
+    assert.equal( metadata.phase, 'blocked' );
+    assert.equal( metadata.artifactId, undefined );
+    assert.deepEqual( fixture.calls.deletedComments, [ 402 ] );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 299, 300, 301 ] );
+    assert.deepEqual( fixture.calls.order, [
+        'update-comment-401',
+        'update-comment-402',
+        'delete-artifact-299',
+        'delete-artifact-300',
+        'delete-artifact-301'
+    ] );
+} );
+
+QUnit.test( 'failure revalidation closes the current preview namespace', async function( assert )
+{
+    var module = await modulePromise;
+    var closed = pullRequest( {
+        state: 'closed',
+        closed_at: '2026-07-11T10:20:00Z',
+        head: { sha: SHA_D, ref: 'fix/issue-19', repo: { id: 99 } },
+        base: {
+            sha: SHA_E,
+            ref: 'master',
+            repo: { id: 1, full_name: REPOSITORY, default_branch: 'master' }
+        }
+    } );
+    var prior = artifact( {
+        id: 299,
+        created_at: '2026-07-11T09:55:00Z',
+        workflow_run: { id: 199, head_sha: SHA_B }
+    } );
+    var current = artifact();
+    var newerRun = workflowRun( {
+        id: 202,
+        run_number: 22,
+        head_sha: SHA_E,
+        created_at: '2026-07-11T10:10:00Z',
+        run_started_at: '2026-07-11T10:10:00Z',
+        updated_at: '2026-07-11T10:16:00Z',
+        display_title: ciTitle( { head: SHA_D, base: SHA_E } )
+    } );
+    var newer = artifact( {
+        id: 301,
+        created_at: '2026-07-11T10:15:00Z',
+        workflow_run: { id: 202, head_sha: SHA_E }
+    } );
+    var apiError = new module.PrVsixInvariantError(
+        'GitHub API GET /repos/FanaticPythoner/better-todo-tree/commits/' + SHA_C +
+        ': HTTP 502: upstream failure'
+    );
+    var fixture = apiFixture( {
+        pullRequestResponses: [ pullRequest(), pullRequest(), closed ],
+        mergeCommitError: apiError,
+        repositoryArtifacts: [ prior, current, newer ],
+        comments: [ {
+            id: 401,
+            body: renderedReadyComment( module, newerRun, newer ),
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, workflowRun() ), function( error )
+    {
+        return error === apiError;
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.equal( fixture.calls.updatedComments.length, 1 );
+    var body = fixture.calls.updatedComments[ 0 ].body;
+    var metadata = module.parseCommentMetadata( body );
+    assert.ok( body.indexOf( 'removed when the pull request closed' ) !== -1 );
+    assert.ok( body.indexOf( '/artifacts/' ) === -1 );
+    assert.equal( metadata.headSha, SHA_D );
+    assert.equal( metadata.baseSha, SHA_E );
+    assert.equal( metadata.mergeSha, 'none' );
+    assert.equal( metadata.phase, 'closed' );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 299, 300, 301 ] );
 } );
 
 QUnit.test( 'stale cleanup completion preserves state after authorization reversal', async function( assert )
 {
     var module = await modulePromise;
     var current = artifact();
+    var apiError = new module.PrVsixInvariantError(
+        'GitHub API GET /repos/FanaticPythoner/better-todo-tree/commits/' + SHA_C +
+        ': HTTP 502: upstream failure'
+    );
     var cleanupRun = workflowRun( {
         display_title: ciTitle( { action: 'approval-revoked' } ),
         conclusion: 'failure'
     } );
     var fixture = apiFixture( {
+        mergeCommitError: apiError,
         repositoryArtifacts: [ current ],
         comments: [ {
             id: 401,
@@ -720,6 +1761,91 @@ QUnit.test( 'stale cleanup completion preserves state after authorization revers
     assert.deepEqual( await synchronize( module, fixture, cleanupRun ), [] );
     assert.deepEqual( fixture.calls.updatedComments, [] );
     assert.deepEqual( fixture.calls.deletedArtifacts, [] );
+    assert.deepEqual( fixture.calls.mergeRefReads, [] );
+    assert.deepEqual( fixture.calls.commitReads, [] );
+} );
+
+QUnit.test( 'stale approval revocation cleans the current unauthorized source', async function( assert )
+{
+    var module = await modulePromise;
+    var revoked = pullRequest( {
+        author_association: 'NONE',
+        labels: [],
+        head: { sha: SHA_D, ref: 'fork/issue-19', repo: { id: 2 } },
+        base: {
+            sha: SHA_E,
+            ref: 'master',
+            repo: { id: 1, full_name: REPOSITORY, default_branch: 'master' }
+        }
+    } );
+    var oldArtifact = artifact();
+    var currentRun = workflowRun( {
+        id: 202,
+        run_number: 22,
+        head_sha: SHA_E,
+        created_at: '2026-07-11T10:10:00Z',
+        run_started_at: '2026-07-11T10:10:00Z',
+        updated_at: '2026-07-11T10:16:00Z',
+        display_title: ciTitle( { head: SHA_D, base: SHA_E } )
+    } );
+    var currentArtifact = artifact( {
+        id: 301,
+        created_at: '2026-07-11T10:15:00Z',
+        workflow_run: { id: 202, head_sha: SHA_E }
+    } );
+    var cleanupRun = workflowRun( {
+        display_title: ciTitle( { action: 'approval-revoked' } )
+    } );
+    var fixture = apiFixture( {
+        pullRequests: [ revoked ],
+        repositoryArtifacts: [ oldArtifact, currentArtifact ],
+        runArtifactsError: new Error( 'run artifacts must not be read' ),
+        workflowRunsError: new Error( 'workflow runs must not be read' ),
+        comments: [ {
+            id: 401,
+            body: renderedReadyComment( module, currentRun, currentArtifact ),
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    var result = await synchronize( module, fixture, cleanupRun );
+    assert.equal( result[ 0 ].applied, true );
+    var metadata = module.parseCommentMetadata( fixture.calls.updatedComments[ 0 ].body );
+    assert.equal( metadata.headSha, SHA_D );
+    assert.equal( metadata.baseSha, SHA_E );
+    assert.equal( metadata.mergeSha, 'none' );
+    assert.equal( metadata.phase, 'blocked' );
+    assert.deepEqual( fixture.calls.runArtifactReads, [] );
+    assert.deepEqual( fixture.calls.workflowQueries, [] );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 300, 301 ] );
+} );
+
+QUnit.test( 'authorization cleanup deletes artifacts after comment API failure', async function( assert )
+{
+    var module = await modulePromise;
+    var revoked = pullRequest( {
+        author_association: 'NONE',
+        labels: [],
+        head: { sha: SHA_A, ref: 'fork/issue-19', repo: { id: 2 } }
+    } );
+    var current = artifact();
+    var commentError = new Error( 'comment update failed' );
+    var fixture = apiFixture( {
+        pullRequests: [ revoked ],
+        repositoryArtifacts: [ current ],
+        updateCommentError: commentError,
+        comments: [ {
+            id: 401,
+            body: renderedReadyComment( module, workflowRun(), current ),
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronize( module, fixture, workflowRun() ), function( error )
+    {
+        return error === commentError;
+    } );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
 } );
 
 QUnit.test( 'base-push conflict invalidates the previous merge artifact', async function( assert )
@@ -761,6 +1887,7 @@ QUnit.test( 'base-push conflict invalidates the previous merge artifact', async 
     assert.equal( ( await synchronize( module, fixture, run, 'in_progress' ) )[ 0 ].applied, true );
     assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: building' ) !== -1 );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 299 ] );
+    assert.deepEqual( fixture.calls.mergeRefReads, [] );
 } );
 
 QUnit.test( 'trusted lifecycle marker posts building state and removes the prior slot', async function( assert )
@@ -779,6 +1906,182 @@ QUnit.test( 'trusted lifecycle marker posts building state and removes the prior
     ] );
     assert.ok( fixture.calls.createdComments[ 0 ].body.indexOf( 'PR VSIX: building' ) !== -1 );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 299, 600 ] );
+} );
+
+QUnit.test( 'merge ref exhaustion replaces building state and retains retry identity', async function( assert )
+{
+    var module = await modulePromise;
+    var pendingBody = module.renderPendingComment( {
+        repository: REPOSITORY,
+        run: {
+            id: 500,
+            runAttempt: 1,
+            runNumber: 50,
+            startedAt: '2026-07-11T10:00:01Z',
+            headSha: SHA_A,
+            baseSha: SHA_B,
+            mergeSha: 'none',
+            pullRequestNumber: 19,
+            action: 'synchronize',
+            source: 'lifecycle',
+            phase: 'pending',
+            conclusion: 'success'
+        }
+    } );
+    var fixture = apiFixture( {
+        workflowRuns: [],
+        runArtifacts: [ lifecycleArtifact( 'synchronize' ) ],
+        mergeRefSha: undefined,
+        repositoryArtifacts: [ artifact( {
+            id: 299,
+            created_at: '2026-07-11T09:55:00Z',
+            workflow_run: { id: 199, head_sha: SHA_B }
+        } ) ],
+        comments: [ {
+            id: 401,
+            body: pendingBody,
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronizeLifecycle( module, fixture, lifecycleRun() ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message === 'pull request 19: merge context did not stabilize';
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.equal( fixture.calls.updatedComments.length, 1 );
+    assert.equal( fixture.calls.updatedComments[ 0 ].id, 401 );
+    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: unavailable' ) !== -1 );
+    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'immutable merge ref' ) !== -1 );
+    assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'PR VSIX: building' ) === -1 );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 299 ] );
+
+    fixture.settings.mergeRefSha = SHA_C;
+    fixture.settings.repositoryArtifacts = [];
+    fixture.settings.comments = [ {
+        id: 401,
+        body: fixture.calls.updatedComments[ 0 ].body,
+        user: { login: 'github-actions[bot]' }
+    } ];
+    assert.deepEqual( await synchronizeLifecycle( module, fixture, lifecycleRun() ), [
+        { pullRequestNumber: 19, applied: true, removedArtifacts: 0 }
+    ] );
+    assert.equal( fixture.calls.dispatchedEvents.length, 1 );
+    assert.ok( fixture.calls.updatedComments[ 1 ].body.indexOf( 'PR VSIX: building' ) !== -1 );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 299, 600 ] );
+} );
+
+QUnit.test( 'lifecycle source drift removes only the stale retry marker', async function( assert )
+{
+    var module = await modulePromise;
+    var fixture = apiFixture( {
+        workflowRuns: [],
+        runArtifacts: [ lifecycleArtifact( 'synchronize' ) ],
+        pullRequestResponses: [
+            pullRequest(),
+            pullRequest( { head: { sha: SHA_D, ref: 'fix/issue-19', repo: { id: 99 } } } )
+        ]
+    } );
+
+    assert.deepEqual( await synchronizeLifecycle( module, fixture, lifecycleRun() ), [] );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.deepEqual( fixture.calls.updatedComments, [] );
+    assert.deepEqual( fixture.calls.dispatchedEvents, [] );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 600 ] );
+} );
+
+QUnit.test( 'lifecycle revalidation drift removes its stale retry marker without comment mutation', async function( assert )
+{
+    var module = await modulePromise;
+    var fixture = apiFixture( {
+        workflowRuns: [],
+        runArtifacts: [ lifecycleArtifact( 'synchronize' ) ],
+        mergeRefSha: undefined,
+        pullRequestResponses: [
+            pullRequest(),
+            pullRequest(),
+            pullRequest( { head: { sha: SHA_D, ref: 'fix/issue-19', repo: { id: 99 } } } )
+        ]
+    } );
+
+    await assert.rejects( synchronizeLifecycle( module, fixture, lifecycleRun() ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message === 'pull request 19: merge context did not stabilize';
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.deepEqual( fixture.calls.updatedComments, [] );
+    assert.deepEqual( fixture.calls.dispatchedEvents, [] );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 600 ] );
+} );
+
+QUnit.test( 'lifecycle API failure reports its own terminal reason and remains retryable', async function( assert )
+{
+    var module = await modulePromise;
+    var apiError = new module.PrVsixInvariantError(
+        'GitHub API GET /repos/FanaticPythoner/better-todo-tree/commits/' + SHA_C +
+        ': HTTP 502: upstream failure'
+    );
+    var fixture = apiFixture( {
+        workflowRuns: [],
+        runArtifacts: [ lifecycleArtifact( 'synchronize' ) ],
+        mergeCommitError: apiError
+    } );
+
+    await assert.rejects( synchronizeLifecycle( module, fixture, lifecycleRun() ), function( error )
+    {
+        return error === apiError;
+    } );
+    assert.equal( fixture.calls.createdComments.length, 1 );
+    assert.ok( fixture.calls.createdComments[ 0 ].body.indexOf(
+        'GitHub API access failed during preview reconciliation.'
+    ) !== -1 );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [] );
+} );
+
+QUnit.test( 'delayed lifecycle failure preserves newer ready state and artifact', async function( assert )
+{
+    var module = await modulePromise;
+    var newerRun = workflowRun( {
+        id: 202,
+        run_number: 22,
+        created_at: '2026-07-11T10:01:00Z',
+        run_started_at: '2026-07-11T10:01:00Z',
+        updated_at: '2026-07-11T10:06:00Z'
+    } );
+    var newerArtifact = artifact( {
+        id: 301,
+        created_at: '2026-07-11T10:05:00Z',
+        workflow_run: { id: 202, head_sha: SHA_B }
+    } );
+    var staleArtifact = artifact( {
+        id: 299,
+        created_at: '2026-07-11T09:55:00Z',
+        workflow_run: { id: 199, head_sha: SHA_B }
+    } );
+    var newerBody = renderedReadyComment( module, newerRun, newerArtifact );
+    var fixture = apiFixture( {
+        workflowRuns: [],
+        runArtifacts: [ lifecycleArtifact( 'synchronize' ) ],
+        mergeRefSha: undefined,
+        repositoryArtifacts: [ staleArtifact, newerArtifact ],
+        comments: [ {
+            id: 401,
+            body: newerBody,
+            user: { login: 'github-actions[bot]' }
+        } ]
+    } );
+
+    await assert.rejects( synchronizeLifecycle( module, fixture, lifecycleRun() ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message === 'pull request 19: merge context did not stabilize';
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.deepEqual( fixture.calls.updatedComments, [] );
+    assert.equal( fixture.settings.comments[ 0 ].body, newerBody );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 299 ] );
 } );
 
 QUnit.test( 'target and fallback lifecycle callbacks converge on one build generation', async function( assert )
@@ -942,7 +2245,12 @@ QUnit.test( 'safe-to-test removal revokes external preview access without rebuil
     var fixture = apiFixture( {
         pullRequests: [ pullRequest( {
             author_association: 'NONE',
-            head: { sha: SHA_A, ref: 'fork/issue-19', repo: { id: 2 } }
+            head: { sha: SHA_D, ref: 'fork/issue-19', repo: { id: 2 } },
+            base: {
+                sha: SHA_E,
+                ref: 'master',
+                repo: { id: 1, full_name: REPOSITORY, default_branch: 'master' }
+            }
         } ) ],
         runArtifacts: [ marker ],
         repositoryArtifacts: [ current ],
@@ -957,6 +2265,9 @@ QUnit.test( 'safe-to-test removal revokes external preview access without rebuil
         display_title: 'PR VSIX Event #19 unlabeled'
     } ) ) )[ 0 ].applied, true );
     assert.ok( fixture.calls.updatedComments[ 0 ].body.indexOf( 'safe-to-test' ) !== -1 );
+    var metadata = module.parseCommentMetadata( fixture.calls.updatedComments[ 0 ].body );
+    assert.equal( metadata.headSha, SHA_D );
+    assert.equal( metadata.baseSha, SHA_E );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 300, 600 ] );
     assert.deepEqual( fixture.calls.dispatchedEvents, [] );
 } );
@@ -1024,6 +2335,7 @@ QUnit.test( 'closed lifecycle marker ignores later base movement and removes the
             state: 'closed',
             closed_at: '2026-07-11T10:01:00Z',
             merge_commit_sha: SHA_D,
+            head: { sha: SHA_D, ref: 'fix/issue-19', repo: { id: 99 } },
             base: {
                 sha: SHA_D,
                 ref: 'master',
@@ -1234,6 +2546,64 @@ QUnit.test( 'GitHub API adapter paginates and dispatches refresh events', async 
     assert.equal( requests[ 0 ].options.headers.Authorization, 'Bearer token' );
     assert.equal( requests[ 0 ].options.headers[ 'X-GitHub-Api-Version' ], '2026-03-10' );
     assert.equal( JSON.parse( requests[ 2 ].options.body ).event_type, 'refresh-pr-vsix' );
+} );
+
+QUnit.test( 'GitHub API adapter resolves the versioned pull request merge ref', async function( assert )
+{
+    var module = await modulePromise;
+    var requests = [];
+    var responses = [
+        new Response( JSON.stringify( {
+            ref: 'refs/pull/19/merge',
+            object: { type: 'commit', sha: SHA_C }
+        } ), { status: 200 } ),
+        new Response( JSON.stringify( { message: 'Not Found' } ), { status: 404 } ),
+        new Response( JSON.stringify( { message: 'Conflict' } ), { status: 409 } ),
+        new Response( JSON.stringify( {
+            ref: 'refs/pull/19/head',
+            object: { type: 'commit', sha: SHA_C }
+        } ), { status: 200 } ),
+        new Response( JSON.stringify( {
+            ref: 'refs/pull/19/merge',
+            object: { type: 'tag', sha: SHA_C }
+        } ), { status: 200 } ),
+        new Response( JSON.stringify( {
+            ref: 'refs/pull/19/merge',
+            object: { type: 'commit', sha: 'invalid' }
+        } ), { status: 200 } )
+    ];
+    var api = module.createGitHubApi( {
+        token: 'token',
+        repository: REPOSITORY,
+        fetchImpl: async function( url, options )
+        {
+            requests.push( { url: url, options: options } );
+            return responses.shift();
+        }
+    } );
+
+    assert.equal( await api.getPullRequestMergeSha( 19 ), SHA_C );
+    assert.equal( await api.getPullRequestMergeSha( 19 ), undefined );
+    assert.equal( await api.getPullRequestMergeSha( 19 ), undefined );
+    for( var index = 0; index < 2; index++ )
+    {
+        await assert.rejects( api.getPullRequestMergeSha( 19 ), function( error )
+        {
+            return error instanceof module.PrVsixInvariantError &&
+                error.message === 'pull request 19: invalid merge ref response';
+        } );
+    }
+    await assert.rejects( api.getPullRequestMergeSha( 19 ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message === 'pull request merge ref SHA: expected a 40-character lowercase commit SHA';
+    } );
+    assert.equal( requests.length, 6 );
+    assert.ok( requests.every( function( request )
+    {
+        return request.url.endsWith( '/repos/FanaticPythoner/better-todo-tree/git/ref/pull/19/merge' ) &&
+            request.options.headers[ 'X-GitHub-Api-Version' ] === '2026-03-10';
+    } ) );
 } );
 
 QUnit.test( 'GitHub API adapter exposes transport and response contract failures', async function( assert )
