@@ -1,3 +1,6 @@
+var childProcess = require( 'child_process' );
+var fs = require( 'fs' );
+var os = require( 'os' );
 var path = require( 'path' );
 var pathToFileURL = require( 'url' ).pathToFileURL;
 
@@ -11,6 +14,28 @@ var SHA_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 var SHA_C = 'cccccccccccccccccccccccccccccccccccccccc';
 var SHA_D = 'dddddddddddddddddddddddddddddddddddddddd';
 var TARGETS = require( '../scripts/release/targets.json' );
+
+function resolveWorkflowEvent( run )
+{
+    var directory = fs.mkdtempSync( path.join( os.tmpdir(), 'better-todo-tree-pr-vsix-' ) );
+    var eventPath = path.join( directory, 'event.json' );
+    try
+    {
+        fs.writeFileSync( eventPath, JSON.stringify( { workflow_run: run } ) );
+        return childProcess.spawnSync( process.execPath, [
+            path.join( __dirname, '..', 'scripts', 'ci', 'sync-pr-vsix-comment.mjs' ),
+            'resolve'
+        ], {
+            cwd: path.join( __dirname, '..' ),
+            encoding: 'utf8',
+            env: Object.assign( {}, process.env, { GITHUB_EVENT_PATH: eventPath } )
+        } );
+    }
+    finally
+    {
+        fs.rmSync( directory, { recursive: true, force: true } );
+    }
+}
 
 function ciTitle( overrides )
 {
@@ -33,7 +58,7 @@ function workflowRun( overrides )
         run_number: 20,
         workflow_id: 10,
         event: 'repository_dispatch',
-        name: 'PR VSIX Build',
+        name: ciTitle(),
         status: 'completed',
         head_sha: SHA_B,
         head_branch: 'master',
@@ -90,7 +115,7 @@ function lifecycleRun( overrides )
         run_number: 50,
         workflow_id: 11,
         event: 'pull_request_target',
-        name: 'PR VSIX Event',
+        name: 'PR VSIX Event #19 synchronize',
         status: 'completed',
         head_sha: SHA_B,
         head_branch: 'master',
@@ -395,7 +420,7 @@ QUnit.test( 'successful rerun rejects an artifact created before the current att
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
 } );
 
-QUnit.test( 'noncanonical build run name fails closed', async function( assert )
+QUnit.test( 'noncanonical build display title fails closed', async function( assert )
 {
     var module = await modulePromise;
     var fixture = apiFixture();
@@ -403,7 +428,7 @@ QUnit.test( 'noncanonical build run name fails closed', async function( assert )
 
     await assert.rejects( synchronize( module, fixture, run ), function( error )
     {
-        return error.message.indexOf( 'missing canonical PR run name' ) !== -1;
+        return error.message.indexOf( 'expected a canonical PR identity' ) !== -1;
     } );
     assert.deepEqual( fixture.calls.createdComments, [] );
 } );
@@ -756,6 +781,53 @@ QUnit.test( 'trusted lifecycle marker posts building state and removes the prior
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 299, 600 ] );
 } );
 
+QUnit.test( 'target and fallback lifecycle callbacks converge on one build generation', async function( assert )
+{
+    var module = await modulePromise;
+    var targetRun = lifecycleRun();
+    var targetMarker = lifecycleArtifact( 'synchronize' );
+    var fallbackRun = lifecycleRun( {
+        id: 501,
+        run_number: 51,
+        event: 'pull_request',
+        pull_requests: [ { number: 19 } ],
+        created_at: '2026-07-11T10:00:02Z',
+        run_started_at: '2026-07-11T10:00:02Z',
+        updated_at: '2026-07-11T10:00:04Z'
+    } );
+    var fallbackMarker = lifecycleArtifact( 'synchronize', {
+        id: 601,
+        name: lifecycleArtifact( 'synchronize' ).name.replace( 'run-500', 'run-501' ),
+        created_at: '2026-07-11T10:00:03Z',
+        workflow_run: { id: 501, head_sha: SHA_B }
+    } );
+    var buildRun = workflowRun( {
+        status: 'in_progress',
+        conclusion: null,
+        created_at: '2026-07-11T10:00:03Z',
+        run_started_at: '2026-07-11T10:00:03Z',
+        updated_at: '2026-07-11T10:00:04Z'
+    } );
+    var fixture = apiFixture( {
+        workflowRuns: [],
+        runArtifactsByRun: { 500: [ targetMarker ], 501: [ fallbackMarker ] }
+    } );
+
+    await synchronizeLifecycle( module, fixture, targetRun );
+    fixture.settings.workflowRuns = [ buildRun ];
+    fixture.settings.comments = [ {
+        id: 400,
+        body: fixture.calls.createdComments[ 0 ].body,
+        user: { login: 'github-actions[bot]' }
+    } ];
+    await synchronizeLifecycle( module, fixture, fallbackRun );
+
+    assert.equal( fixture.calls.dispatchedEvents.length, 1 );
+    assert.equal( fixture.calls.createdComments.length, 1 );
+    assert.ok( fixture.calls.updatedComments.every( function( comment ) { return comment.id === 400; } ) );
+    assert.deepEqual( fixture.calls.deletedArtifacts, [ 600, 601 ] );
+} );
+
 QUnit.test( 'pull-request fallback requires server-associated PR identity', async function( assert )
 {
     var module = await modulePromise;
@@ -1031,23 +1103,70 @@ QUnit.test( 'lifecycle rerun selects its exact attempt marker and removes stale 
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 600, 601 ] );
 } );
 
-QUnit.test( 'workflow identity resolver covers CI and lifecycle events', async function( assert )
+QUnit.test( 'lifecycle run title must match marker identity', async function( assert )
+{
+    var module = await modulePromise;
+    var run = lifecycleRun( {
+        name: 'PR VSIX Event #20 synchronize',
+        display_title: 'PR VSIX Event #20 synchronize'
+    } );
+    var fixture = apiFixture( { runArtifacts: [ lifecycleArtifact( 'synchronize' ) ] } );
+
+    await assert.rejects( synchronizeLifecycle( module, fixture, run ), function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message.indexOf( 'run title and marker identity differ' ) !== -1;
+    } );
+    assert.deepEqual( fixture.calls.createdComments, [] );
+    assert.deepEqual( fixture.calls.dispatchedEvents, [] );
+} );
+
+QUnit.test( 'workflow identity resolver classifies canonical titles without workflow_run.name', async function( assert )
 {
     var module = await modulePromise;
 
     assert.deepEqual( module.resolveWorkflowIdentity( workflowRun() ), {
+        source: 'ci',
         pullRequestNumber: 19,
         processable: true
     } );
     assert.deepEqual( module.resolveWorkflowIdentity( workflowRun( {
         display_title: ciTitle( { action: 'edited' } )
     } ) ), {
+        source: 'ci',
         pullRequestNumber: 19,
         processable: false
     } );
     assert.deepEqual( module.resolveWorkflowIdentity( lifecycleRun() ), {
+        source: 'lifecycle',
         pullRequestNumber: 19,
         processable: true
+    } );
+    assert.deepEqual( module.resolveWorkflowIdentity( lifecycleRun( {
+        event: 'pull_request',
+        name: 'runtime name is not workflow identity'
+    } ) ), {
+        source: 'lifecycle',
+        pullRequestNumber: 19,
+        processable: true
+    } );
+    assert.throws( function()
+    {
+        module.resolveWorkflowIdentity( lifecycleRun( { event: 'repository_dispatch' } ) );
+    }, function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message.indexOf( 'unexpected workflow identity' ) !== -1;
+    } );
+    assert.throws( function()
+    {
+        module.resolveWorkflowIdentity( lifecycleRun( {
+            display_title: 'PR VSIX Event #19 synchronize extra'
+        } ) );
+    }, function( error )
+    {
+        return error instanceof module.PrVsixInvariantError &&
+            error.message.indexOf( 'expected a canonical PR identity' ) !== -1;
     } );
     var malformedLifecycleError;
     try
@@ -1062,6 +1181,25 @@ QUnit.test( 'workflow identity resolver covers CI and lifecycle events', async f
     }
     assert.ok( malformedLifecycleError instanceof module.PrVsixInvariantError );
     assert.equal( malformedLifecycleError.message, 'workflow run: expected a canonical PR identity' );
+} );
+
+QUnit.test( 'resolve CLI accepts the live PR 132 lifecycle payload shape', function( assert )
+{
+    var run = lifecycleRun( {
+        id: 29188370308,
+        run_number: 132,
+        workflow_id: 311626908,
+        name: 'PR VSIX Event #132 opened',
+        display_title: 'PR VSIX Event #132 opened',
+        event: 'pull_request_target',
+        head_sha: 'c2b3aa1582ee2f2e3ec7f3271fac85ab182ee7dd',
+        pull_requests: [ { number: 132 } ]
+    } );
+    var result = resolveWorkflowEvent( run );
+
+    assert.equal( result.status, 0 );
+    assert.equal( result.stdout, 'pull-request-number=132\nprocessable=true\n' );
+    assert.equal( result.stderr, '' );
 } );
 
 QUnit.test( 'GitHub API adapter paginates and dispatches refresh events', async function( assert )

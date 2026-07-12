@@ -562,14 +562,19 @@ QUnit.test( 'privileged PR VSIX publisher executes trusted metadata code only', 
     var baseEventWorkflow = readWorkflow( 'pr-vsix-base-event.yml' );
     var eventWorkflow = readWorkflow( 'pr-vsix-event.yml' );
     var refreshWorkflow = readWorkflow( 'pr-vsix-refresh.yml' );
+    var publisherScript = readRepositoryFile( path.join( 'scripts', 'ci', 'sync-pr-vsix-comment.mjs' ) );
 
     assert.ok( workflow.indexOf( 'workflow_run:' ) !== -1 );
     assert.ok( workflow.indexOf( 'pull_request_target:' ) === -1 );
     assert.ok( workflow.indexOf( '      - PR VSIX Build' ) !== -1 );
     assert.ok( workflow.indexOf( '      - PR VSIX Event' ) !== -1 );
     assert.ok( workflow.indexOf( '      - in_progress\n      - completed' ) !== -1 );
-    assert.ok( workflow.indexOf( "github.event.workflow_run.name == 'PR VSIX Build'" ) !== -1 );
-    assert.ok( workflow.indexOf( "github.event.workflow_run.name == 'PR VSIX Event'" ) !== -1 );
+    assert.ok( workflow.indexOf( "github.event.workflow_run.event == 'repository_dispatch'" ) !== -1 );
+    assert.ok( workflow.indexOf( "github.event.workflow_run.event == 'pull_request_target'" ) !== -1 );
+    assert.ok( workflow.indexOf( "github.event.workflow_run.event == 'pull_request'" ) !== -1 );
+    assert.ok( workflow.indexOf( 'github.event.workflow_run.name' ) === -1 );
+    assert.ok( publisherScript.indexOf( 'workflowRun.name' ) === -1 );
+    assert.ok( publisherScript.indexOf( 'event.workflow_run.name' ) === -1 );
     assert.ok( workflow.indexOf( 'actions: write' ) !== -1 );
     assert.ok( workflow.indexOf( 'permissions: {}' ) !== -1 );
     assert.ok( workflow.indexOf( '      contents: read' ) !== -1 );

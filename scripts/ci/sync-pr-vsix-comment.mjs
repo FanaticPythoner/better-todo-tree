@@ -95,7 +95,6 @@ function requireWorkflowRun(run) {
         updatedAt,
         displayTitle: String(run.display_title || ''),
         event: String(run.event || ''),
-        name: String(run.name || ''),
         status: String(run.status || ''),
         conclusion: String(run.conclusion || ''),
         pullRequestNumbers: Array.isArray(run.pull_requests) ? run.pull_requests.map((pullRequest) =>
@@ -129,6 +128,37 @@ function parseLifecycleRunName(displayTitle) {
         /^PR VSIX Event #([1-9][0-9]*) (closed|edited|labeled|unlabeled|opened|reopened|synchronize)$/
     );
     return match ? Object.freeze({ pullRequestNumber: Number(match[1]), action: match[2] }) : undefined;
+}
+
+function classifyWorkflowRun(run) {
+    const workflowRun = requireWorkflowRun(run);
+    const ciContext = parseCiRunName(workflowRun.displayTitle);
+    if (ciContext) {
+        if (workflowRun.event !== 'repository_dispatch') {
+            throw new PrVsixInvariantError('PR VSIX build workflow run: unexpected workflow identity');
+        }
+        return Object.freeze({
+            source: 'ci',
+            workflowRun,
+            context: ciContext,
+            processable: CI_ACTIONS.has(ciContext.action)
+        });
+    }
+
+    const lifecycleContext = parseLifecycleRunName(workflowRun.displayTitle);
+    if (lifecycleContext) {
+        if (!['pull_request', 'pull_request_target'].includes(workflowRun.event)) {
+            throw new PrVsixInvariantError('lifecycle workflow run: unexpected workflow identity');
+        }
+        return Object.freeze({
+            source: 'lifecycle',
+            workflowRun,
+            context: lifecycleContext,
+            processable: true
+        });
+    }
+
+    throw new PrVsixInvariantError('workflow run: expected a canonical PR identity');
 }
 
 function parseLifecycleArtifactName(name) {
@@ -887,14 +917,12 @@ async function synchronizeCompletedRun({ api, repository, run, pullRequest, arti
 }
 
 async function synchronizeWorkflowRun({ api, repository, run, targets, action }) {
-    const rawRun = requireWorkflowRun(run);
-    if (rawRun.name !== 'PR VSIX Build' || rawRun.event !== 'repository_dispatch') {
+    const identity = classifyWorkflowRun(run);
+    if (identity.source !== 'ci') {
         throw new PrVsixInvariantError('PR VSIX build workflow run: unexpected workflow identity');
     }
-    const context = parseCiRunName(rawRun.displayTitle);
-    if (!context) {
-        throw new PrVsixInvariantError(`workflow run ${rawRun.id}: missing canonical PR run name`);
-    }
+    const rawRun = identity.workflowRun;
+    const context = identity.context;
     if (!CI_ACTIONS.has(context.action)) {
         return [];
     }
@@ -1022,11 +1050,11 @@ async function removeLifecycleMarkers(api, artifacts, workflowRun) {
 }
 
 async function synchronizeLifecycleRun({ api, repository, run, targets, mergeRetry }) {
-    const workflowRun = requireWorkflowRun(run);
-    if (workflowRun.name !== 'PR VSIX Event' ||
-        !['pull_request', 'pull_request_target'].includes(workflowRun.event)) {
+    const identity = classifyWorkflowRun(run);
+    if (identity.source !== 'lifecycle') {
         throw new PrVsixInvariantError('lifecycle workflow run: unexpected workflow identity');
     }
+    const workflowRun = identity.workflowRun;
 
     const artifacts = await api.listRunArtifacts(workflowRun.id);
     const markers = artifacts.map((artifact) => ({ artifact, marker: parseLifecycleArtifactName(artifact.name) }))
@@ -1039,6 +1067,10 @@ async function synchronizeLifecycleRun({ api, repository, run, targets, mergeRet
     }
 
     const { marker } = markers[0];
+    if (marker.pullRequestNumber !== identity.context.pullRequestNumber ||
+        marker.action !== identity.context.action) {
+        throw new PrVsixInvariantError(`lifecycle workflow run ${workflowRun.id}: run title and marker identity differ`);
+    }
     let pullRequest = await api.getPullRequest(marker.pullRequestNumber);
     const expectedState = marker.action === 'closed' ? 'closed' : 'open';
     const baseRepositoryMatches = pullRequest.base && pullRequest.base.repo &&
@@ -1185,24 +1217,12 @@ async function synchronizeLifecycleRun({ api, repository, run, targets, mergeRet
 }
 
 function resolveWorkflowIdentity(run) {
-    const workflowRun = requireWorkflowRun(run);
-    if (workflowRun.name === 'PR VSIX Build' && workflowRun.event === 'repository_dispatch') {
-        const context = parseCiRunName(workflowRun.displayTitle);
-        if (context) {
-            return Object.freeze({
-                pullRequestNumber: context.pullRequestNumber,
-                processable: CI_ACTIONS.has(context.action)
-            });
-        }
-    }
-    if (workflowRun.name === 'PR VSIX Event' &&
-        ['pull_request', 'pull_request_target'].includes(workflowRun.event)) {
-        const context = parseLifecycleRunName(workflowRun.displayTitle);
-        if (context) {
-            return Object.freeze({ pullRequestNumber: context.pullRequestNumber, processable: true });
-        }
-    }
-    throw new PrVsixInvariantError('workflow run: expected a canonical PR identity');
+    const identity = classifyWorkflowRun(run);
+    return Object.freeze({
+        source: identity.source,
+        pullRequestNumber: identity.context.pullRequestNumber,
+        processable: identity.processable
+    });
 }
 
 async function main() {
@@ -1214,10 +1234,10 @@ async function main() {
     if (!event.workflow_run) {
         throw new PrVsixInvariantError('workflow event: expected workflow_run metadata');
     }
+    const identity = classifyWorkflowRun(event.workflow_run);
     if (process.argv[2] === 'resolve') {
-        const identity = resolveWorkflowIdentity(event.workflow_run);
         process.stdout.write([
-            `pull-request-number=${identity.pullRequestNumber}`,
+            `pull-request-number=${identity.context.pullRequestNumber}`,
             `processable=${identity.processable}`,
             ''
         ].join('\n'));
@@ -1232,11 +1252,11 @@ async function main() {
         apiUrl: process.env.GITHUB_API_URL || 'https://api.github.com',
         retry: apiRetryFromEnvironment()
     });
-    const mergeRetry = event.workflow_run.name === 'PR VSIX Event' ? requireMergeRetry({
+    const mergeRetry = identity.source === 'lifecycle' ? requireMergeRetry({
         attempts: Number(process.env.PR_VSIX_MERGE_ATTEMPTS),
         intervalMs: Number(process.env.PR_VSIX_MERGE_INTERVAL_MS)
     }) : undefined;
-    const results = event.workflow_run.name === 'PR VSIX Build' ? await synchronizeWorkflowRun({
+    const results = identity.source === 'ci' ? await synchronizeWorkflowRun({
         api,
         repository,
         run: event.workflow_run,
