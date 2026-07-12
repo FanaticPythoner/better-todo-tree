@@ -70,6 +70,15 @@ function ensureOutputDirectory(directory) {
     fs.mkdirSync(directory, { recursive: true });
 }
 
+function outputBaseName(packageJson) {
+    const configured = process.env.VSIX_BASENAME;
+    const value = configured || `${packageJson.name}-${packageJson.version}`;
+    if (!/^[A-Za-z0-9._-]+$/.test(value)) {
+        throw new Error('VSIX_BASENAME must be a portable basename.');
+    }
+    return value;
+}
+
 function isSelectedTargetPackage(fileName, packageName, selectedTargets) {
     const extension = '.vsix';
     const prefix = `${packageName}-`;
@@ -185,6 +194,7 @@ async function main() {
     const supportedTargets = readJson(targetsPath);
     const outputDirectory = process.env.VSIX_OUTDIR ? path.resolve(repoRoot, process.env.VSIX_OUTDIR) : defaultOutputDirectory;
     const selectedTargets = normalizeRequestedTargets(process.argv.slice(2), supportedTargets);
+    const baseName = outputBaseName(packageJson);
 
     ensureOutputDirectory(outputDirectory);
     cleanSelectedTargetOutputs(outputDirectory, packageJson.name, selectedTargets);
@@ -196,7 +206,7 @@ async function main() {
 
         for (const target of selectedTargets) {
             stageRipgrepForTarget(target);
-            const outputPath = path.join(outputDirectory, `${packageJson.name}-${packageJson.version}-${target}.vsix`);
+            const outputPath = path.join(outputDirectory, `${baseName}-${target}.vsix`);
             await packageTarget(target, outputPath);
         }
     } finally {

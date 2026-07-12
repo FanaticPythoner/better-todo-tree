@@ -10,7 +10,7 @@ import {
     automaticBuildAllowed,
     createGitHubApi,
     parseCommentMetadata,
-    previewArtifactName,
+    previewArtifactNames,
     pullRequestContext,
     waitForStablePullRequest
 } from './sync-pr-vsix-comment.mjs';
@@ -55,26 +55,26 @@ function scheduledRefreshCause({ pullRequest, context, comments, artifacts, now,
     if (metadata.phase !== 'completed') {
         return 'repair';
     }
+    const expectedNames = previewArtifactNames(pullRequest.number);
     if (!metadata.artifactId) {
         return artifacts.length > 0 || metadata.conclusion === 'success' ? 'repair' : undefined;
     }
-    if (artifacts.length !== 1) {
+    if (artifacts.length !== expectedNames.length) {
         return 'repair';
     }
 
-    const expectedName = previewArtifactName(pullRequest.number);
-    const artifact = artifacts.find((candidate) =>
-        candidate.id === metadata.artifactId && candidate.name === expectedName &&
-        candidate.workflow_run && candidate.workflow_run.id === metadata.runId
-    );
-    if (!artifact || artifact.expired) {
+    const artifactsByName = new Map(artifacts.map((artifact) => [artifact.name, artifact]));
+    const current = expectedNames.map((name) => artifactsByName.get(name));
+    if (!current.some((artifact) => artifact && artifact.id === metadata.artifactId) ||
+        current.some((artifact) => !artifact || artifact.expired ||
+            !artifact.workflow_run || artifact.workflow_run.id !== metadata.runId)) {
         return 'repair';
     }
-    const expiresAt = Date.parse(artifact.expires_at);
-    if (!Number.isFinite(expiresAt)) {
+    const expirations = current.map((artifact) => Date.parse(artifact.expires_at));
+    if (expirations.some((expiresAt) => !Number.isFinite(expiresAt))) {
         return 'repair';
     }
-    return expiresAt - now <= renewalWindowMs ? 'renewal' : undefined;
+    return Math.min(...expirations) - now <= renewalWindowMs ? 'renewal' : undefined;
 }
 
 function requiresScheduledRefresh(options) {
@@ -170,12 +170,17 @@ function managedCommentPullRequestNumber(comment) {
 
 function managedArtifactPullRequestNumber(artifact) {
     const name = artifact && String(artifact.name || '');
-    const suffix = '.vsix';
-    if (!name.startsWith('better-todo-tree-pr-') || !name.endsWith(suffix)) {
+    const prefix = 'better-todo-tree-pr-';
+    if (!name.startsWith(prefix) || !name.endsWith('.vsix')) {
         return undefined;
     }
-    const value = Number(name.slice('better-todo-tree-pr-'.length, -suffix.length));
-    return Number.isSafeInteger(value) && value > 0 && previewArtifactName(value) === name ? value : undefined;
+    const separator = name.indexOf('-', prefix.length);
+    const value = Number(name.slice(prefix.length, separator));
+    return Number.isSafeInteger(value) && value > 0 && previewArtifactNames(value).includes(name) ? value : undefined;
+}
+
+function artifactsForPullRequest(artifactsByName, pullRequestNumber) {
+    return previewArtifactNames(pullRequestNumber).flatMap((name) => artifactsByName.get(name) || []);
 }
 
 function groupScheduledState(pullRequests, comments, artifacts) {
@@ -256,8 +261,8 @@ async function refreshOpenPullRequests({
     ).slice(0, batchSize) : [];
     const decisions = await mapConcurrent(openCandidates, concurrency, async (listedPullRequest) => {
         const comments = scheduled ? scheduledState.commentsByPullRequest.get(listedPullRequest.number) || [] : [];
-        const artifactName = previewArtifactName(listedPullRequest.number);
-        const artifacts = scheduled ? scheduledState.artifactsByName.get(artifactName) || [] : [];
+        const artifacts = scheduled ?
+            artifactsForPullRequest(scheduledState.artifactsByName, listedPullRequest.number) : [];
         if (!automaticBuildAllowed(listedPullRequest)) {
             if (scheduled && requiresAuthorizationRevocation({
                 pullRequest: listedPullRequest,
@@ -319,7 +324,7 @@ async function refreshOpenPullRequests({
         concurrency,
         async (pullRequestNumber) => {
             const comments = scheduledState.commentsByPullRequest.get(pullRequestNumber) || [];
-            const artifacts = scheduledState.artifactsByName.get(previewArtifactName(pullRequestNumber)) || [];
+            const artifacts = artifactsForPullRequest(scheduledState.artifactsByName, pullRequestNumber);
             if (!requiresClosedRepair(comments, artifacts)) {
                 return 'current';
             }

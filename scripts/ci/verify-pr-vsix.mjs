@@ -33,9 +33,9 @@ function requireTarget(target) {
     return ripgrepTargetPlatforms.get(target);
 }
 
-function expectedBundleFileNames(packageMetadata, targets) {
+function expectedBundleFileNames(packageMetadata, targets, baseName = `${packageMetadata.name}-${packageMetadata.version}`) {
     return targets.map((target) =>
-        `${packageMetadata.name}-${packageMetadata.version}-${target}.vsix`
+        `${baseName}-${target}.vsix`
     ).sort();
 }
 
@@ -161,14 +161,14 @@ function verifyTargetVsix(vsixPath, target) {
     });
 }
 
-function verifyPrVsixBundle(directory, packageMetadata, targets) {
+function verifyPrVsixBundle(directory, packageMetadata, targets, baseName = `${packageMetadata.name}-${packageMetadata.version}`) {
     const resolvedDirectory = path.resolve(repoRoot, directory);
     const stat = statPath(resolvedDirectory, 'PR VSIX bundle');
     if (!stat.isDirectory()) {
         throw new PrVsixVerificationError('PR VSIX bundle path must be a directory');
     }
     verifyTargetMap(targets);
-    const expectedFiles = expectedBundleFileNames(packageMetadata, targets);
+    const expectedFiles = expectedBundleFileNames(packageMetadata, targets, baseName);
     const actualFiles = readDirectory(resolvedDirectory).filter((fileName) => fileName.endsWith('.vsix')).sort();
     if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
         throw new PrVsixVerificationError(
@@ -176,7 +176,7 @@ function verifyPrVsixBundle(directory, packageMetadata, targets) {
         );
     }
     const files = targets.map((target) => verifyTargetVsix(
-        path.join(resolvedDirectory, `${packageMetadata.name}-${packageMetadata.version}-${target}.vsix`),
+        path.join(resolvedDirectory, `${baseName}-${target}.vsix`),
         target
     ));
     return Object.freeze({
@@ -193,7 +193,12 @@ function main() {
     }
     const packageMetadata = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
     const targets = JSON.parse(fs.readFileSync(targetsPath, 'utf8'));
-    process.stdout.write(`${JSON.stringify(verifyPrVsixBundle(process.argv[2], packageMetadata, targets))}\n`);
+    process.stdout.write(`${JSON.stringify(verifyPrVsixBundle(
+        process.argv[2],
+        packageMetadata,
+        targets,
+        process.env.VSIX_BASENAME
+    ))}\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === modulePath) {

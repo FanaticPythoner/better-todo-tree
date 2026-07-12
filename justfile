@@ -209,9 +209,11 @@ test-actions-pr-vsix-build:
   bundle_dir="artifacts/vsix/pr-platform-test"
   rm -rf "$bundle_dir"
   VSIX_OUTDIR="$bundle_dir" \
+    VSIX_BASENAME="better-todo-tree-pr-1" \
     SKIP_PREPUBLISH=1 \
     node scripts/release/build-vsix.mjs all
-  node scripts/ci/verify-pr-vsix.mjs "$bundle_dir"
+  VSIX_BASENAME="better-todo-tree-pr-1" \
+    node scripts/ci/verify-pr-vsix.mjs "$bundle_dir"
 
 # Examples:
 #   just test-actions-latest-build

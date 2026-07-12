@@ -121,17 +121,18 @@ function assertFullCommitSha( assert, ref, message )
     assert.ok( isFullCommitSha( ref ), message );
 }
 
-function assertPinnedAction( assert, references, action, label )
+function assertPinnedAction( assert, references, action, label, expectedCount )
 {
     var actionReferences = getActionReferences( references, action );
     var reference = actionReferences[ 0 ];
+    var count = expectedCount || 1;
 
     assert.equal(
         actionReferences.length,
-        1,
-        workflowAssertionMessage( label, action + ' is configured once' )
+        count,
+        workflowAssertionMessage( label, action + ' reference count matches the workflow contract' )
     );
-    if( actionReferences.length !== 1 )
+    if( actionReferences.length !== count )
     {
         throw new Error( 'workflow action reference count mismatch: ' + action );
     }
@@ -146,11 +147,14 @@ function assertPinnedAction( assert, references, action, label )
 
 function assertWorkflowActionRevision( assert, workflowName, expectedRevision )
 {
+    var expectedCount = workflowName === 'pr-vsix-build.yml' &&
+        expectedRevision.action === ACTION_REVISIONS.uploadArtifact.action ? 2 : 1;
     var reference = assertPinnedAction(
         assert,
         getExternalActionReferences( readWorkflow( workflowName ) ),
         expectedRevision.action,
-        workflowName
+        workflowName,
+        expectedCount
     );
 
     assert.equal(
@@ -488,7 +492,7 @@ QUnit.test( 'trusted PR workflow builds every verified platform VSIX after all g
     var bundleIndex = buildWorkflow.indexOf( 'run: npm run vscode:prepublish' );
     var platformBuildIndex = buildWorkflow.indexOf( 'node scripts/release/build-vsix.mjs all' );
     var verifyIndex = buildWorkflow.indexOf( 'node scripts/ci/verify-pr-vsix.mjs' );
-    var uploadIndex = buildWorkflow.indexOf( 'name: Upload platform VSIX bundle' );
+    var uploadIndex = buildWorkflow.indexOf('name: Upload ${{ matrix.target }} VSIX');
 
     assert.ok( buildWorkflow.indexOf( 'rm -rf artifacts/vsix' ) !== -1 );
     [ testIndex, bundleIndex, platformBuildIndex, verifyIndex, uploadIndex ].forEach( function( index )
@@ -499,16 +503,16 @@ QUnit.test( 'trusted PR workflow builds every verified platform VSIX after all g
     assert.ok( bundleIndex < platformBuildIndex );
     assert.ok( platformBuildIndex < verifyIndex );
     assert.ok( verifyIndex < uploadIndex );
-    assert.ok( buildWorkflow.indexOf( 'name: better-todo-tree-pr-${{ steps.context.outputs.pull-request-number }}.vsix' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'VSIX_BASENAME: better-todo-tree-pr-${{ steps.context.outputs.pull-request-number }}' ) !== -1 );
     assert.ok( buildWorkflow.indexOf( 'path: artifacts/vsix/*.vsix' ) !== -1 );
     assert.ok( buildWorkflow.indexOf( 'retention-days: 30' ) !== -1 );
-    assert.ok( buildWorkflow.indexOf( 'archive: true' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'archive: false' ) !== -1 );
     assert.ok( buildWorkflow.indexOf( 'overwrite: true' ) !== -1 );
     assert.ok( buildWorkflow.indexOf( 'compression-level: 0' ) !== -1 );
     assert.ok( buildWorkflow.indexOf( 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a' ) !== -1 );
     assert.equal(
         buildWorkflow.split( 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a' ).length - 1,
-        1
+        2
     );
     assert.ok( buildWorkflow.indexOf( 'actions/cache' ) === -1 );
     assert.ok( buildWorkflow.indexOf( 'timeout-minutes: 30' ) !== -1 );
@@ -518,7 +522,7 @@ QUnit.test( 'trusted PR workflow builds every verified platform VSIX after all g
         'Run test suite',
         'Build production bundle',
         'Build platform VSIX bundle',
-        'Upload platform VSIX bundle'
+        'Stage platform VSIX files'
     ].forEach( function( stepName )
     {
         assert.ok(
@@ -529,8 +533,10 @@ QUnit.test( 'trusted PR workflow builds every verified platform VSIX after all g
     } );
     assert.equal(
         buildWorkflow.split( "if: steps.context.outputs.build == 'true'" ).length - 1,
-        6
+        7
     );
+    assert.ok( buildWorkflow.indexOf( 'matrix:\n        target: ${{ fromJson(needs.test-build.outputs.targets) }}' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'node scripts/ci/delete-pr-vsix-staging.mjs' ) !== -1 );
 } );
 
 QUnit.test( 'trusted orchestration isolates and cancels only one PR generation', function( assert )
@@ -595,7 +601,7 @@ QUnit.test( 'privileged PR VSIX publisher executes trusted metadata code only', 
     assert.ok( workflow.indexOf( 'cancel-in-progress: false' ) !== -1 );
     assert.ok( workflow.indexOf( 'PR_VSIX_MONITOR_POLL_MS: 10000' ) !== -1 );
     assert.ok( workflow.indexOf( 'PR_VSIX_MONITOR_HEARTBEAT_MS: 60000' ) !== -1 );
-    assert.ok( workflow.indexOf( 'PR_VSIX_MONITOR_TIMEOUT_MS: 2400000' ) !== -1 );
+    assert.ok( workflow.indexOf( 'PR_VSIX_MONITOR_TIMEOUT_MS: 3600000' ) !== -1 );
     assert.ok( workflow.indexOf( 'timeout-minutes: 75' ) !== -1 );
     assert.ok( workflow.indexOf( 'PR_VSIX_API_RETRY_ATTEMPTS: 4' ) !== -1 );
     assert.ok( workflow.indexOf( 'github.event.workflow_run.head_sha }}\n          fetch-depth' ) === -1 );

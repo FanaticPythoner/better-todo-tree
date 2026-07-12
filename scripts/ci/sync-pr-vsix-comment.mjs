@@ -31,6 +31,19 @@ const CI_ACTIONS = new Set([
 const modulePath = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(modulePath), '..', '..');
 const targetsPath = path.join(repoRoot, 'scripts', 'release', 'targets.json');
+const previewTargets = Object.freeze(JSON.parse(fs.readFileSync(targetsPath, 'utf8')));
+const previewTargetLabels = Object.freeze({
+    'win32-x64': 'Windows x64',
+    'win32-arm64': 'Windows Arm64',
+    'linux-x64': 'Linux x64',
+    'linux-arm64': 'Linux Arm64',
+    'linux-armhf': 'Linux Armhf',
+    'darwin-x64': 'macOS Intel',
+    'darwin-arm64': 'macOS Apple silicon',
+    'alpine-x64': 'Alpine Linux x64',
+    'alpine-arm64': 'Alpine Linux Arm64',
+    web: 'Web'
+});
 
 class PrVsixInvariantError extends Error {
     constructor(message, options) {
@@ -111,8 +124,15 @@ function requireWorkflowRun(run) {
     });
 }
 
-function previewArtifactName(pullRequestNumber) {
-    return `${ARTIFACT_NAME_PREFIX}${requireInteger(pullRequestNumber, 'pull request number')}.vsix`;
+function previewArtifactName(pullRequestNumber, target) {
+    if (!previewTargets.includes(target)) {
+        throw new PrVsixInvariantError(`preview target: unsupported ${target}`);
+    }
+    return `${ARTIFACT_NAME_PREFIX}${requireInteger(pullRequestNumber, 'pull request number')}-${target}.vsix`;
+}
+
+function previewArtifactNames(pullRequestNumber) {
+    return previewTargets.map((target) => previewArtifactName(pullRequestNumber, target));
 }
 
 function parseCiRunName(displayTitle) {
@@ -369,7 +389,7 @@ function existingStateDominates(existing, incoming) {
 
 function isArtifactForRun(artifact, run, pullRequestNumber) {
     const createdAt = artifact && timestamp(artifact.created_at, 'artifact creation time');
-    return artifact && artifact.name === previewArtifactName(pullRequestNumber) &&
+    return artifact && previewArtifactNames(pullRequestNumber).includes(artifact.name) &&
         artifact.workflow_run && artifact.workflow_run.id === run.id &&
         artifact.workflow_run.head_sha === run.workflowHeadSha &&
         createdAt >= timestamp(run.startedAt, 'workflow run start time') &&
@@ -383,35 +403,41 @@ function isCurrentArtifact(artifact, run, pullRequestNumber) {
         Number.isFinite(timestamp(artifact.expires_at, 'artifact expiry time'));
 }
 
-function renderReadyComment({ repository, run, artifact, targets }) {
-    if (!isCurrentArtifact(artifact, run, run.pullRequestNumber)) {
-        throw new PrVsixInvariantError('artifact: expected a current SHA-256-addressed artifact');
-    }
+function renderReadyComment({ repository, run, artifact, artifacts = artifact ? [artifact] : [], targets }) {
     if (!Array.isArray(targets) || targets.length === 0) {
         throw new PrVsixInvariantError('targets: expected a non-empty target list');
     }
+    const byName = new Map(artifacts.map((artifact) => [artifact.name, artifact]));
+    const available = targets.map((target) => Object.freeze({
+        target,
+        label: previewTargetLabels[target],
+        artifact: byName.get(previewArtifactName(run.pullRequestNumber, target))
+    })).filter((entry) => entry.artifact && isCurrentArtifact(entry.artifact, run, run.pullRequestNumber));
+    if (available.length === 0 || available.some((entry) => !entry.label)) {
+        throw new PrVsixInvariantError('artifacts: expected current SHA-256-addressed target artifacts');
+    }
 
     return [
-        renderMarker(run, artifact),
+        renderMarker(run, available[0].artifact),
         '### PR VSIX: ready',
         '',
         `Full CI passed for [\`${run.headSha.slice(0, 12)}\`](${commitUrl(repository, run.headSha)}).`,
         '',
-        `[Download all ${targets.length} platform-specific VSIX files](${artifactUrl(repository, run.id, artifact.id)})`,
-        '',
         '**Security:** This VSIX contains unreviewed code from this pull request. Use an isolated VS Code profile and a disposable test workspace without production credentials.',
         '',
-        `Bundle targets: ${targets.map((target) => `\`${target}\``).join(', ')}`,
+        '| Platform | Target | Download |',
+        '| --- | --- | --- |',
+        ...available.map((entry) =>
+            `| ${entry.label} | \`${entry.target}\` | [Download VSIX](${artifactUrl(repository, run.id, entry.artifact.id)}) |`
+        ),
         '',
-        `Artifact digest: \`${artifact.digest}\`  `,
-        `Expires: \`${artifact.expires_at}\``,
+        `Expires: \`${available.map((entry) => entry.artifact.expires_at).sort()[0]}\``,
         '',
         'Installation:',
-        '1. Download and extract the artifact while signed in to GitHub.',
-        '2. Select the `.vsix` whose target suffix matches the test platform.',
-        '3. Run `Profiles: Create a Temporary Profile` from the VS Code Command Palette.',
-        '4. Open a disposable test workspace without production credentials.',
-        '5. Run `Extensions: Install from VSIX...` from the Command Palette.',
+        '1. Download the VSIX matching the test platform while signed in to GitHub.',
+        '2. Run `Profiles: Create a Temporary Profile` from the VS Code Command Palette.',
+        '3. Open a disposable test workspace without production credentials.',
+        '4. Run `Extensions: Install from VSIX...` from the Command Palette.',
         '',
         `[Workflow run](${runUrl(repository, run.id)})`
     ].join('\n');
@@ -1390,14 +1416,22 @@ async function reconcileNamespaceInvalidation({ api, pullRequestNumber, body, ru
     });
 }
 
-async function removePreviewArtifacts(api, pullRequestNumber, retainedArtifactId, retainedRun) {
-    const name = previewArtifactName(pullRequestNumber);
-    const artifacts = await api.listArtifactsByName(name);
+async function listPreviewArtifacts(api, pullRequestNumber) {
+    const groups = await Promise.all(previewArtifactNames(pullRequestNumber).map((name) =>
+        api.listArtifactsByName(name)
+    ));
+    return groups.flat();
+}
+
+async function removePreviewArtifacts(api, pullRequestNumber, retainedArtifactIds = [], retainedRun) {
+    const names = new Set(previewArtifactNames(pullRequestNumber));
+    const retainedIds = new Set(retainedArtifactIds);
+    const artifacts = await listPreviewArtifacts(api, pullRequestNumber);
     const removals = artifacts.filter((artifact) => {
-        if (artifact.name !== name) {
+        if (!names.has(artifact.name)) {
             throw new PrVsixInvariantError(`artifact ${artifact.id}: managed name mismatch`);
         }
-        if (artifact.id === retainedArtifactId) {
+        if (retainedIds.has(artifact.id)) {
             return false;
         }
         if (!retainedRun) {
@@ -1428,13 +1462,13 @@ async function removeFailureArtifacts(
     invalidatedArtifactIds = [],
     retainedArtifactIds = []
 ) {
-    const name = previewArtifactName(pullRequestNumber);
-    const artifacts = await api.listArtifactsByName(name);
+    const names = new Set(previewArtifactNames(pullRequestNumber));
+    const artifacts = await listPreviewArtifacts(api, pullRequestNumber);
     const observationCreatedAt = timestamp(observationRun.createdAt, 'workflow run creation time');
     const invalidatedIds = new Set(invalidatedArtifactIds);
     const retainedIds = new Set(retainedArtifactIds);
     const removals = artifacts.filter((artifact) => {
-        if (artifact.name !== name) {
+        if (!names.has(artifact.name)) {
             throw new PrVsixInvariantError(`artifact ${artifact.id}: managed name mismatch`);
         }
         if (retainedIds.has(artifact.id) || retainedRun && isArtifactForRun(artifact, retainedRun, pullRequestNumber)) {
@@ -1465,21 +1499,23 @@ async function removeCompletedRunArtifacts(api, run) {
 }
 
 async function synchronizeCompletedRun({ api, repository, run, pullRequest, artifacts, targets }) {
-    const name = previewArtifactName(pullRequest.number);
     const matches = artifacts.filter((artifact) => isCurrentArtifact(artifact, run, pullRequest.number));
     let body;
-    let retainedArtifact;
+    let retainedArtifacts = [];
     let invariantError;
-    if (run.conclusion === 'success' && matches.length === 1) {
-        retainedArtifact = matches[0];
-        body = renderReadyComment({ repository, run, artifact: retainedArtifact, targets });
+    const expectedNames = targets.map((target) => previewArtifactName(pullRequest.number, target));
+    if (run.conclusion === 'success' && matches.length > 0) {
+        retainedArtifacts = matches;
+        body = renderReadyComment({ repository, run, artifacts: retainedArtifacts, targets });
     } else if (run.conclusion === 'success') {
         body = renderUnavailableComment({
             repository,
             run,
-            reason: `CI succeeded, but the run produced ${matches.length} current artifacts named \`${name}\`.`
+            reason: `CI succeeded, but the run produced ${matches.length} of ${expectedNames.length} target artifacts.`
         });
-        invariantError = new PrVsixInvariantError(`workflow run ${run.id}: expected one ${name} artifact, found ${matches.length}`);
+        invariantError = new PrVsixInvariantError(
+            `workflow run ${run.id}: expected ${expectedNames.length} target artifacts, found ${matches.length}`
+        );
     } else {
         body = renderUnavailableComment({
             repository,
@@ -1493,8 +1529,8 @@ async function synchronizeCompletedRun({ api, repository, run, pullRequest, arti
         pullRequest.number,
         body,
         run,
-        () => removePreviewArtifacts(api, pullRequest.number, retainedArtifact && retainedArtifact.id, run),
-        retainedArtifact ? renderTransitionComment({ repository, run }) : undefined
+        () => removePreviewArtifacts(api, pullRequest.number, retainedArtifacts.map((artifact) => artifact.id), run),
+        retainedArtifacts.length > 0 ? renderTransitionComment({ repository, run }) : undefined
     );
     if (!comment.applied) {
         const removedArtifacts = await removeRunArtifacts(api, artifacts, run, pullRequest.number);
@@ -1916,6 +1952,7 @@ export {
     parseCiRunName,
     parseCommentMetadata,
     previewArtifactName,
+    previewArtifactNames,
     pullRequestContext,
     renderClosedComment,
     renderBuildProgressComment,

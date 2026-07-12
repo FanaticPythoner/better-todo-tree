@@ -11,14 +11,18 @@ permissions:
   contents: read
   pull-requests: read
 
+concurrency:
+  group: pr-vsix-build-${{ github.event.client_payload.pull_request_number }}
+  cancel-in-progress: true
+
 jobs:
   test-build:
+    outputs:
+      build: ${{ steps.context.outputs.build }}
+      pull-request-number: ${{ steps.context.outputs.pull-request-number }}
+      targets: ${{ steps.targets.outputs.targets }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    concurrency:
-      group: pr-vsix-build-${{ github.event.client_payload.pull_request_number }}
-      cancel-in-progress: true
-
     steps:
       - name: Check out trusted workflow helpers
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -43,6 +47,11 @@ jobs:
           PR_VSIX_MERGE_INTERVAL_MS: 5000
         run: node scripts/ci/resolve-pr-vsix-context.mjs
 
+      - name: Resolve platform targets
+        id: targets
+        if: steps.context.outputs.build == 'true'
+        run: echo "targets=$(node -p "JSON.stringify(require('./scripts/release/targets.json'))")" >> "$GITHUB_OUTPUT"
+
       - name: Check out immutable build context
         if: steps.context.outputs.build == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -65,19 +74,79 @@ jobs:
 
       - name: Build platform VSIX bundle
         if: steps.context.outputs.build == 'true'
+        env:
+          VSIX_BASENAME: better-todo-tree-pr-${{ steps.context.outputs.pull-request-number }}
         run: |
           rm -rf artifacts/vsix
           SKIP_PREPUBLISH=1 node scripts/release/build-vsix.mjs all
           node scripts/ci/verify-pr-vsix.mjs artifacts/vsix
 
-      - name: Upload platform VSIX bundle
+      - name: Stage platform VSIX files
         if: steps.context.outputs.build == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: better-todo-tree-pr-${{ steps.context.outputs.pull-request-number }}.vsix
+          name: better-todo-tree-pr-${{ steps.context.outputs.pull-request-number }}-staging-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/vsix/*.vsix
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1
           compression-level: 0
           archive: true
+
+  publish:
+    needs: test-build
+    if: needs.test-build.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.test-build.outputs.targets) }}
+
+    steps:
+      - name: Download staged VSIX files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: better-todo-tree-pr-${{ needs.test-build.outputs.pull-request-number }}-staging-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/vsix
+
+      - name: Upload ${{ matrix.target }} VSIX
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          path: artifacts/vsix/better-todo-tree-pr-${{ needs.test-build.outputs.pull-request-number }}-${{ matrix.target }}.vsix
+          if-no-files-found: error
+          retention-days: 30
+          archive: false
           overwrite: true
+
+  cleanup-staging:
+    needs:
+      - test-build
+      - publish
+    if: always() && needs.test-build.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Check out trusted cleanup helper
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version-file: .nvmrc
+
+      - name: Remove staged VSIX artifact
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_VSIX_API_RETRY_ATTEMPTS: 4
+          PR_VSIX_API_RETRY_BASE_MS: 1000
+          PR_VSIX_API_RETRY_MAX_MS: 60000
+          PR_VSIX_STAGING_NAME: better-todo-tree-pr-${{ needs.test-build.outputs.pull-request-number }}-staging-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node scripts/ci/delete-pr-vsix-staging.mjs

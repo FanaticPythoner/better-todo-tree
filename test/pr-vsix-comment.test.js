@@ -98,7 +98,7 @@ function artifact( overrides )
 {
     return Object.assign( {
         id: 300,
-        name: 'better-todo-tree-pr-19.vsix',
+        name: 'better-todo-tree-pr-19-win32-x64.vsix',
         expired: false,
         size_in_bytes: 15000000,
         digest: 'sha256:' + 'e'.repeat( 64 ),
@@ -106,6 +106,17 @@ function artifact( overrides )
         expires_at: '2026-10-09T10:05:00Z',
         workflow_run: { id: 200, head_sha: SHA_B }
     }, overrides || {} );
+}
+
+function artifactBundle( overrides )
+{
+    return TARGETS.map( function( target, index )
+    {
+        return artifact( Object.assign( {
+            id: 300 + index,
+            name: 'better-todo-tree-pr-19-' + target + '.vsix'
+        }, overrides || {} ) );
+    } );
 }
 
 function lifecycleRun( overrides )
@@ -358,25 +369,27 @@ QUnit.module( 'PR VSIX comment synchronization' );
 QUnit.test( 'successful current run publishes one platform bundle and removes duplicate namespace artifacts', async function( assert )
 {
     var module = await modulePromise;
-    var current = artifact();
+    var current = artifactBundle();
     var prior = artifact( {
         id: 299,
         created_at: '2026-07-11T09:55:00Z',
         workflow_run: { id: 199, head_sha: SHA_B }
     } );
     var fixture = apiFixture( {
-        runArtifacts: [ current ],
-        repositoryArtifacts: [ current, prior ]
+        runArtifacts: current,
+        repositoryArtifacts: current.concat( prior )
     } );
     var results = await synchronize( module, fixture, workflowRun() );
     var body = fixture.calls.updatedComments[ 0 ].body;
 
     assert.deepEqual( results, [ { pullRequestNumber: 19, applied: true, removedArtifacts: 1 } ] );
     assert.ok( body.indexOf( 'actions/runs/200/artifacts/300' ) !== -1 );
-    assert.ok( body.indexOf( 'Download all 10 platform-specific VSIX files' ) !== -1 );
+    assert.equal( body.split( '[Download VSIX]' ).length - 1, 10 );
+    assert.ok( body.indexOf( 'Windows x64' ) !== -1 );
+    assert.ok( body.indexOf( 'macOS Apple silicon' ) !== -1 );
     assert.ok( body.indexOf( '`win32-x64`' ) !== -1 );
     assert.ok( body.indexOf( '`web`' ) !== -1 );
-    assert.ok( body.indexOf( 'Download and extract the artifact' ) !== -1 );
+    assert.ok( body.indexOf( 'Download the VSIX matching the test platform' ) !== -1 );
     assert.ok( body.indexOf( 'unreviewed code from this pull request' ) !== -1 );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 299 ] );
 } );
@@ -502,7 +515,7 @@ QUnit.test( 'successful rerun rejects an artifact created before the current att
     await assert.rejects( synchronize( module, fixture, rerun ), function( error )
     {
         return error instanceof module.PrVsixInvariantError &&
-            error.message.indexOf( 'better-todo-tree-pr-19.vsix artifact, found 0' ) !== -1;
+            error.message.indexOf( 'expected 10 target artifacts, found 0' ) !== -1;
     } );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
 } );

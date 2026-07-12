@@ -14,6 +14,7 @@ var SHA_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 var SHA_C = 'cccccccccccccccccccccccccccccccccccccccc';
 var SHA_D = 'dddddddddddddddddddddddddddddddddddddddd';
 var SHA_E = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+var TARGETS = require( '../scripts/release/targets.json' );
 
 function pullRequest( overrides )
 {
@@ -53,7 +54,7 @@ function markerBody( overrides )
         phase: 'completed',
         conclusion: 'success',
         artifactId: 300,
-        artifactName: 'better-todo-tree-pr-19.vsix'
+        artifactName: 'better-todo-tree-pr-19-win32-x64.vsix'
     }, overrides || {} );
     return [
         '<!-- better-todo-tree-pr-vsix',
@@ -88,11 +89,22 @@ function storedArtifact( overrides )
 {
     return Object.assign( {
         id: 300,
-        name: 'better-todo-tree-pr-19.vsix',
+        name: 'better-todo-tree-pr-19-win32-x64.vsix',
         expired: false,
         expires_at: '2026-10-09T10:00:00Z',
         workflow_run: { id: 200 }
     }, overrides || {} );
+}
+
+function storedArtifactBundle( overrides )
+{
+    return TARGETS.map( function( target, index )
+    {
+        return storedArtifact( Object.assign( {
+            id: 300 + index,
+            name: 'better-todo-tree-pr-19-' + target + '.vsix'
+        }, overrides || {} ) );
+    } );
 }
 
 function mergeContextApi( overrides )
@@ -351,7 +363,7 @@ QUnit.test( 'scheduled refresh preserves current bundles outside the renewal win
         pullRequest: pullRequest(),
         context: stableContext(),
         comments: [ comment( markerBody() ) ],
-        artifacts: [ storedArtifact() ],
+        artifacts: storedArtifactBundle(),
         now: Date.parse( '2026-07-11T12:00:00Z' ),
         renewalWindowMs: 14 * 24 * 60 * 60 * 1000,
         pendingWindowMs: 6 * 60 * 60 * 1000
@@ -367,7 +379,7 @@ QUnit.test( 'scheduled refresh repairs context drift, expiry, and abandoned pend
         pullRequest: pullRequest(),
         context: stableContext(),
         comments: [ comment( markerBody() ) ],
-        artifacts: [ storedArtifact() ],
+        artifacts: storedArtifactBundle(),
         now: Date.parse( '2026-07-11T18:01:00Z' ),
         renewalWindowMs: 14 * 24 * 60 * 60 * 1000,
         pendingWindowMs: 6 * 60 * 60 * 1000
@@ -377,10 +389,10 @@ QUnit.test( 'scheduled refresh repairs context drift, expiry, and abandoned pend
         comments: [ comment( markerBody( { baseSha: SHA_D } ) ) ]
     } ) ) );
     assert.ok( module.requiresScheduledRefresh( Object.assign( {}, input, {
-        artifacts: [ storedArtifact( { expires_at: '2026-07-20T00:00:00Z' } ) ]
+        artifacts: storedArtifactBundle( { expires_at: '2026-07-20T00:00:00Z' } )
     } ) ) );
     assert.ok( module.requiresScheduledRefresh( Object.assign( {}, input, {
-        artifacts: [ storedArtifact(), storedArtifact( { id: 301 } ) ]
+        artifacts: storedArtifactBundle().concat( storedArtifact( { id: 310 } ) )
     } ) ) );
     assert.ok( module.requiresScheduledRefresh( Object.assign( {}, input, {
         comments: [ comment( markerBody( {
@@ -579,7 +591,7 @@ QUnit.test( 'scheduled sweep dispatches only stale bundles', async function( ass
         listRepositoryIssueComments: async function() { return [ comment( markerBody() ) ]; },
         listRepositoryArtifacts: async function()
         {
-            return [ storedArtifact( { expires_at: '2026-07-12T00:00:00Z' } ) ];
+            return storedArtifactBundle( { expires_at: '2026-07-12T00:00:00Z' } );
         },
         dispatchRepositoryEvent: async function( name, payload )
         {
@@ -629,7 +641,7 @@ QUnit.test( 'scheduled sweep revalidates the exact canonical merge ref', async f
             return { sha: sha, parents: [ { sha: SHA_B }, { sha: SHA_A } ] };
         },
         listRepositoryIssueComments: async function() { return [ comment( markerBody() ) ]; },
-        listRepositoryArtifacts: async function() { return [ storedArtifact() ]; },
+        listRepositoryArtifacts: async function() { return storedArtifactBundle(); },
         dispatchRepositoryEvent: async function( name, payload )
         {
             dispatched.push( { name: name, payload: payload } );
@@ -688,7 +700,7 @@ QUnit.test( 'scheduled sweep revokes authorization removed during merge reconcil
             throw new Error( 'merge ref must not be read after revocation' );
         },
         listRepositoryIssueComments: async function() { return [ comment( markerBody() ) ]; },
-        listRepositoryArtifacts: async function() { return [ storedArtifact() ]; },
+        listRepositoryArtifacts: async function() { return storedArtifactBundle(); },
         dispatchRepositoryEvent: async function( name, payload )
         {
             dispatched.push( { name: name, payload: payload } );
@@ -729,7 +741,7 @@ QUnit.test( 'scheduled sweep repairs closure observed during merge reconciliatio
             throw new Error( 'merge ref must not be read after closure' );
         },
         listRepositoryIssueComments: async function() { return [ comment( markerBody() ) ]; },
-        listRepositoryArtifacts: async function() { return [ storedArtifact() ]; },
+        listRepositoryArtifacts: async function() { return storedArtifactBundle(); },
         dispatchRepositoryEvent: async function( name, payload )
         {
             dispatched.push( { name: name, payload: payload } );
@@ -802,7 +814,7 @@ QUnit.test( 'scheduled sweep reconciles revoked external preview state', async f
     var api = {
         listOpenPullRequests: async function() { return [ external ]; },
         listRepositoryIssueComments: async function() { return [ comment( markerBody() ) ]; },
-        listRepositoryArtifacts: async function() { return [ storedArtifact() ]; },
+        listRepositoryArtifacts: async function() { return storedArtifactBundle(); },
         dispatchRepositoryEvent: async function( name, payload )
         {
             dispatched.push( { name: name, payload: payload } );
@@ -843,7 +855,7 @@ QUnit.test( 'scheduled sweep reconciles artifacts orphaned by a missed close eve
     var api = {
         listOpenPullRequests: async function() { return []; },
         listRepositoryIssueComments: async function() { return [ comment( markerBody() ) ]; },
-        listRepositoryArtifacts: async function() { return [ storedArtifact() ]; },
+        listRepositoryArtifacts: async function() { return storedArtifactBundle(); },
         getPullRequest: async function( number )
         {
             assert.equal( number, 19 );
@@ -890,7 +902,7 @@ QUnit.test( 'scheduled grouping retains orphan artifacts after blocked comment c
     } ) );
     var grouped = module.groupScheduledState( [ pullRequest() ], [ blocked ], [ storedArtifact() ] );
 
-    assert.equal( grouped.artifactsByName.get( 'better-todo-tree-pr-19.vsix' ).length, 1 );
+    assert.equal( grouped.artifactsByName.get( 'better-todo-tree-pr-19-win32-x64.vsix' ).length, 1 );
     assert.notOk( module.requiresAuthorizationRevocation( {
         pullRequest: pullRequest(),
         comments: [ blocked ],
@@ -899,7 +911,7 @@ QUnit.test( 'scheduled grouping retains orphan artifacts after blocked comment c
     assert.ok( module.requiresAuthorizationRevocation( {
         pullRequest: pullRequest(),
         comments: [ blocked ],
-        artifacts: grouped.artifactsByName.get( 'better-todo-tree-pr-19.vsix' )
+        artifacts: grouped.artifactsByName.get( 'better-todo-tree-pr-19-win32-x64.vsix' )
     } ) );
 } );
 

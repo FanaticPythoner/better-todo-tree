@@ -79,5 +79,5 @@ jobs:
           PR_VSIX_MERGE_INTERVAL_MS: 5000
           PR_VSIX_MONITOR_POLL_MS: 10000
           PR_VSIX_MONITOR_HEARTBEAT_MS: 60000
-          PR_VSIX_MONITOR_TIMEOUT_MS: 2400000
+          PR_VSIX_MONITOR_TIMEOUT_MS: 3600000
         run: node scripts/ci/sync-pr-vsix-comment.mjs
