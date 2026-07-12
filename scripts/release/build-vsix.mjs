@@ -4,6 +4,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { binPathFor } from '@vscode/ripgrep-universal';
+import {
+    executableName as ripgrepExecutableName,
+    platformDirectory as ripgrepPlatformDirectory,
+    ripgrepTargetPlatforms,
+    uniqueNativePlatforms
+} from './ripgrep-targets.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,18 +21,7 @@ const targetsPath = path.join(__dirname, 'targets.json');
 const defaultOutputDirectory = path.join(repoRoot, 'artifacts', 'vsix');
 const ripgrepPackageRoot = path.join(repoRoot, 'node_modules', '@vscode', 'ripgrep-universal');
 const ripgrepStageRoot = path.join(repoRoot, 'dist', 'ripgrep');
-const ripgrepTargetPlatforms = new Map([
-    ['win32-x64', Object.freeze({ os: 'win32', arch: 'x64' })],
-    ['win32-arm64', Object.freeze({ os: 'win32', arch: 'arm64' })],
-    ['linux-x64', Object.freeze({ os: 'linux', arch: 'x64' })],
-    ['linux-arm64', Object.freeze({ os: 'linux', arch: 'arm64' })],
-    ['linux-armhf', Object.freeze({ os: 'linux', arch: 'arm' })],
-    ['darwin-x64', Object.freeze({ os: 'darwin', arch: 'x64' })],
-    ['darwin-arm64', Object.freeze({ os: 'darwin', arch: 'arm64' })],
-    ['alpine-x64', Object.freeze({ os: 'linux', arch: 'x64' })],
-    ['alpine-arm64', Object.freeze({ os: 'linux', arch: 'arm64' })],
-    ['web', undefined]
-]);
+const previewTarget = 'pr-preview';
 
 function readJson(filePath) {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -101,14 +96,6 @@ function cleanSelectedTargetOutputs(directory, packageName, selectedTargets) {
         });
 }
 
-function ripgrepPlatformDirectory(platform) {
-    return `${platform.os}-${platform.arch}`;
-}
-
-function ripgrepExecutableName(platform) {
-    return platform.os === 'win32' ? 'rg.exe' : 'rg';
-}
-
 function resetRipgrepStage() {
     fs.rmSync(ripgrepStageRoot, { recursive: true, force: true });
 }
@@ -124,6 +111,36 @@ function copyRipgrepPackageFile(fileName) {
     fs.copyFileSync(sourcePath, destinationPath);
 }
 
+function copyRipgrepPlatform(platform) {
+    const executableName = ripgrepExecutableName(platform);
+    const platformDirectory = ripgrepPlatformDirectory(platform);
+    const sourcePath = binPathFor(platform);
+    const destinationDirectory = path.join(ripgrepStageRoot, platformDirectory);
+    const destinationPath = path.join(destinationDirectory, executableName);
+
+    if (!fs.existsSync(sourcePath)) {
+        throw new Error(`@vscode/ripgrep-universal does not contain ${platformDirectory}/${executableName}`);
+    }
+
+    fs.mkdirSync(destinationDirectory, { recursive: true });
+    fs.copyFileSync(sourcePath, destinationPath);
+    fs.chmodSync(destinationPath, platform.os === 'win32' ? 0o644 : 0o755);
+
+    return Object.freeze({
+        platform: platformDirectory,
+        executable: executableName
+    });
+}
+
+function writeRipgrepManifest(manifest) {
+    fs.writeFileSync(path.join(ripgrepStageRoot, 'manifest.json'), JSON.stringify(manifest, null, 4) + '\n');
+}
+
+function copyRipgrepMetadata() {
+    copyRipgrepPackageFile('LICENSE');
+    copyRipgrepPackageFile('README.md');
+}
+
 function stageRipgrepForTarget(target) {
     const platform = ripgrepTargetPlatforms.get(target);
 
@@ -137,39 +154,44 @@ function stageRipgrepForTarget(target) {
         return;
     }
 
-    const executableName = ripgrepExecutableName(platform);
-    const platformDirectory = ripgrepPlatformDirectory(platform);
-    const sourcePath = binPathFor(platform);
-    const destinationDirectory = path.join(ripgrepStageRoot, platformDirectory);
-    const destinationPath = path.join(destinationDirectory, executableName);
     const packageJson = readJson(path.join(ripgrepPackageRoot, 'package.json'));
-
-    if (!fs.existsSync(sourcePath)) {
-        throw new Error(`@vscode/ripgrep-universal does not contain ${platformDirectory}/${executableName}`);
-    }
-
-    fs.mkdirSync(destinationDirectory, { recursive: true });
-    fs.copyFileSync(sourcePath, destinationPath);
-    fs.chmodSync(destinationPath, platform.os === 'win32' ? 0o644 : 0o755);
-    copyRipgrepPackageFile('LICENSE');
-    copyRipgrepPackageFile('README.md');
-    fs.writeFileSync(path.join(ripgrepStageRoot, 'manifest.json'), JSON.stringify({
+    const stagedPlatform = copyRipgrepPlatform(platform);
+    copyRipgrepMetadata();
+    writeRipgrepManifest({
         package: '@vscode/ripgrep-universal',
         version: packageJson.version,
         target: target,
-        platform: platformDirectory,
-        executable: executableName
-    }, null, 4) + '\n');
+        platform: stagedPlatform.platform,
+        executable: stagedPlatform.executable
+    });
+}
+
+function stageRipgrepForPreview(targets) {
+    const packageJson = readJson(path.join(ripgrepPackageRoot, 'package.json'));
+
+    resetRipgrepStage();
+    const platforms = uniqueNativePlatforms(targets).map(copyRipgrepPlatform);
+    copyRipgrepMetadata();
+    writeRipgrepManifest({
+        package: '@vscode/ripgrep-universal',
+        version: packageJson.version,
+        target: previewTarget,
+        platforms: platforms
+    });
 }
 
 async function packageTarget(target, outputPath) {
-    await pack({
+    const options = {
         cwd: repoRoot,
         packagePath: outputPath,
-        target: target,
         dependencies: false,
         useYarn: false
-    });
+    };
+    if (target !== undefined) {
+        options.target = target;
+    }
+
+    await pack(options);
 
     process.stdout.write(`${outputPath}\n`);
 }
@@ -178,20 +200,40 @@ async function main() {
     const packageJson = readJson(packageJsonPath);
     const supportedTargets = readJson(targetsPath);
     const outputDirectory = process.env.VSIX_OUTDIR ? path.resolve(repoRoot, process.env.VSIX_OUTDIR) : defaultOutputDirectory;
-    const selectedTargets = normalizeRequestedTargets(process.argv.slice(2), supportedTargets);
+    const requested = process.argv.slice(2).flatMap((value) => value.split(','))
+        .map((value) => value.trim().replace(/^--/, ''))
+        .filter(Boolean);
+    const previewRequested = requested.includes(previewTarget);
+    if (previewRequested && (requested.length !== 1 || requested[0] !== previewTarget)) {
+        throw new Error(`${previewTarget} cannot be combined with release targets.`);
+    }
+    const selectedTargets = previewRequested ? supportedTargets : normalizeRequestedTargets(requested, supportedTargets);
 
     ensureOutputDirectory(outputDirectory);
-    cleanSelectedTargetOutputs(outputDirectory, packageJson.name, selectedTargets);
+    if (!previewRequested) {
+        cleanSelectedTargetOutputs(outputDirectory, packageJson.name, selectedTargets);
+    }
 
     try {
         if (process.env.SKIP_PREPUBLISH !== '1') {
             run('npm', ['run', 'vscode:prepublish']);
         }
 
-        for (const target of selectedTargets) {
-            stageRipgrepForTarget(target);
-            const outputPath = path.join(outputDirectory, `${packageJson.name}-${packageJson.version}-${target}.vsix`);
-            await packageTarget(target, outputPath);
+        if (previewRequested) {
+            const fileName = process.env.PR_VSIX_FILENAME || `${packageJson.name}-${packageJson.version}-${previewTarget}.vsix`;
+            if (path.basename(fileName) !== fileName || !/^[A-Za-z0-9._-]+\.vsix$/.test(fileName)) {
+                throw new Error('PR_VSIX_FILENAME must be a portable VSIX basename.');
+            }
+            const outputPath = path.join(outputDirectory, fileName);
+            fs.rmSync(outputPath, { force: true });
+            stageRipgrepForPreview(selectedTargets);
+            await packageTarget(undefined, outputPath);
+        } else {
+            for (const target of selectedTargets) {
+                stageRipgrepForTarget(target);
+                const outputPath = path.join(outputDirectory, `${packageJson.name}-${packageJson.version}-${target}.vsix`);
+                await packageTarget(target, outputPath);
+            }
         }
     } finally {
         resetRipgrepStage();

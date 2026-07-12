@@ -1,0 +1,84 @@
+name: PR VSIX Build
+run-name: >-
+  ${{ format('PR VSIX Build PR #{0} head {1} base {2} merge {3} action {4}', github.event.client_payload.pull_request_number, github.event.client_payload.head_sha, github.event.client_payload.base_sha, github.event.client_payload.merge_sha, github.event.client_payload.cause) }}
+
+on:
+  repository_dispatch:
+    types:
+      - refresh-pr-vsix
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  test-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: pr-vsix-build-${{ github.event.client_payload.pull_request_number }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Check out trusted workflow helpers
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version-file: .nvmrc
+
+      - name: Resolve immutable build context
+        id: context
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_VSIX_API_RETRY_ATTEMPTS: 4
+          PR_VSIX_API_RETRY_BASE_MS: 1000
+          PR_VSIX_API_RETRY_MAX_MS: 60000
+          PR_VSIX_MERGE_ATTEMPTS: 12
+          PR_VSIX_MERGE_INTERVAL_MS: 5000
+        run: node scripts/ci/resolve-pr-vsix-context.mjs
+
+      - name: Check out immutable build context
+        if: steps.context.outputs.build == 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ steps.context.outputs.checkout-sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install dependencies
+        if: steps.context.outputs.build == 'true'
+        run: npm ci
+
+      - name: Run test suite
+        if: steps.context.outputs.build == 'true'
+        run: npm test
+
+      - name: Build production bundle
+        if: steps.context.outputs.build == 'true'
+        run: npm run vscode:prepublish
+
+      - name: Build PR VSIX bundle
+        if: steps.context.outputs.build == 'true'
+        env:
+          PR_VSIX_FILENAME: better-todo-tree-pr-${{ steps.context.outputs.pull-request-number }}.vsix
+        run: |
+          rm -rf artifacts/vsix
+          SKIP_PREPUBLISH=1 node scripts/release/build-vsix.mjs pr-preview
+          node scripts/ci/verify-pr-vsix.mjs "artifacts/vsix/$PR_VSIX_FILENAME"
+
+      - name: Upload PR VSIX bundle
+        if: steps.context.outputs.build == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: better-todo-tree-pr-${{ steps.context.outputs.pull-request-number }}.vsix
+          path: artifacts/vsix/better-todo-tree-pr-${{ steps.context.outputs.pull-request-number }}.vsix
+          if-no-files-found: error
+          retention-days: 90
+          archive: false
+          overwrite: true

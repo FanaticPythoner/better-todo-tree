@@ -1,0 +1,20 @@
+name: PR VSIX Base Event
+
+on:
+  push:
+    branches:
+      - "**"
+
+permissions: {}
+
+concurrency:
+  group: pr-vsix-base-event-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  signal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - name: Signal trusted base refresh
+        run: ":"
