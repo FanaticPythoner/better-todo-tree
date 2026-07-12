@@ -1,0 +1,78 @@
+name: PR VSIX Comment
+
+on:
+  workflow_run:
+    workflows:
+      - PR VSIX Build
+      - PR VSIX Event
+    types:
+      - in_progress
+      - completed
+
+permissions: {}
+
+jobs:
+  resolve:
+    if: >-
+      (github.event.workflow_run.name == 'PR VSIX Build' && github.event.workflow_run.event == 'repository_dispatch') ||
+      (github.event.action == 'completed' && github.event.workflow_run.name == 'PR VSIX Event' && (github.event.workflow_run.event == 'pull_request_target' || github.event.workflow_run.event == 'pull_request') && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      pull-request-number: ${{ steps.identity.outputs.pull-request-number }}
+      processable: ${{ steps.identity.outputs.processable }}
+
+    steps:
+      - name: Check out trusted resolver
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version-file: .nvmrc
+
+      - name: Resolve pull request identity
+        id: identity
+        run: node scripts/ci/sync-pr-vsix-comment.mjs resolve >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: resolve
+    if: needs.resolve.outputs.processable == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: pr-vsix-comment-${{ needs.resolve.outputs.pull-request-number }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Check out trusted publisher
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version-file: .nvmrc
+
+      - name: Synchronize PR VSIX comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_VSIX_API_RETRY_ATTEMPTS: 4
+          PR_VSIX_API_RETRY_BASE_MS: 1000
+          PR_VSIX_API_RETRY_MAX_MS: 60000
+          PR_VSIX_MERGE_ATTEMPTS: 12
+          PR_VSIX_MERGE_INTERVAL_MS: 5000
+        run: node scripts/ci/sync-pr-vsix-comment.mjs

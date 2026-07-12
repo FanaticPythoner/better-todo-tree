@@ -8,6 +8,11 @@ var ACTION_REVISIONS = Object.freeze( {
         ref: '55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
         version: 'v6.1.0'
     } ),
+    uploadArtifact: Object.freeze( {
+        action: 'actions/upload-artifact',
+        ref: '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+        version: 'v7.0.1'
+    } ),
     attestBuildProvenance: Object.freeze( {
         action: 'actions/attest-build-provenance',
         ref: '0f67c3f4856b2e3261c31976d6725780e5e4c373',
@@ -245,6 +250,18 @@ function getWorkflowJobBlock( contents, jobName )
     return lines.slice( start, end === -1 ? lines.length : end ).join( '\n' );
 }
 
+function getWorkflowStepBlock( contents, stepName )
+{
+    var marker = '      - name: ' + stepName;
+    var start = contents.indexOf( marker );
+    if( start === -1 )
+    {
+        return '';
+    }
+    var end = contents.indexOf( '\n      - name: ', start + marker.length );
+    return contents.slice( start, end === -1 ? contents.length : end );
+}
+
 function assertSecurityWorkflowContract( assert, securityWorkflow, label )
 {
     var references = getExternalActionReferences( securityWorkflow );
@@ -356,7 +373,7 @@ QUnit.test( 'release workflow requests provenance-related permissions', function
     assert.ok( contents.indexOf( 'contents: write' ) !== -1 );
 } );
 
-QUnit.test( 'cache and provenance workflow actions use Dependabot release SHAs', function( assert )
+QUnit.test( 'workflow actions use verified release SHAs', function( assert )
 {
     [ 'ci.yml', 'latest.yml', 'release.yml' ].forEach( function( workflowName )
     {
@@ -364,6 +381,10 @@ QUnit.test( 'cache and provenance workflow actions use Dependabot release SHAs',
     } );
 
     assertWorkflowActionRevision( assert, 'release.yml', ACTION_REVISIONS.attestBuildProvenance );
+    [ 'pr-vsix-build.yml', 'pr-vsix-event.yml' ].forEach( function( workflowName )
+    {
+        assertWorkflowActionRevision( assert, workflowName, ACTION_REVISIONS.uploadArtifact );
+    } );
 } );
 
 QUnit.test( 'latest workflow publishes a moving prerelease from master', function( assert )
@@ -433,13 +454,131 @@ QUnit.test( 'release workflows build and publish from the resolved release ref',
     assert.ok( verifyMarketplaceScript.indexOf( 'verify-vscode-marketplace.py' ) !== -1 );
 } );
 
-QUnit.test( 'ci workflow uploads only the smoke-test linux artifact', function( assert )
+QUnit.test( 'trusted PR workflow builds one verified cross-platform VSIX after all gates', function( assert )
+{
+    var buildWorkflow = readWorkflow( 'pr-vsix-build.yml' );
+    var testIndex = buildWorkflow.indexOf( 'run: npm test' );
+    var bundleIndex = buildWorkflow.indexOf( 'run: npm run vscode:prepublish' );
+    var previewIndex = buildWorkflow.indexOf( 'node scripts/release/build-vsix.mjs pr-preview' );
+    var verifyIndex = buildWorkflow.indexOf( 'node scripts/ci/verify-pr-vsix.mjs' );
+    var uploadIndex = buildWorkflow.indexOf( 'name: Upload PR VSIX bundle' );
+
+    assert.ok( buildWorkflow.indexOf( 'rm -rf artifacts/vsix' ) !== -1 );
+    [ testIndex, bundleIndex, previewIndex, verifyIndex, uploadIndex ].forEach( function( index )
+    {
+        assert.ok( index >= 0 );
+    } );
+    assert.ok( testIndex < bundleIndex );
+    assert.ok( bundleIndex < previewIndex );
+    assert.ok( previewIndex < verifyIndex );
+    assert.ok( verifyIndex < uploadIndex );
+    assert.ok( buildWorkflow.indexOf( 'name: better-todo-tree-pr-${{ steps.context.outputs.pull-request-number }}.vsix' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'path: artifacts/vsix/better-todo-tree-pr-${{ steps.context.outputs.pull-request-number }}.vsix' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'retention-days: 90' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'archive: false' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'overwrite: true' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'compression-level:' ) === -1 );
+    assert.ok( buildWorkflow.indexOf( 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'actions/cache' ) === -1 );
+    assert.ok( buildWorkflow.indexOf( 'timeout-minutes: 30' ) !== -1 );
+    [
+        'Check out immutable build context',
+        'Install dependencies',
+        'Run test suite',
+        'Build production bundle',
+        'Build PR VSIX bundle',
+        'Upload PR VSIX bundle'
+    ].forEach( function( stepName )
+    {
+        assert.ok(
+            getWorkflowStepBlock( buildWorkflow, stepName )
+                .indexOf( "if: steps.context.outputs.build == 'true'" ) !== -1,
+            stepName + ' is disabled for cleanup-only dispatches'
+        );
+    } );
+    assert.equal(
+        buildWorkflow.split( "if: steps.context.outputs.build == 'true'" ).length - 1,
+        6
+    );
+} );
+
+QUnit.test( 'trusted orchestration isolates and cancels only one PR generation', function( assert )
 {
     var ciWorkflow = readWorkflow( 'ci.yml' );
+    var buildWorkflow = readWorkflow( 'pr-vsix-build.yml' );
+    var eventWorkflow = readWorkflow( 'pr-vsix-event.yml' );
 
-    assert.ok( ciWorkflow.indexOf( 'rm -rf artifacts/vsix' ) !== -1 );
-    assert.ok( ciWorkflow.indexOf( 'artifacts/vsix/*-linux-x64.vsix' ) !== -1 );
-    assert.ok( ciWorkflow.indexOf( 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a' ) !== -1 );
+    assert.ok( ciWorkflow.indexOf( 'pull_request:\n' ) !== -1 );
+    assert.ok( ciWorkflow.indexOf( 'edited' ) === -1 );
+    assert.ok( ciWorkflow.indexOf( 'github.event.pull_request.number || github.ref' ) !== -1 );
+    assert.ok( ciWorkflow.indexOf( 'cancel-in-progress: true' ) !== -1 );
+    assert.ok( ciWorkflow.indexOf( 'persist-credentials: false' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( "format('PR VSIX Build PR #{0} head {1} base {2} merge {3} action {4}'" ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'node scripts/ci/resolve-pr-vsix-context.mjs' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'ref: ${{ steps.context.outputs.checkout-sha }}' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'repository_dispatch:\n    types:\n      - refresh-pr-vsix' ) !== -1 );
+    assert.ok( buildWorkflow.indexOf( 'group: pr-vsix-build-${{ github.event.client_payload.pull_request_number }}' ) !== -1 );
+    assert.ok( eventWorkflow.indexOf( "format('pr-vsix-fallback-{0}', github.event.pull_request.number)" ) !== -1 );
+    assert.ok( eventWorkflow.indexOf( "format('pr-vsix-build-{0}', github.event.pull_request.number)" ) !== -1 );
+} );
+
+QUnit.test( 'privileged PR VSIX publisher executes trusted metadata code only', function( assert )
+{
+    var workflow = readWorkflow( 'pr-vsix-comment.yml' );
+    var baseEventWorkflow = readWorkflow( 'pr-vsix-base-event.yml' );
+    var eventWorkflow = readWorkflow( 'pr-vsix-event.yml' );
+    var refreshWorkflow = readWorkflow( 'pr-vsix-refresh.yml' );
+
+    assert.ok( workflow.indexOf( 'workflow_run:' ) !== -1 );
+    assert.ok( workflow.indexOf( 'pull_request_target:' ) === -1 );
+    assert.ok( workflow.indexOf( '      - PR VSIX Build' ) !== -1 );
+    assert.ok( workflow.indexOf( '      - PR VSIX Event' ) !== -1 );
+    assert.ok( workflow.indexOf( '      - in_progress\n      - completed' ) !== -1 );
+    assert.ok( workflow.indexOf( "github.event.workflow_run.name == 'PR VSIX Build'" ) !== -1 );
+    assert.ok( workflow.indexOf( "github.event.workflow_run.name == 'PR VSIX Event'" ) !== -1 );
+    assert.ok( workflow.indexOf( 'actions: write' ) !== -1 );
+    assert.ok( workflow.indexOf( 'permissions: {}' ) !== -1 );
+    assert.ok( workflow.indexOf( '      contents: read' ) !== -1 );
+    assert.ok( workflow.indexOf( '      contents: write' ) !== -1 );
+    assert.ok( workflow.indexOf( 'pull-requests: write' ) !== -1 );
+    assert.ok( workflow.indexOf( 'ref: ${{ github.event.repository.default_branch }}' ) !== -1 );
+    assert.ok( workflow.indexOf( 'persist-credentials: false' ) !== -1 );
+    assert.ok( workflow.indexOf( 'node scripts/ci/sync-pr-vsix-comment.mjs' ) !== -1 );
+    assert.ok( workflow.indexOf( 'download-artifact' ) === -1 );
+    assert.ok( workflow.indexOf( 'node scripts/ci/sync-pr-vsix-comment.mjs resolve >> "$GITHUB_OUTPUT"' ) !== -1 );
+    assert.ok( workflow.indexOf( "if: needs.resolve.outputs.processable == 'true'" ) !== -1 );
+    assert.ok( workflow.indexOf( 'group: pr-vsix-comment-${{ needs.resolve.outputs.pull-request-number }}' ) !== -1 );
+    assert.ok( workflow.indexOf( 'cancel-in-progress: false' ) !== -1 );
+    assert.ok( workflow.indexOf( 'timeout-minutes: 75' ) !== -1 );
+    assert.ok( workflow.indexOf( 'PR_VSIX_API_RETRY_ATTEMPTS: 4' ) !== -1 );
+    assert.ok( workflow.indexOf( 'github.event.workflow_run.head_sha }}\n          fetch-depth' ) === -1 );
+    assert.ok( eventWorkflow.indexOf( 'pull_request:\n    types:\n      - closed\n      - edited\n      - labeled\n      - unlabeled\n      - opened\n      - reopened\n      - synchronize' ) !== -1 );
+    assert.ok( eventWorkflow.indexOf( 'pull_request_target:\n    types:\n      - closed\n      - edited\n      - labeled\n      - unlabeled\n      - opened\n      - reopened\n      - synchronize' ) !== -1 );
+    assert.ok( eventWorkflow.indexOf( "github.event.action != 'edited' || github.event.changes.base != null" ) !== -1 );
+    assert.ok( eventWorkflow.indexOf( "github.event.action != 'labeled' && github.event.action != 'unlabeled'" ) !== -1 );
+    assert.ok( eventWorkflow.indexOf( 'better-todo-tree-pr-vsix-event-${{ github.event.pull_request.number }}-head-${{ github.event.pull_request.head.sha }}-base-${{ github.event.pull_request.base.sha }}-merge-' ) !== -1 );
+    assert.ok( eventWorkflow.indexOf( '-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}' ) !== -1 );
+    assert.ok( eventWorkflow.indexOf( 'actions/checkout' ) === -1 );
+    assert.ok( eventWorkflow.indexOf( 'permissions: {}' ) !== -1 );
+    assert.ok( eventWorkflow.indexOf( 'pull-requests: write' ) === -1 );
+    assert.ok( baseEventWorkflow.indexOf( 'push:\n    branches:\n      - "**"' ) !== -1 );
+    assert.ok( baseEventWorkflow.indexOf( 'permissions: {}' ) !== -1 );
+    assert.ok( baseEventWorkflow.indexOf( 'actions/' ) === -1 );
+    assert.ok( baseEventWorkflow.indexOf( 'group: pr-vsix-base-event-${{ github.ref }}' ) !== -1 );
+    assert.ok( refreshWorkflow.indexOf( 'schedule:' ) !== -1 );
+    assert.ok( refreshWorkflow.indexOf( 'workflow_run:' ) !== -1 );
+    assert.ok( refreshWorkflow.indexOf( 'repository_dispatch:\n    types:\n      - continue-pr-vsix-refresh' ) !== -1 );
+    assert.ok( refreshWorkflow.indexOf( '      - PR VSIX Base Event' ) !== -1 );
+    assert.ok( refreshWorkflow.indexOf( 'actions: read' ) !== -1 );
+    assert.ok( refreshWorkflow.indexOf( 'contents: write' ) !== -1 );
+    assert.ok( refreshWorkflow.indexOf( 'node scripts/ci/refresh-pr-vsix.mjs' ) !== -1 );
+    assert.ok( refreshWorkflow.indexOf( 'timeout-minutes: 180' ) !== -1 );
+    assert.ok( refreshWorkflow.indexOf( 'PR_VSIX_DISPATCH_INTERVAL_MS: 1000' ) !== -1 );
+    assert.ok( refreshWorkflow.indexOf( 'PR_VSIX_REFRESH_BATCH_SIZE: 400' ) !== -1 );
+    assert.ok( refreshWorkflow.indexOf( 'persist-credentials: false' ) !== -1 );
+    assert.ok( refreshWorkflow.indexOf( 'push:\n    branches:' ) === -1 );
+    assert.ok( refreshWorkflow.indexOf( "format('branch-{0}', github.event.workflow_run.head_branch)" ) !== -1 );
+    assert.ok( refreshWorkflow.indexOf( "format('continuation-{0}', github.event.client_payload.base || 'all')" ) !== -1 );
 } );
 
 QUnit.test( 'VSIX builder stages one ripgrep-universal binary for each native target', function( assert )
@@ -448,14 +587,27 @@ QUnit.test( 'VSIX builder stages one ripgrep-universal binary for each native ta
 
     assert.ok( buildScript.indexOf( "node_modules', '@vscode', 'ripgrep-universal'" ) !== -1 );
     assert.ok( buildScript.indexOf( "import { binPathFor } from '@vscode/ripgrep-universal';" ) !== -1 );
-    assert.ok( buildScript.indexOf( "['linux-armhf', Object.freeze({ os: 'linux', arch: 'arm' })]" ) !== -1 );
-    assert.ok( buildScript.indexOf( "['alpine-x64', Object.freeze({ os: 'linux', arch: 'x64' })]" ) !== -1 );
-    assert.ok( buildScript.indexOf( "['alpine-arm64', Object.freeze({ os: 'linux', arch: 'arm64' })]" ) !== -1 );
+    assert.ok( buildScript.indexOf( "from './ripgrep-targets.mjs'" ) !== -1 );
     assert.ok( buildScript.indexOf( "fs.chmodSync(destinationPath, platform.os === 'win32' ? 0o644 : 0o755)" ) !== -1 );
     assert.ok( buildScript.indexOf( "copyRipgrepPackageFile('LICENSE')" ) !== -1 );
     assert.ok( buildScript.indexOf( "const { pack } = require('@vscode/vsce/out/package.js')" ) !== -1 );
     assert.ok( buildScript.indexOf( 'dependencies: false' ) !== -1 );
     assert.ok( buildScript.indexOf( 'finally {\n        resetRipgrepStage();\n    }' ) !== -1 );
+} );
+
+QUnit.test( 'VSIX builder exposes an untargeted universal PR preview mode', function( assert )
+{
+    var buildScript = readRepositoryFile( path.join( 'scripts', 'release', 'build-vsix.mjs' ) );
+    var targetScript = readRepositoryFile( path.join( 'scripts', 'release', 'ripgrep-targets.mjs' ) );
+    var verifyScript = readRepositoryFile( path.join( 'scripts', 'ci', 'verify-pr-vsix.mjs' ) );
+
+    assert.ok( buildScript.indexOf( "const previewTarget = 'pr-preview'" ) !== -1 );
+    assert.ok( buildScript.indexOf( 'stageRipgrepForPreview(selectedTargets)' ) !== -1 );
+    assert.ok( buildScript.indexOf( 'await packageTarget(undefined, outputPath)' ) !== -1 );
+    assert.ok( buildScript.indexOf( 'PR_VSIX_FILENAME' ) !== -1 );
+    assert.ok( targetScript.indexOf( 'function uniqueNativePlatforms' ) !== -1 );
+    assert.ok( verifyScript.indexOf( 'TargetPlatform=' ) !== -1 );
+    assert.ok( verifyScript.indexOf( "runUnzip(['-tqq', resolvedPath])" ) !== -1 );
 } );
 
 QUnit.test( 'VSIX builder removes stale selected target outputs before packing', function( assert )
@@ -562,6 +714,7 @@ QUnit.test( 'justfile exposes GitHub Actions verification recipes', function( as
     assert.ok( justfile.indexOf( 'bootstrap-release-env:' ) !== -1 );
     assert.ok( justfile.indexOf( 'lint-actions:' ) !== -1 );
     assert.ok( justfile.indexOf( 'test-actions-ci:' ) !== -1 );
+    assert.ok( justfile.indexOf( 'test-actions-pr-vsix-build:' ) !== -1 );
     assert.ok( justfile.indexOf( 'test-actions-release-build:' ) !== -1 );
     assert.ok( justfile.indexOf( 'test-actions-latest-build:' ) !== -1 );
     assert.ok( justfile.indexOf( 'test-actions:' ) !== -1 );

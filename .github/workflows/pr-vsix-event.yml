@@ -1,0 +1,52 @@
+name: PR VSIX Event
+run-name: PR VSIX Event #${{ github.event.pull_request.number }} ${{ github.event.action }}
+
+on:
+  pull_request:
+    types:
+      - closed
+      - edited
+      - labeled
+      - unlabeled
+      - opened
+      - reopened
+      - synchronize
+  pull_request_target:
+    types:
+      - closed
+      - edited
+      - labeled
+      - unlabeled
+      - opened
+      - reopened
+      - synchronize
+
+permissions: {}
+
+jobs:
+  record:
+    if: >-
+      (github.event.action != 'edited' || github.event.changes.base != null) &&
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+      github.event.label.name == 'safe-to-test')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'pull_request' && github.event.action != 'closed' &&
+        format('pr-vsix-fallback-{0}', github.event.pull_request.number) ||
+        format('pr-vsix-build-{0}', github.event.pull_request.number) }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Create lifecycle marker
+        run: touch pr-vsix-event
+
+      - name: Upload lifecycle marker
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: better-todo-tree-pr-vsix-event-${{ github.event.pull_request.number }}-head-${{ github.event.pull_request.head.sha }}-base-${{ github.event.pull_request.base.sha }}-merge-${{ github.event.pull_request.merge_commit_sha || 'none' }}-${{ github.event.action }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: pr-vsix-event
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

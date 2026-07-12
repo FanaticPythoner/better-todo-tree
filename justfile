@@ -200,12 +200,28 @@ test-actions-release-build:
   )
 
 # Examples:
+#   just test-actions-pr-vsix-build
+test-actions-pr-vsix-build:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  {{node_bootstrap}}
+  npm run vscode:prepublish
+  preview_dir="artifacts/vsix/pr-preview-test"
+  preview_name="better-todo-tree-pr-1.vsix"
+  rm -rf "$preview_dir"
+  VSIX_OUTDIR="$preview_dir" \
+    PR_VSIX_FILENAME="$preview_name" \
+    SKIP_PREPUBLISH=1 \
+    node scripts/release/build-vsix.mjs pr-preview
+  node scripts/ci/verify-pr-vsix.mjs "$preview_dir/$preview_name"
+
+# Examples:
 #   just test-actions-latest-build
 test-actions-latest-build:
   #!/usr/bin/env bash
   set -euo pipefail
   {{node_bootstrap}}
-  npx qunit test/workflows.github.test.js test/release.workflow-scripts.test.js
+  npx qunit test/workflows.github.test.js test/release.workflow-scripts.test.js test/pr-vsix-comment.test.js test/pr-vsix-preview.test.js test/pr-vsix-refresh.test.js
 
 # Examples:
 #   just test-actions
@@ -215,6 +231,7 @@ test-actions:
   just test
   just lint-actions
   just test-actions-ci
+  just test-actions-pr-vsix-build
   just test-actions-release-build
   just test-actions-latest-build
 

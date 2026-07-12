@@ -1,0 +1,64 @@
+name: PR VSIX Refresh
+
+on:
+  repository_dispatch:
+    types:
+      - continue-pr-vsix-refresh
+  workflow_run:
+    workflows:
+      - PR VSIX Base Event
+    types:
+      - completed
+  schedule:
+    - cron: "37 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: >-
+    ${{ github.event_name == 'workflow_run' && format('branch-{0}', github.event.workflow_run.head_branch) ||
+    github.event_name == 'repository_dispatch' && format('continuation-{0}', github.event.client_payload.base || 'all') ||
+    'all' }}
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out trusted refresher
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version-file: .nvmrc
+
+      - name: Refresh stale PR VSIX bundles
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_VSIX_API_RETRY_ATTEMPTS: 4
+          PR_VSIX_API_RETRY_BASE_MS: 1000
+          PR_VSIX_API_RETRY_MAX_MS: 60000
+          PR_VSIX_ARTIFACT_RETENTION_DAYS: 90
+          PR_VSIX_DISPATCH_INTERVAL_MS: 1000
+          PR_VSIX_MERGE_ATTEMPTS: 12
+          PR_VSIX_MERGE_INTERVAL_MS: 5000
+          PR_VSIX_PENDING_HOURS: 6
+          PR_VSIX_REFRESH_BATCH_SIZE: 400
+          PR_VSIX_REFRESH_CONCURRENCY: 8
+          PR_VSIX_RENEWAL_DAYS: 14
+        run: node scripts/ci/refresh-pr-vsix.mjs
