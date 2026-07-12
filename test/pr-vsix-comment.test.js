@@ -1049,6 +1049,19 @@ QUnit.test( 'workflow identity resolver covers CI and lifecycle events', async f
         pullRequestNumber: 19,
         processable: true
     } );
+    var malformedLifecycleError;
+    try
+    {
+        module.resolveWorkflowIdentity( lifecycleRun( {
+            display_title: 'PR VSIX Event'
+        } ) );
+    }
+    catch( error )
+    {
+        malformedLifecycleError = error;
+    }
+    assert.ok( malformedLifecycleError instanceof module.PrVsixInvariantError );
+    assert.equal( malformedLifecycleError.message, 'workflow run: expected a canonical PR identity' );
 } );
 
 QUnit.test( 'GitHub API adapter paginates and dispatches refresh events', async function( assert )
