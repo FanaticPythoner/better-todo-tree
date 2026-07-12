@@ -341,6 +341,33 @@ QUnit.test( 'external workflow actions are pinned to full commit SHAs', function
     } );
 } );
 
+QUnit.test( 'workflow run names preserve hash characters', function( assert )
+{
+    getWorkflowPaths().forEach( function( workflowPath )
+    {
+        var contents = fs.readFileSync( workflowPath, 'utf8' );
+        var relativePath = path.relative( path.join( __dirname, '..' ), workflowPath );
+        var unsafeRunNameLine = contents
+            .split( regexRegistry.createRegExp( 'optionalCarriageReturnLineBreak' ) )
+            .find( function( line )
+            {
+                if( line.indexOf( 'run-name: ' ) !== 0 )
+                {
+                    return false;
+                }
+
+                var value = line.slice( 'run-name: '.length );
+                return ![ '>', '|', "'", '"' ].includes( value[ 0 ] ) && value.indexOf( ' #' ) !== -1;
+            } );
+
+        assert.equal(
+            unsafeRunNameLine,
+            undefined,
+            relativePath + ': plain YAML run-name cannot contain whitespace-hash'
+        );
+    } );
+} );
+
 QUnit.test( 'Dependabot groups CodeQL action revisions atomically', function( assert )
 {
     var githubActionsUpdates = getDependabotUpdateBlocks(
@@ -518,6 +545,13 @@ QUnit.test( 'trusted orchestration isolates and cancels only one PR generation',
     assert.ok( buildWorkflow.indexOf( 'ref: ${{ steps.context.outputs.checkout-sha }}' ) !== -1 );
     assert.ok( buildWorkflow.indexOf( 'repository_dispatch:\n    types:\n      - refresh-pr-vsix' ) !== -1 );
     assert.ok( buildWorkflow.indexOf( 'group: pr-vsix-build-${{ github.event.client_payload.pull_request_number }}' ) !== -1 );
+    assert.ok(
+        eventWorkflow.indexOf( [
+            'run-name: >-',
+            "  ${{ format('PR VSIX Event #{0} {1}', github.event.pull_request.number, github.event.action) }}"
+        ].join( '\n' ) ) !== -1,
+        'lifecycle run name preserves PR and action identity'
+    );
     assert.ok( eventWorkflow.indexOf( "format('pr-vsix-fallback-{0}', github.event.pull_request.number)" ) !== -1 );
     assert.ok( eventWorkflow.indexOf( "format('pr-vsix-build-{0}', github.event.pull_request.number)" ) !== -1 );
 } );

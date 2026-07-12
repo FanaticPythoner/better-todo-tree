@@ -1,5 +1,6 @@
 name: PR VSIX Event
-run-name: PR VSIX Event #${{ github.event.pull_request.number }} ${{ github.event.action }}
+run-name: >-
+  ${{ format('PR VSIX Event #{0} {1}', github.event.pull_request.number, github.event.action) }}
 
 on:
   pull_request:
