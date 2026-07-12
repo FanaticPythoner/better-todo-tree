@@ -46,7 +46,7 @@ jobs:
       - name: Upload lifecycle marker
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: better-todo-tree-pr-vsix-event-${{ github.event.pull_request.number }}-head-${{ github.event.pull_request.head.sha }}-base-${{ github.event.pull_request.base.sha }}-merge-${{ github.event.pull_request.merge_commit_sha || 'none' }}-${{ github.event.action }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          name: better-todo-tree-pr-vsix-event-${{ github.event.pull_request.number }}-head-${{ github.event.pull_request.head.sha }}-base-${{ github.event.pull_request.base.sha }}-merge-none-${{ github.event.action }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: pr-vsix-event
           if-no-files-found: error
           retention-days: 1

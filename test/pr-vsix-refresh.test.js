@@ -13,6 +13,7 @@ var SHA_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 var SHA_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 var SHA_C = 'cccccccccccccccccccccccccccccccccccccccc';
 var SHA_D = 'dddddddddddddddddddddddddddddddddddddddd';
+var SHA_E = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 
 function pullRequest( overrides )
 {
@@ -21,7 +22,7 @@ function pullRequest( overrides )
         state: 'open',
         mergeable: true,
         mergeable_state: 'clean',
-        merge_commit_sha: SHA_C,
+        merge_commit_sha: null,
         author_association: 'OWNER',
         labels: [],
         head: { sha: SHA_A, repo: { id: 99 } },
@@ -94,6 +95,27 @@ function storedArtifact( overrides )
     }, overrides || {} );
 }
 
+function mergeContextApi( overrides )
+{
+    return Object.assign( {
+        getPullRequestMergeSha: async function() { return SHA_C; },
+        getCommit: async function()
+        {
+            return { sha: SHA_C, parents: [ { sha: SHA_B }, { sha: SHA_A } ] };
+        }
+    }, overrides || {} );
+}
+
+function stableContext( overrides )
+{
+    return Object.assign( {
+        pullRequestNumber: 19,
+        headSha: SHA_A,
+        baseSha: SHA_B,
+        mergeSha: SHA_C
+    }, overrides || {} );
+}
+
 QUnit.module( 'PR VSIX refresh and immutable context' );
 
 QUnit.test( 'base refresh accepts only successful same-repository push signals', async function( assert )
@@ -139,13 +161,16 @@ QUnit.test( 'repository dispatch resolves only a parent-bound current merge cont
             cause: 'repair'
         }
     } );
-    var api = {
-        getPullRequest: async function() { return pullRequest(); },
-        getCommit: async function()
+    var api = mergeContextApi( {
+        getPullRequest: async function()
         {
-            return { sha: SHA_C, parents: [ { sha: SHA_B }, { sha: SHA_A } ] };
+            return pullRequest( {
+                mergeable: null,
+                mergeable_state: 'unknown',
+                merge_commit_sha: SHA_D
+            } );
         }
-    };
+    } );
 
     var context = await module.resolveBuildContext( {
         event: dispatchEvent,
@@ -181,13 +206,13 @@ QUnit.test( 'stale merge parents and unapproved external forks fail closed', asy
             cause: 'repair'
         }
     } );
-    var staleApi = {
+    var staleApi = mergeContextApi( {
         getPullRequest: async function() { return pullRequest(); },
         getCommit: async function()
         {
             return { sha: SHA_C, parents: [ { sha: SHA_D }, { sha: SHA_A } ] };
         }
-    };
+    } );
     await assert.rejects( module.resolveBuildContext( {
         event: dispatchEvent,
         api: staleApi,
@@ -201,14 +226,9 @@ QUnit.test( 'stale merge parents and unapproved external forks fail closed', asy
         author_association: 'NONE',
         head: { sha: SHA_A, repo: { id: 2 } }
     } );
-    var externalApi = {
-        getPullRequest: async function() { return external; },
-        getCommit: staleApi.getCommit
-    };
-    externalApi.getCommit = async function()
-    {
-        return { sha: SHA_C, parents: [ { sha: SHA_B }, { sha: SHA_A } ] };
-    };
+    var externalApi = mergeContextApi( {
+        getPullRequest: async function() { return external; }
+    } );
     await assert.rejects( module.resolveBuildContext( {
         event: dispatchEvent,
         api: externalApi,
@@ -234,7 +254,7 @@ QUnit.test( 'revocation dispatch resolves to trusted cleanup without PR checkout
                 pull_request_number: 19,
                 head_sha: SHA_A,
                 base_sha: SHA_B,
-                merge_sha: SHA_C,
+                merge_sha: 'none',
                 cause: 'approval-revoked'
             }
         } ),
@@ -329,6 +349,7 @@ QUnit.test( 'scheduled refresh preserves current bundles outside the renewal win
     var module = await refreshModulePromise;
     var refresh = module.requiresScheduledRefresh( {
         pullRequest: pullRequest(),
+        context: stableContext(),
         comments: [ comment( markerBody() ) ],
         artifacts: [ storedArtifact() ],
         now: Date.parse( '2026-07-11T12:00:00Z' ),
@@ -344,6 +365,7 @@ QUnit.test( 'scheduled refresh repairs context drift, expiry, and abandoned pend
     var module = await refreshModulePromise;
     var input = {
         pullRequest: pullRequest(),
+        context: stableContext(),
         comments: [ comment( markerBody() ) ],
         artifacts: [ storedArtifact() ],
         now: Date.parse( '2026-07-11T18:01:00Z' ),
@@ -401,6 +423,7 @@ QUnit.test( 'base refresh dispatches build and conflict invalidation events', as
 {
     var module = await refreshModulePromise;
     var dispatched = [];
+    var mergeRefPulls = [];
     var pulls = [
         pullRequest(),
         pullRequest( {
@@ -410,7 +433,12 @@ QUnit.test( 'base refresh dispatches build and conflict invalidation events', as
             merge_commit_sha: null
         } )
     ];
-    var api = {
+    var api = mergeContextApi( {
+        getPullRequestMergeSha: async function( number )
+        {
+            mergeRefPulls.push( number );
+            return SHA_C;
+        },
         listOpenPullRequests: async function( base )
         {
             assert.equal( base, 'master' );
@@ -420,15 +448,11 @@ QUnit.test( 'base refresh dispatches build and conflict invalidation events', as
         {
             return pulls.find( function( item ) { return item.number === number; } );
         },
-        getCommit: async function()
-        {
-            return { sha: SHA_C, parents: [ { sha: SHA_B }, { sha: SHA_A } ] };
-        },
         dispatchRepositoryEvent: async function( name, payload )
         {
             dispatched.push( { name: name, payload: payload } );
         }
-    };
+    } );
     var result = await module.refreshOpenPullRequests( {
         api: api,
         base: 'master',
@@ -454,6 +478,7 @@ QUnit.test( 'base refresh dispatches build and conflict invalidation events', as
         return left.payload.pull_request_number - right.payload.pull_request_number;
     } );
     assert.equal( dispatched[ 0 ].name, 'refresh-pr-vsix' );
+    assert.deepEqual( mergeRefPulls, [ 19 ] );
     assert.deepEqual( dispatched[ 0 ].payload, {
         pull_request_number: 19,
         head_sha: SHA_A,
@@ -467,23 +492,37 @@ QUnit.test( 'base refresh dispatches build and conflict invalidation events', as
 QUnit.test( 'base refresh returns a durable PR-number continuation cursor', async function( assert )
 {
     var module = await refreshModulePromise;
-    var pulls = [ pullRequest(), pullRequest( { number: 20 } ), pullRequest( { number: 21 } ) ];
+    var pulls = [
+        pullRequest(),
+        pullRequest( { number: 20, head: { sha: SHA_D, repo: { id: 99 } } } ),
+        pullRequest( { number: 21 } )
+    ];
     var dispatched = [];
-    var api = {
+    var mergeRefPulls = [];
+    var commitReads = [];
+    var api = mergeContextApi( {
+        getPullRequestMergeSha: async function( number )
+        {
+            mergeRefPulls.push( number );
+            return number === 19 ? SHA_C : SHA_E;
+        },
+        getCommit: async function( sha )
+        {
+            commitReads.push( sha );
+            return sha === SHA_C ?
+                { sha: SHA_C, parents: [ { sha: SHA_B }, { sha: SHA_A } ] } :
+                { sha: SHA_E, parents: [ { sha: SHA_B }, { sha: SHA_D } ] };
+        },
         listOpenPullRequests: async function() { return pulls; },
         getPullRequest: async function( number )
         {
             return pulls.find( function( pull ) { return pull.number === number; } );
         },
-        getCommit: async function()
-        {
-            return { sha: SHA_C, parents: [ { sha: SHA_B }, { sha: SHA_A } ] };
-        },
         dispatchRepositoryEvent: async function( name, payload )
         {
             dispatched.push( { name: name, payload: payload } );
         }
-    };
+    } );
     var result = await module.refreshOpenPullRequests( {
         api: api,
         base: 'master',
@@ -498,6 +537,15 @@ QUnit.test( 'base refresh returns a durable PR-number continuation cursor', asyn
 
     assert.equal( result.scanned, 2 );
     assert.equal( dispatched.length, 2 );
+    assert.deepEqual( mergeRefPulls.sort(), [ 19, 20 ] );
+    assert.deepEqual( commitReads.sort(), [ SHA_C, SHA_E ] );
+    assert.deepEqual( dispatched.sort( function( left, right )
+    {
+        return left.payload.pull_request_number - right.payload.pull_request_number;
+    } ).map( function( item )
+    {
+        return [ item.payload.pull_request_number, item.payload.merge_sha ];
+    } ), [ [ 19, SHA_C ], [ 20, SHA_E ] ] );
     assert.deepEqual( result.continuation, { phase: 'open', cursor: 20 } );
 } );
 
@@ -525,13 +573,9 @@ QUnit.test( 'scheduled sweep dispatches only stale bundles', async function( ass
 {
     var module = await refreshModulePromise;
     var dispatched = [];
-    var api = {
+    var api = mergeContextApi( {
         listOpenPullRequests: async function() { return [ pullRequest() ]; },
         getPullRequest: async function() { return pullRequest(); },
-        getCommit: async function()
-        {
-            return { sha: SHA_C, parents: [ { sha: SHA_B }, { sha: SHA_A } ] };
-        },
         listRepositoryIssueComments: async function() { return [ comment( markerBody() ) ]; },
         listRepositoryArtifacts: async function()
         {
@@ -541,7 +585,7 @@ QUnit.test( 'scheduled sweep dispatches only stale bundles', async function( ass
         {
             dispatched.push( { name: name, payload: payload } );
         }
-    };
+    } );
     var result = await module.refreshOpenPullRequests( {
         api: api,
         scheduled: true,
@@ -564,6 +608,150 @@ QUnit.test( 'scheduled sweep dispatches only stale bundles', async function( ass
     } );
     assert.equal( dispatched.length, 1 );
     assert.equal( dispatched[ 0 ].payload.cause, 'renewal' );
+} );
+
+QUnit.test( 'scheduled sweep revalidates the exact canonical merge ref', async function( assert )
+{
+    var module = await refreshModulePromise;
+    var mergeSha = SHA_C;
+    var mergeRefReads = [];
+    var dispatched = [];
+    var api = {
+        listOpenPullRequests: async function() { return [ pullRequest() ]; },
+        getPullRequest: async function() { return pullRequest(); },
+        getPullRequestMergeSha: async function( number )
+        {
+            mergeRefReads.push( number );
+            return mergeSha;
+        },
+        getCommit: async function( sha )
+        {
+            return { sha: sha, parents: [ { sha: SHA_B }, { sha: SHA_A } ] };
+        },
+        listRepositoryIssueComments: async function() { return [ comment( markerBody() ) ]; },
+        listRepositoryArtifacts: async function() { return [ storedArtifact() ]; },
+        dispatchRepositoryEvent: async function( name, payload )
+        {
+            dispatched.push( { name: name, payload: payload } );
+        }
+    };
+    var options = {
+        api: api,
+        scheduled: true,
+        now: Date.parse( '2026-07-11T12:00:00Z' ),
+        renewalWindowMs: 14 * 24 * 60 * 60 * 1000,
+        pendingWindowMs: 6 * 60 * 60 * 1000,
+        concurrency: 1,
+        mergeRetry: { attempts: 1, intervalMs: 0 },
+        commentSince: '2026-04-11T12:00:00Z'
+    };
+
+    var current = await module.refreshOpenPullRequests( options );
+    assert.equal( current.current, 1 );
+    assert.equal( current.dispatched, 0 );
+    assert.deepEqual( dispatched, [] );
+
+    mergeSha = SHA_D;
+    var repaired = await module.refreshOpenPullRequests( options );
+    assert.equal( repaired.current, 0 );
+    assert.equal( repaired.dispatched, 1 );
+    assert.equal( dispatched.length, 1 );
+    assert.deepEqual( dispatched[ 0 ].payload, {
+        pull_request_number: 19,
+        head_sha: SHA_A,
+        base_sha: SHA_B,
+        merge_sha: SHA_D,
+        cause: 'repair'
+    } );
+    assert.deepEqual( mergeRefReads, [ 19, 19 ] );
+} );
+
+QUnit.test( 'scheduled sweep revokes authorization removed during merge reconciliation', async function( assert )
+{
+    var module = await refreshModulePromise;
+    var allowed = pullRequest( {
+        author_association: 'NONE',
+        labels: [ { name: 'safe-to-test' } ],
+        head: { sha: SHA_A, repo: { id: 2 } }
+    } );
+    var revoked = pullRequest( {
+        author_association: 'NONE',
+        labels: [],
+        head: { sha: SHA_A, repo: { id: 2 } }
+    } );
+    var dispatched = [];
+    var api = {
+        listOpenPullRequests: async function() { return [ allowed ]; },
+        getPullRequest: async function() { return revoked; },
+        getPullRequestMergeSha: async function()
+        {
+            throw new Error( 'merge ref must not be read after revocation' );
+        },
+        listRepositoryIssueComments: async function() { return [ comment( markerBody() ) ]; },
+        listRepositoryArtifacts: async function() { return [ storedArtifact() ]; },
+        dispatchRepositoryEvent: async function( name, payload )
+        {
+            dispatched.push( { name: name, payload: payload } );
+        }
+    };
+
+    var result = await module.refreshOpenPullRequests( {
+        api: api,
+        scheduled: true,
+        now: Date.parse( '2026-07-11T12:00:00Z' ),
+        renewalWindowMs: 14 * 24 * 60 * 60 * 1000,
+        pendingWindowMs: 6 * 60 * 60 * 1000,
+        concurrency: 1,
+        mergeRetry: { attempts: 1, intervalMs: 0 },
+        commentSince: '2026-04-11T12:00:00Z'
+    } );
+
+    assert.equal( result.revoked, 1 );
+    assert.equal( result.unsafe, 0 );
+    assert.equal( dispatched.length, 1 );
+    assert.equal( dispatched[ 0 ].payload.cause, 'approval-revoked' );
+    assert.equal( dispatched[ 0 ].payload.merge_sha, 'none' );
+} );
+
+QUnit.test( 'scheduled sweep repairs closure observed during merge reconciliation', async function( assert )
+{
+    var module = await refreshModulePromise;
+    var closed = pullRequest( {
+        state: 'closed',
+        closed_at: '2026-07-11T11:00:00Z'
+    } );
+    var dispatched = [];
+    var api = {
+        listOpenPullRequests: async function() { return [ pullRequest() ]; },
+        getPullRequest: async function() { return closed; },
+        getPullRequestMergeSha: async function()
+        {
+            throw new Error( 'merge ref must not be read after closure' );
+        },
+        listRepositoryIssueComments: async function() { return [ comment( markerBody() ) ]; },
+        listRepositoryArtifacts: async function() { return [ storedArtifact() ]; },
+        dispatchRepositoryEvent: async function( name, payload )
+        {
+            dispatched.push( { name: name, payload: payload } );
+        }
+    };
+
+    var result = await module.refreshOpenPullRequests( {
+        api: api,
+        scheduled: true,
+        now: Date.parse( '2026-07-11T12:00:00Z' ),
+        renewalWindowMs: 14 * 24 * 60 * 60 * 1000,
+        pendingWindowMs: 6 * 60 * 60 * 1000,
+        concurrency: 1,
+        mergeRetry: { attempts: 1, intervalMs: 0 },
+        commentSince: '2026-04-11T12:00:00Z'
+    } );
+
+    assert.equal( result.closedRepaired, 1 );
+    assert.equal( result.skipped, 0 );
+    assert.equal( dispatched.length, 1 );
+    assert.equal( dispatched[ 0 ].payload.cause, 'closed-repair' );
+    assert.equal( dispatched[ 0 ].payload.merge_sha, 'none' );
 } );
 
 QUnit.test( 'refresh sweep does not execute unapproved external fork code', async function( assert )
@@ -703,6 +891,11 @@ QUnit.test( 'scheduled grouping retains orphan artifacts after blocked comment c
     var grouped = module.groupScheduledState( [ pullRequest() ], [ blocked ], [ storedArtifact() ] );
 
     assert.equal( grouped.artifactsByName.get( 'better-todo-tree-pr-19.vsix' ).length, 1 );
+    assert.notOk( module.requiresAuthorizationRevocation( {
+        pullRequest: pullRequest(),
+        comments: [ blocked ],
+        artifacts: []
+    } ) );
     assert.ok( module.requiresAuthorizationRevocation( {
         pullRequest: pullRequest(),
         comments: [ blocked ],

@@ -595,8 +595,11 @@ QUnit.test( 'privileged PR VSIX publisher executes trusted metadata code only', 
     assert.ok( eventWorkflow.indexOf( 'pull_request_target:\n    types:\n      - closed\n      - edited\n      - labeled\n      - unlabeled\n      - opened\n      - reopened\n      - synchronize' ) !== -1 );
     assert.ok( eventWorkflow.indexOf( "github.event.action != 'edited' || github.event.changes.base != null" ) !== -1 );
     assert.ok( eventWorkflow.indexOf( "github.event.action != 'labeled' && github.event.action != 'unlabeled'" ) !== -1 );
-    assert.ok( eventWorkflow.indexOf( 'better-todo-tree-pr-vsix-event-${{ github.event.pull_request.number }}-head-${{ github.event.pull_request.head.sha }}-base-${{ github.event.pull_request.base.sha }}-merge-' ) !== -1 );
+    assert.ok( eventWorkflow.indexOf( 'better-todo-tree-pr-vsix-event-${{ github.event.pull_request.number }}-head-${{ github.event.pull_request.head.sha }}-base-${{ github.event.pull_request.base.sha }}-merge-none-' ) !== -1 );
     assert.ok( eventWorkflow.indexOf( '-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}' ) !== -1 );
+    assert.ok( eventWorkflow.indexOf( 'merge_commit_sha' ) === -1 );
+    assert.ok( publisherScript.indexOf( 'merge_commit_sha' ) === -1 );
+    assert.ok( publisherScript.indexOf( '/git/ref/pull/' ) !== -1 );
     assert.ok( eventWorkflow.indexOf( 'actions/checkout' ) === -1 );
     assert.ok( eventWorkflow.indexOf( 'permissions: {}' ) !== -1 );
     assert.ok( eventWorkflow.indexOf( 'pull-requests: write' ) === -1 );

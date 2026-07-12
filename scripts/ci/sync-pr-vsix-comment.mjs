@@ -9,6 +9,9 @@ const ARTIFACT_NAME_PREFIX = 'better-todo-tree-pr-';
 const EXTERNAL_APPROVAL_REASON = 'External fork previews require maintainer approval with the `safe-to-test` label.';
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const ERROR_CODE_CONTEXT_CHANGED = 'PR_CONTEXT_CHANGED';
+const ERROR_CODE_MERGE_CHANGED = 'PR_MERGE_CONTEXT_CHANGED';
+const ERROR_CODE_MERGE_UNSTABLE = 'PR_MERGE_CONTEXT_UNSTABLE';
 const CI_ACTIONS = new Set([
     'approval-revoked',
     'base-edited',
@@ -33,6 +36,8 @@ class PrVsixInvariantError extends Error {
         this.status = options && options.status;
         this.retryable = Boolean(options && options.retryable);
         this.retryAfterMs = options && options.retryAfterMs;
+        this.code = options && options.code;
+        this.canonicalMergeSha = options && options.canonicalMergeSha;
     }
 }
 
@@ -262,10 +267,74 @@ function contextMatches(left, right) {
 }
 
 function phaseRank(phase) {
-    return phase === 'completed' ? 2 : 1;
+    return phase === 'completed' ? 3 : phase === 'blocked' ? 2 : 1;
+}
+
+function compareCommentState(left, right) {
+    if (left.source === right.source && Number.isSafeInteger(left.runNumber) &&
+        Number.isSafeInteger(right.runNumber)) {
+        const generation = compareSequence(left, right);
+        if (generation !== 0) {
+            return generation;
+        }
+        const phase = phaseRank(left.phase) - phaseRank(right.phase);
+        if (phase !== 0) {
+            return phase;
+        }
+    }
+    const observed = timestamp(left.startedAt, 'comment observation time') -
+        timestamp(right.startedAt, 'comment observation time');
+    if (observed !== 0) {
+        return observed;
+    }
+    if (left.source !== right.source) {
+        return left.source === 'ci' ? 1 : -1;
+    }
+    return left.runId - right.runId;
+}
+
+function failureStateDominates(existing, incoming) {
+    if (incoming.authorizationRevoked) {
+        return false;
+    }
+    if (!existing.startedAt || existing.headSha !== incoming.headSha ||
+        existing.baseSha !== incoming.baseSha) {
+        return false;
+    }
+    if (incoming.canonicalMergeSha) {
+        return existing.phase !== 'closed' && existing.mergeSha === incoming.canonicalMergeSha;
+    }
+    if (existing.source === incoming.source) {
+        const generation = compareSequence(existing, incoming);
+        if (generation !== 0) {
+            return generation > 0;
+        }
+        const sameRun = existing.runId === incoming.id;
+        if (incoming.invalidatesArtifact && sameRun) {
+            return false;
+        }
+        const observed = timestamp(existing.startedAt, 'comment observation time') -
+            timestamp(incoming.startedAt, 'workflow observation time');
+        if (observed !== 0) {
+            return observed > 0;
+        }
+        if (!sameRun) {
+            return existing.runId > incoming.id;
+        }
+        return phaseRank(existing.phase) > phaseRank(incoming.phase);
+    }
+    const observed = timestamp(existing.startedAt, 'comment observation time') -
+        timestamp(incoming.startedAt, 'workflow observation time');
+    if (observed !== 0) {
+        return observed > 0;
+    }
+    return existing.source === 'ci';
 }
 
 function existingStateDominates(existing, incoming) {
+    if (incoming.failureState) {
+        return failureStateDominates(existing, incoming);
+    }
     if (!existing.source || !existing.runNumber || !existing.startedAt || !existing.baseSha || !existing.mergeSha ||
         !contextMatches(existing, incoming) || incoming.phase === 'closed' || existing.phase === 'closed') {
         return false;
@@ -356,6 +425,193 @@ function renderUnavailableComment({ repository, run, reason }) {
         '',
         `[Workflow run](${runUrl(repository, run.id)})`
     ].join('\n');
+}
+
+function synchronizationFailureReason(error) {
+    if (error && error.code === ERROR_CODE_MERGE_UNSTABLE) {
+        return 'GitHub did not expose an immutable merge ref matching the current base and head.';
+    }
+    if (error && error.code === ERROR_CODE_CONTEXT_CHANGED) {
+        return 'The pull request source changed during preview reconciliation.';
+    }
+    if (error && error.code === ERROR_CODE_MERGE_CHANGED) {
+        return 'The pull request merge ref changed before preview publication.';
+    }
+    if (error instanceof PrVsixInvariantError && error.message.includes('invalid merge ref response')) {
+        return 'GitHub returned an invalid pull request merge-ref response.';
+    }
+    if (error instanceof PrVsixInvariantError && error.message.startsWith('GitHub API ')) {
+        return 'GitHub API access failed during preview reconciliation.';
+    }
+    return 'Preview orchestration failed before a verified bundle could be published.';
+}
+
+async function publishSynchronizationFailure({ api, repository, run, error, retainedRun, onStale, mergeRetry }) {
+    let pullRequest;
+    let currentContext;
+    let baseRepository;
+    try {
+        pullRequest = await api.getPullRequest(run.pullRequestNumber);
+        currentContext = pullRequestContext(pullRequest);
+        baseRepository = pullRequest.base && pullRequest.base.repo;
+    } catch (reconciliationError) {
+        throw new AggregateError(
+            [error, reconciliationError],
+            'PR VSIX synchronization and current-source revalidation failed'
+        );
+    }
+    const baseRepositoryMatches = baseRepository && baseRepository.full_name === repository;
+    const sourceMatches = currentContext.headSha === run.headSha && currentContext.baseSha === run.baseSha;
+    const authorizationRevoked = pullRequest.state === 'open' && baseRepositoryMatches &&
+        !automaticBuildAllowed(pullRequest);
+    if (pullRequest.state === 'closed' && baseRepositoryMatches) {
+        const closedRun = Object.freeze({ ...run, ...currentContext, phase: 'closed' });
+        try {
+            await reconcileNamespaceInvalidation({
+                api,
+                pullRequestNumber: closedRun.pullRequestNumber,
+                body: renderClosedComment({ repository, run: closedRun }),
+                run: closedRun
+            });
+        } catch (reconciliationError) {
+            throw new AggregateError(
+                [error, reconciliationError],
+                'PR VSIX synchronization and closed-state reconciliation failed'
+            );
+        }
+        throw error;
+    }
+    if (pullRequest.state !== 'open' || !baseRepositoryMatches || !sourceMatches && !authorizationRevoked) {
+        if (onStale) {
+            try {
+                await onStale();
+            } catch (reconciliationError) {
+                throw new AggregateError(
+                    [error, reconciliationError],
+                    'PR VSIX synchronization and stale-run cleanup failed'
+                );
+            }
+        }
+        throw error;
+    }
+    if (error && error.code === ERROR_CODE_MERGE_CHANGED && !authorizationRevoked && mergeRetry) {
+        let stable;
+        try {
+            stable = await waitForStablePullRequest({
+                api,
+                pullRequestNumber: run.pullRequestNumber,
+                expectedHeadSha: run.headSha,
+                expectedBaseSha: run.baseSha,
+                retry: mergeRetry
+            });
+        } catch (revalidationError) {
+            if (revalidationError && revalidationError.code === ERROR_CODE_CONTEXT_CHANGED && onStale) {
+                try {
+                    await onStale();
+                } catch (cleanupError) {
+                    throw new AggregateError(
+                        [error, revalidationError, cleanupError],
+                        'PR VSIX merge revalidation and stale-run cleanup failed'
+                    );
+                }
+                throw error;
+            }
+            error = new PrVsixInvariantError(
+                `pull request ${run.pullRequestNumber}: merge context changed and could not be revalidated`,
+                {
+                    cause: new AggregateError([error, revalidationError]),
+                    code: ERROR_CODE_MERGE_CHANGED
+                }
+            );
+        }
+        if (stable && stable.buildable && stable.context.mergeSha === run.mergeSha) {
+            return stable.pullRequest;
+        }
+        if (stable) {
+            error = new PrVsixInvariantError(
+                `pull request ${run.pullRequestNumber}: merge context changed before publication`,
+                { code: ERROR_CODE_MERGE_CHANGED, canonicalMergeSha: stable.context.mergeSha }
+            );
+            const stableRepository = stable.pullRequest.base && stable.pullRequest.base.repo;
+            const stableSourceMatches = stable.context.headSha === run.headSha &&
+                stable.context.baseSha === run.baseSha;
+            const stableAuthorizationRevoked = stable.pullRequest.state === 'open' && stableRepository &&
+                stableRepository.full_name === repository && !automaticBuildAllowed(stable.pullRequest);
+            if (stable.pullRequest.state !== pullRequest.state ||
+                !stableRepository || stableRepository.full_name !== repository ||
+                !stableSourceMatches || stableAuthorizationRevoked) {
+                return publishSynchronizationFailure({
+                    api,
+                    repository,
+                    run,
+                    error,
+                    retainedRun,
+                    onStale
+                });
+            }
+        }
+    }
+    const invalidatesArtifact = authorizationRevoked || error && error.code === ERROR_CODE_MERGE_CHANGED;
+    const failedRun = Object.freeze({
+        ...run,
+        ...(authorizationRevoked ? currentContext : {}),
+        phase: 'blocked',
+        failureState: true,
+        invalidatesArtifact,
+        authorizationRevoked,
+        canonicalMergeSha: error && error.canonicalMergeSha
+    });
+    if (authorizationRevoked) {
+        try {
+            await reconcileNamespaceInvalidation({
+                api,
+                pullRequestNumber: failedRun.pullRequestNumber,
+                body: renderUnavailableComment({
+                    repository,
+                    run: failedRun,
+                    reason: EXTERNAL_APPROVAL_REASON
+                }),
+                run: failedRun
+            });
+        } catch (reconciliationError) {
+            throw new AggregateError(
+                [error, reconciliationError],
+                'PR VSIX synchronization and authorization-revocation reconciliation failed'
+            );
+        }
+        throw error;
+    }
+    const retainedArtifactRun = retainedRun;
+    const cleanup = ({ replacedStates = [], retainedStates = [] } = {}) => removeFailureArtifacts(
+        api,
+        failedRun.pullRequestNumber,
+        failedRun,
+        retainedArtifactRun,
+        replacedStates.map((state) => state.artifactId).filter(Boolean),
+        retainedStates.map((state) => state.artifactId).filter(Boolean)
+    );
+    try {
+        const comment = await upsertComment(
+            api,
+            failedRun.pullRequestNumber,
+            renderUnavailableComment({
+                repository,
+                run: failedRun,
+                reason: authorizationRevoked ? EXTERNAL_APPROVAL_REASON : synchronizationFailureReason(error)
+            }),
+            failedRun,
+            (replacedStates) => cleanup({ replacedStates })
+        );
+        if (!comment.applied) {
+            await cleanup(comment);
+        }
+    } catch (reconciliationError) {
+        throw new AggregateError(
+            [error, reconciliationError],
+            'PR VSIX synchronization and terminal comment reconciliation failed'
+        );
+    }
+    throw error;
 }
 
 function renderPendingComment({ repository, run }) {
@@ -500,7 +756,12 @@ function createGitHubApi({
         return rateLimitGate;
     }
 
-    async function requestOnce(relativePath, { method = 'GET', body, expectedStatuses = [200] } = {}) {
+    async function requestOnce(relativePath, {
+        method = 'GET',
+        body,
+        expectedStatuses = [200],
+        includeStatus = false
+    } = {}) {
         let response;
         try {
             response = await fetchImpl(`${apiUrl}${relativePath}`, {
@@ -551,7 +812,7 @@ function createGitHubApi({
             const detail = responseBody && responseBody.message ? responseBody.message : responseText.slice(0, 1000);
             throw httpError(detail);
         }
-        return responseBody;
+        return includeStatus ? Object.freeze({ status: response.status, body: responseBody }) : responseBody;
     }
 
     async function request(relativePath, options) {
@@ -602,6 +863,23 @@ function createGitHubApi({
     return Object.freeze({
         getPullRequest(number) {
             return request(`${repositoryPath}/pulls/${requireInteger(number, 'pull request number')}`);
+        },
+        async getPullRequestMergeSha(number) {
+            const pullRequestNumber = requireInteger(number, 'pull request number');
+            const expectedRef = `refs/pull/${pullRequestNumber}/merge`;
+            const response = await request(`${repositoryPath}/git/ref/pull/${pullRequestNumber}/merge`, {
+                expectedStatuses: [200, 404, 409],
+                includeStatus: true
+            });
+            if (response.status !== 200) {
+                return undefined;
+            }
+            const reference = response.body;
+            if (!reference || reference.ref !== expectedRef || !reference.object ||
+                reference.object.type !== 'commit') {
+                throw new PrVsixInvariantError(`pull request ${pullRequestNumber}: invalid merge ref response`);
+            }
+            return requireSha(reference.object.sha, 'pull request merge ref SHA');
         },
         getCommit(sha) {
             return request(`${repositoryPath}/commits/${requireSha(sha, 'commit SHA')}`);
@@ -672,20 +950,12 @@ function createGitHubApi({
     });
 }
 
-function normalizedMergeSha(pullRequest) {
-    if (pullRequest && (pullRequest.mergeable === false || pullRequest.mergeable_state === 'dirty')) {
-        return 'none';
-    }
-    return pullRequest && SHA_PATTERN.test(String(pullRequest.merge_commit_sha || '')) ?
-        pullRequest.merge_commit_sha : 'none';
-}
-
 function pullRequestContext(pullRequest) {
     return Object.freeze({
         pullRequestNumber: requireInteger(pullRequest.number, 'pull request number'),
         headSha: requireSha(pullRequest.head && pullRequest.head.sha, 'pull request head SHA'),
         baseSha: requireSha(pullRequest.base && pullRequest.base.sha, 'pull request base SHA'),
-        mergeSha: requireMergeSha(normalizedMergeSha(pullRequest))
+        mergeSha: 'none'
     });
 }
 
@@ -700,8 +970,8 @@ function automaticBuildAllowed(pullRequest) {
 
 function mergeCommitMatchesContext(commit, context) {
     const parents = commit && Array.isArray(commit.parents) ? commit.parents.map((parent) => parent.sha) : [];
-    return parents.length === 2 && new Set(parents).size === 2 &&
-        parents.includes(context.baseSha) && parents.includes(context.headSha);
+    return commit && commit.sha === context.mergeSha && context.baseSha !== context.headSha &&
+        parents.length === 2 && parents[0] === context.baseSha && parents[1] === context.headSha;
 }
 
 function requireMergeRetry(options) {
@@ -719,9 +989,15 @@ async function waitForStablePullRequest({ api, pullRequestNumber, expectedHeadSh
         const context = pullRequestContext(pullRequest);
         if (expectedHeadSha && context.headSha !== expectedHeadSha ||
             expectedBaseSha && context.baseSha !== expectedBaseSha) {
-            throw new PrVsixInvariantError(`pull request ${pullRequestNumber}: build context changed during reconciliation`);
+            throw new PrVsixInvariantError(
+                `pull request ${pullRequestNumber}: build context changed during reconciliation`,
+                { code: ERROR_CODE_CONTEXT_CHANGED }
+            );
         }
         if (pullRequest.state !== 'open') {
+            return Object.freeze({ pullRequest, context, buildable: false });
+        }
+        if (!automaticBuildAllowed(pullRequest)) {
             return Object.freeze({ pullRequest, context, buildable: false });
         }
         if (pullRequest.mergeable === false || pullRequest.mergeable_state === 'dirty') {
@@ -731,20 +1007,24 @@ async function waitForStablePullRequest({ api, pullRequestNumber, expectedHeadSh
                 buildable: false
             });
         }
-        if (pullRequest.mergeable === true && context.mergeSha !== 'none') {
-            const mergeCommit = await api.getCommit(context.mergeSha);
-            if (mergeCommitMatchesContext(mergeCommit, context)) {
-                return Object.freeze({ pullRequest, context, buildable: true });
+        const mergeSha = await api.getPullRequestMergeSha(pullRequestNumber);
+        if (mergeSha) {
+            const mergeContext = Object.freeze({ ...context, mergeSha });
+            const mergeCommit = await api.getCommit(mergeSha);
+            if (mergeCommitMatchesContext(mergeCommit, mergeContext)) {
+                return Object.freeze({ pullRequest, context: mergeContext, buildable: true });
             }
         }
         if (attempt < options.attempts) {
             await new Promise((resolve) => setTimeout(resolve, options.intervalMs));
         }
     }
-    throw new PrVsixInvariantError(`pull request ${pullRequestNumber}: merge context did not stabilize`);
+    throw new PrVsixInvariantError(`pull request ${pullRequestNumber}: merge context did not stabilize`, {
+        code: ERROR_CODE_MERGE_UNSTABLE
+    });
 }
 
-function runMatchesPullRequest(run, pullRequest, repository) {
+function runMatchesPullRequest(run, pullRequest, repository, options = {}) {
     const context = pullRequestContext(pullRequest);
     const baseRepository = pullRequest.base && pullRequest.base.repo;
     const runCreatedAt = timestamp(run.createdAt, 'workflow run creation time');
@@ -755,9 +1035,11 @@ function runMatchesPullRequest(run, pullRequest, repository) {
     const sourceMatches = run.event === 'repository_dispatch' && baseRepository &&
         baseRepository.id === run.headRepositoryId;
 
+    const sourceContextMatches = context.headSha === run.headSha && context.baseSha === run.baseSha;
+
     return run.pullRequestNumber === pullRequest.number && baseRepository &&
         baseRepository.full_name === repository && sourceMatches && temporal &&
-        (closedRepair || contextMatches(context, run));
+        (closedRepair || options.allowSourceDrift || sourceContextMatches);
 }
 
 function ciRunFromRaw(rawRun) {
@@ -769,13 +1051,38 @@ function ciRunFromRaw(rawRun) {
     return Object.freeze({ ...workflowRun, ...context, source: 'ci' });
 }
 
-async function associatedPullRequest(api, workflowRun, repository) {
+async function associatedPullRequest(api, workflowRun, repository, mergeRetry, options = {}) {
     const context = parseCiRunName(workflowRun.displayTitle);
     if (!context) {
         throw new PrVsixInvariantError(`workflow run ${workflowRun.id}: missing canonical PR run name`);
     }
     const pullRequest = await api.getPullRequest(context.pullRequestNumber);
-    return runMatchesPullRequest({ ...workflowRun, ...context }, pullRequest, repository) ? pullRequest : undefined;
+    if (!runMatchesPullRequest(
+        { ...workflowRun, ...context },
+        pullRequest,
+        repository,
+        { allowSourceDrift: options.allowSourceDrift }
+    )) {
+        return undefined;
+    }
+    if (!options.skipMergeRef && context.mergeSha !== 'none' && pullRequest.state === 'open' &&
+        automaticBuildAllowed(pullRequest)) {
+        const stable = await waitForStablePullRequest({
+            api,
+            pullRequestNumber: context.pullRequestNumber,
+            expectedHeadSha: context.headSha,
+            expectedBaseSha: context.baseSha,
+            retry: mergeRetry
+        });
+        if (!stable.buildable || stable.context.mergeSha !== context.mergeSha) {
+            throw new PrVsixInvariantError(
+                `pull request ${context.pullRequestNumber}: merge context changed before publication`,
+                { code: ERROR_CODE_MERGE_CHANGED, canonicalMergeSha: stable.context.mergeSha }
+            );
+        }
+        return stable.pullRequest;
+    }
+    return pullRequest;
 }
 
 async function latestCiRun(api, workflow, pullRequest, repository, options = {}) {
@@ -789,6 +1096,7 @@ async function latestCiRun(api, workflow, pullRequest, repository, options = {})
     });
     const matching = runs.map(ciRunFromRaw).filter((run) =>
         run && (!options.actions || options.actions.has(run.action)) &&
+        (!options.expectedMergeSha || run.mergeSha === options.expectedMergeSha) &&
         runMatchesPullRequest(run, pullRequest, repository)
     );
     return matching.reduce((candidate, run) =>
@@ -809,11 +1117,26 @@ async function upsertComment(
         comment && comment.user && comment.user.login === BOT_LOGIN &&
         typeof comment.body === 'string' && comment.body.includes(COMMENT_MARKER)
     ).sort((left, right) => left.id - right.id);
-    if (managed.some((comment) => {
-        const metadata = parseCommentMetadata(comment.body);
-        return metadata && existingStateDominates(metadata, run);
-    })) {
-        return Object.freeze({ applied: false, removedArtifacts: 0 });
+    const managedStates = managed.map((comment) => Object.freeze({
+        comment,
+        metadata: parseCommentMetadata(comment.body)
+    }));
+    const dominant = managedStates.filter(({ metadata }) => metadata && existingStateDominates(metadata, run))
+        .sort((left, right) => compareCommentState(right.metadata, left.metadata))[0];
+    if (dominant) {
+        const duplicates = managedStates.filter((entry) => entry !== dominant);
+        await Promise.all(duplicates.map(async ({ comment }) => {
+            if (comment.body !== dominant.comment.body) {
+                await api.updateIssueComment(comment.id, dominant.comment.body);
+            }
+            await api.deleteIssueComment(comment.id);
+        }));
+        return Object.freeze({
+            applied: false,
+            removedArtifacts: 0,
+            retainedStates: [dominant.metadata],
+            replacedStates: duplicates.map(({ metadata }) => metadata).filter(Boolean)
+        });
     }
 
     const primary = managed[0];
@@ -829,12 +1152,59 @@ async function upsertComment(
             await api.updateIssueComment(primary.id, initialBody);
         }
     }
-    await Promise.all(managed.slice(primary ? 1 : 0).map((comment) => api.deleteIssueComment(comment.id)));
-    const removedArtifacts = await prepare();
+    const duplicates = managed.slice(primary ? 1 : 0);
+    await Promise.all(duplicates.map(async (comment) => {
+        if (comment.body !== initialBody) {
+            await api.updateIssueComment(comment.id, initialBody);
+        }
+        await api.deleteIssueComment(comment.id);
+    }));
+    const replacedStates = managedStates.map(({ metadata }) => metadata).filter(Boolean);
+    const removedArtifacts = await prepare(replacedStates);
     if (!alreadyFinal && transitionBody && transitionBody !== body) {
         await api.updateIssueComment(commentId, body);
     }
-    return Object.freeze({ applied: true, commentId, removedArtifacts });
+    return Object.freeze({
+        applied: true,
+        commentId,
+        removedArtifacts,
+        retainedStates: [],
+        replacedStates
+    });
+}
+
+async function reconcileNamespaceInvalidation({ api, pullRequestNumber, body, run }) {
+    let comment;
+    let commentError;
+    try {
+        comment = await upsertComment(api, pullRequestNumber, body, run);
+    } catch (error) {
+        commentError = error;
+    }
+    let removedArtifacts;
+    let cleanupError;
+    try {
+        removedArtifacts = await removePreviewArtifacts(api, pullRequestNumber);
+    } catch (error) {
+        cleanupError = error;
+    }
+    if (commentError && cleanupError) {
+        throw new AggregateError(
+            [commentError, cleanupError],
+            'PR VSIX comment and artifact invalidation failed'
+        );
+    }
+    if (commentError) {
+        throw commentError;
+    }
+    if (cleanupError) {
+        throw cleanupError;
+    }
+    return Object.freeze({
+        pullRequestNumber,
+        applied: comment.applied,
+        removedArtifacts
+    });
 }
 
 async function removePreviewArtifacts(api, pullRequestNumber, retainedArtifactId, retainedRun) {
@@ -857,8 +1227,44 @@ async function removePreviewArtifacts(api, pullRequestNumber, retainedArtifactId
             return timestamp(artifact.created_at, 'artifact creation time') <=
                 timestamp(retainedRun.updatedAt, 'workflow run update time');
         }
+        if (artifact.workflow_run && Number.isSafeInteger(artifact.workflow_run.id)) {
+            return artifact.workflow_run.id < retainedRun.id;
+        }
         return timestamp(artifact.created_at, 'artifact creation time') <
             timestamp(retainedRun.createdAt, 'workflow run creation time');
+    });
+    await Promise.all(removals.map((artifact) => api.deleteArtifact(artifact.id)));
+    return removals.length;
+}
+
+async function removeFailureArtifacts(
+    api,
+    pullRequestNumber,
+    observationRun,
+    retainedRun,
+    invalidatedArtifactIds = [],
+    retainedArtifactIds = []
+) {
+    const name = previewArtifactName(pullRequestNumber);
+    const artifacts = await api.listArtifactsByName(name);
+    const observationCreatedAt = timestamp(observationRun.createdAt, 'workflow run creation time');
+    const invalidatedIds = new Set(invalidatedArtifactIds);
+    const retainedIds = new Set(retainedArtifactIds);
+    const removals = artifacts.filter((artifact) => {
+        if (artifact.name !== name) {
+            throw new PrVsixInvariantError(`artifact ${artifact.id}: managed name mismatch`);
+        }
+        if (retainedIds.has(artifact.id) || retainedRun && isArtifactForRun(artifact, retainedRun, pullRequestNumber)) {
+            return false;
+        }
+        if (invalidatedIds.has(artifact.id)) {
+            return true;
+        }
+        if (artifact.workflow_run && artifact.workflow_run.id === observationRun.id &&
+            isArtifactForRun(artifact, observationRun, pullRequestNumber)) {
+            return true;
+        }
+        return timestamp(artifact.created_at, 'artifact creation time') < observationCreatedAt;
     });
     await Promise.all(removals.map((artifact) => api.deleteArtifact(artifact.id)));
     return removals.length;
@@ -868,6 +1274,14 @@ async function removeRunArtifacts(api, artifacts, run, pullRequestNumber) {
     const removals = artifacts.filter((artifact) => isArtifactForRun(artifact, run, pullRequestNumber));
     await Promise.all(removals.map((artifact) => api.deleteArtifact(artifact.id)));
     return removals.length;
+}
+
+async function removeCompletedRunArtifacts(api, run, action) {
+    if (action !== 'completed') {
+        return 0;
+    }
+    const artifacts = await api.listRunArtifacts(run.id);
+    return removeRunArtifacts(api, artifacts, run, run.pullRequestNumber);
 }
 
 async function synchronizeCompletedRun({ api, repository, run, pullRequest, artifacts, targets }) {
@@ -916,7 +1330,7 @@ async function synchronizeCompletedRun({ api, repository, run, pullRequest, arti
     });
 }
 
-async function synchronizeWorkflowRun({ api, repository, run, targets, action }) {
+async function synchronizeWorkflowRun({ api, repository, run, targets, action, mergeRetry }) {
     const identity = classifyWorkflowRun(run);
     if (identity.source !== 'ci') {
         throw new PrVsixInvariantError('PR VSIX build workflow run: unexpected workflow identity');
@@ -927,14 +1341,88 @@ async function synchronizeWorkflowRun({ api, repository, run, targets, action })
         return [];
     }
     const workflowRun = Object.freeze({ ...rawRun, ...context, source: 'ci' });
-    const pullRequest = await associatedPullRequest(api, rawRun, requireRepository(repository));
-    const artifacts = action === 'completed' ? await api.listRunArtifacts(workflowRun.id) : [];
-    if (!pullRequest) {
-        if (action === 'completed') {
-            await removeRunArtifacts(api, artifacts, workflowRun, workflowRun.pullRequestNumber);
+    const renewal = workflowRun.action === 'renewal';
+    const preservesRenewal = renewal &&
+        (action === 'in_progress' || action === 'completed' && workflowRun.conclusion !== 'success');
+    let pullRequest;
+    try {
+        pullRequest = await associatedPullRequest(
+            api,
+            rawRun,
+            requireRepository(repository),
+            mergeRetry,
+            {
+                skipMergeRef: preservesRenewal || workflowRun.action === 'approval-revoked',
+                allowSourceDrift: workflowRun.action === 'approval-revoked'
+            }
+        );
+    } catch (error) {
+        if (error && error.code === ERROR_CODE_CONTEXT_CHANGED) {
+            await removeCompletedRunArtifacts(api, workflowRun, action);
+            return [];
         }
+        if (renewal && (!error || error.code !== ERROR_CODE_MERGE_CHANGED)) {
+            throw error;
+        }
+        pullRequest = await publishSynchronizationFailure({
+            api,
+            repository,
+            run: workflowRun,
+            error,
+            retainedRun: error && error.code === ERROR_CODE_MERGE_CHANGED ? undefined : workflowRun,
+            onStale: () => removeCompletedRunArtifacts(api, workflowRun, action),
+            mergeRetry
+        });
+    }
+    if (!pullRequest) {
+        await removeCompletedRunArtifacts(api, workflowRun, action);
         return [];
     }
+
+    if (!['in_progress', 'completed'].includes(action)) {
+        throw new PrVsixInvariantError(`PR VSIX build workflow action: unsupported ${action}`);
+    }
+    const currentContext = pullRequestContext(pullRequest);
+    if (pullRequest.state === 'closed') {
+        const closedRun = Object.freeze({ ...workflowRun, ...currentContext, phase: 'closed' });
+        return [await reconcileNamespaceInvalidation({
+            api,
+            pullRequestNumber: pullRequest.number,
+            body: renderClosedComment({ repository, run: closedRun }),
+            run: closedRun
+        })];
+    }
+    if (pullRequest.state !== 'open' || workflowRun.action === 'closed-repair') {
+        return [];
+    }
+    if (workflowRun.action === 'approval-revoked' && automaticBuildAllowed(pullRequest)) {
+        return [];
+    }
+    if (!automaticBuildAllowed(pullRequest)) {
+        const blockedRun = Object.freeze({
+            ...workflowRun,
+            ...currentContext,
+            phase: 'blocked',
+            failureState: true,
+            invalidatesArtifact: true,
+            authorizationRevoked: true
+        });
+        return [await reconcileNamespaceInvalidation({
+            api,
+            pullRequestNumber: pullRequest.number,
+            body: renderUnavailableComment({
+                repository,
+                run: blockedRun,
+                reason: EXTERNAL_APPROVAL_REASON
+            }),
+            run: blockedRun
+        })];
+    }
+    if (workflowRun.action === 'renewal' && action === 'in_progress') {
+        return [];
+    }
+
+    const artifacts = action === 'completed' ? await api.listRunArtifacts(workflowRun.id) : [];
 
     const latest = await latestCiRun(
         api,
@@ -943,7 +1431,8 @@ async function synchronizeWorkflowRun({ api, repository, run, targets, action })
         repository,
         {
             createdAfter: workflowRun.createdAt,
-            omitHeadSha: workflowRun.action === 'closed-repair'
+            omitHeadSha: workflowRun.action === 'closed-repair',
+            expectedMergeSha: workflowRun.mergeSha
         }
     );
     const currentGeneration = latest && latest.id === workflowRun.id &&
@@ -955,57 +1444,9 @@ async function synchronizeWorkflowRun({ api, repository, run, targets, action })
         return [];
     }
 
-    if (pullRequest.state === 'closed') {
-        const closedRun = Object.freeze({ ...workflowRun, phase: 'closed' });
-        const comment = await upsertComment(
-            api,
-            pullRequest.number,
-            renderClosedComment({ repository, run: closedRun }),
-            closedRun,
-            () => removePreviewArtifacts(api, pullRequest.number)
-        );
-        return [Object.freeze({
-            pullRequestNumber: pullRequest.number,
-            applied: comment.applied,
-            removedArtifacts: comment.removedArtifacts
-        })];
-    }
-    if (pullRequest.state !== 'open') {
-        return [];
-    }
-    if (workflowRun.action === 'closed-repair' ||
-        (workflowRun.action === 'approval-revoked' && automaticBuildAllowed(pullRequest))) {
-        return [];
-    }
-    if (!['in_progress', 'completed'].includes(action)) {
-        throw new PrVsixInvariantError(`PR VSIX build workflow action: unsupported ${action}`);
-    }
-    if (!automaticBuildAllowed(pullRequest)) {
-        const blockedRun = Object.freeze({ ...workflowRun, phase: 'blocked' });
-        const comment = await upsertComment(
-            api,
-            pullRequest.number,
-            renderUnavailableComment({
-                repository,
-                run: blockedRun,
-                reason: EXTERNAL_APPROVAL_REASON
-            }),
-            blockedRun,
-            () => removePreviewArtifacts(api, pullRequest.number)
-        );
-        const removedArtifacts = comment.applied ? comment.removedArtifacts :
-            await removeRunArtifacts(api, artifacts, workflowRun, pullRequest.number);
-        return [Object.freeze({
-            pullRequestNumber: pullRequest.number,
-            applied: comment.applied,
-            removedArtifacts
-        })];
-    }
     if (workflowRun.action === 'renewal' &&
-        (action === 'in_progress' || action === 'completed' && workflowRun.conclusion !== 'success')) {
-        if (action === 'completed') {
-            await removeRunArtifacts(api, artifacts, workflowRun, pullRequest.number);
-        }
+        action === 'completed' && workflowRun.conclusion !== 'success') {
+        await removeRunArtifacts(api, artifacts, workflowRun, pullRequest.number);
         return [];
     }
     if (action === 'in_progress') {
@@ -1082,7 +1523,10 @@ async function synchronizeLifecycleRun({ api, repository, run, targets, mergeRet
     if (expectedState === 'open') {
         current = current && pullRequest.base.sha === marker.baseSha;
     }
-    if (!current) {
+    const terminalOverride = baseRepositoryMatches &&
+        (pullRequest.state === 'closed' ||
+            pullRequest.state === 'open' && !automaticBuildAllowed(pullRequest));
+    if (!current && !terminalOverride) {
         await removeLifecycleMarkers(api, artifacts, workflowRun);
         return [];
     }
@@ -1112,25 +1556,27 @@ async function synchronizeLifecycleRun({ api, repository, run, targets, mergeRet
                     retry: mergeRetry
                 });
             } catch (error) {
-                const provisionalRun = Object.freeze({
-                    ...workflowRun,
-                    ...context,
-                    action: ciAction,
-                    source: 'lifecycle',
-                    phase: 'pending'
-                });
-                await upsertComment(
+                if (error && error.code === ERROR_CODE_CONTEXT_CHANGED) {
+                    await removeLifecycleMarkers(api, artifacts, workflowRun);
+                    return [];
+                }
+                await publishSynchronizationFailure({
                     api,
-                    pullRequest.number,
-                    renderPendingComment({ repository, run: provisionalRun }),
-                    provisionalRun,
-                    () => removePreviewArtifacts(api, pullRequest.number)
-                );
-                throw error;
+                    repository,
+                    error,
+                    run: Object.freeze({
+                        ...workflowRun,
+                        ...context,
+                        action: ciAction,
+                        source: 'lifecycle'
+                    }),
+                    onStale: () => removeLifecycleMarkers(api, artifacts, workflowRun)
+                });
             }
             pullRequest = stable.pullRequest;
             context = stable.context;
             buildable = stable.buildable;
+            authorized = automaticBuildAllowed(pullRequest);
         }
     }
 
@@ -1140,7 +1586,11 @@ async function synchronizeLifecycleRun({ api, repository, run, targets, mergeRet
             'pr-vsix-build.yml',
             pullRequest,
             repository,
-            { actions: new Set([ciAction]), createdAfter: workflowRun.createdAt }
+            {
+                actions: new Set([ciAction]),
+                createdAfter: workflowRun.createdAt,
+                expectedMergeSha: context.mergeSha
+            }
         );
         if (currentCi) {
             let result;
@@ -1174,7 +1624,7 @@ async function synchronizeLifecycleRun({ api, repository, run, targets, mergeRet
         }
     }
 
-    const phase = expectedState === 'closed' ? 'closed' : !authorized || !buildable ? 'blocked' : 'pending';
+    const phase = pullRequest.state === 'closed' ? 'closed' : !authorized || !buildable ? 'blocked' : 'pending';
     const lifecycleRun = Object.freeze({
         ...workflowRun,
         ...context,
@@ -1192,13 +1642,19 @@ async function synchronizeLifecycleRun({ api, repository, run, targets, mergeRet
             run: lifecycleRun,
             reason: 'The pull request has merge conflicts; CI cannot produce a tested artifact.'
         }) : renderPendingComment({ repository, run: lifecycleRun });
-    const comment = await upsertComment(
-        api,
-        pullRequest.number,
-        body,
-        lifecycleRun,
-        () => removePreviewArtifacts(api, pullRequest.number)
-    );
+    const comment = phase === 'closed' || !authorized || !buildable ?
+        await reconcileNamespaceInvalidation({
+            api,
+            pullRequestNumber: pullRequest.number,
+            body,
+            run: lifecycleRun
+        }) : await upsertComment(
+            api,
+            pullRequest.number,
+            body,
+            lifecycleRun,
+            () => removePreviewArtifacts(api, pullRequest.number)
+        );
     if (expectedState === 'open' && authorized && buildable) {
         await api.dispatchRepositoryEvent('refresh-pr-vsix', {
             pull_request_number: context.pullRequestNumber,
@@ -1252,16 +1708,17 @@ async function main() {
         apiUrl: process.env.GITHUB_API_URL || 'https://api.github.com',
         retry: apiRetryFromEnvironment()
     });
-    const mergeRetry = identity.source === 'lifecycle' ? requireMergeRetry({
+    const mergeRetry = requireMergeRetry({
         attempts: Number(process.env.PR_VSIX_MERGE_ATTEMPTS),
         intervalMs: Number(process.env.PR_VSIX_MERGE_INTERVAL_MS)
-    }) : undefined;
+    });
     const results = identity.source === 'ci' ? await synchronizeWorkflowRun({
         api,
         repository,
         run: event.workflow_run,
         targets,
-        action: event.action
+        action: event.action,
+        mergeRetry
     }) : await synchronizeLifecycleRun({
         api,
         repository,
@@ -1287,7 +1744,6 @@ export {
     automaticBuildAllowed,
     compareSequence,
     createGitHubApi,
-    normalizedMergeSha,
     parseCiRunName,
     parseCommentMetadata,
     previewArtifactName,
