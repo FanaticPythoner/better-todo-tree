@@ -65,7 +65,7 @@ QUnit.test( 'stable hidden view ids are preserved while the public namespace is 
 
 QUnit.test( 'Marketplace presentation states independent fork identity consistently', function( assert )
 {
-    var expectedDescription = 'An independent, actively maintained fork of Todo Tree for VS Code: the familiar workflow, major new features, active fixes, benchmarked speedups of up to 696×, and modern compatibility.';
+    var expectedDescription = 'An independent, actively maintained fork of Todo Tree for VS Code: the familiar workflow, major new features, active fixes, benchmarked speedups of 696+ folds, modern compatibility.';
     var expectedScreenshot = '![screenshot](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/screenshot.png)';
     var packageJson = readPackageJson();
     var packageLock = JSON.parse( readRepositoryFile( 'package-lock.json' ).toString( 'utf8' ) );
