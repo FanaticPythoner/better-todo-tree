@@ -1,6 +1,6 @@
 # Better Todo Tree
 
-**An independent, actively maintained fork of Todo Tree for VS Code: the familiar workflow, major new features, active fixes, benchmarked speedups of up to 696×, and modern compatibility.**
+**An independent, actively maintained fork of Todo Tree for VS Code: the familiar workflow, major new features, active fixes, benchmarked speedups of 696+ folds, modern compatibility.**
 
 > **Independent fork:** Better Todo Tree is independently maintained and published by **FanaticPythoner**. It is based on the open-source [Todo Tree](https://marketplace.visualstudio.com/items?itemName=Gruntfuggly.todo-tree) project and is **not affiliated with, endorsed by, or published by Gruntfuggly**.
 

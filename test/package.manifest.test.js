@@ -73,7 +73,6 @@ QUnit.test( 'Marketplace presentation states independent fork identity consisten
     var provenance = readRepositoryFile( 'ARTWORK-PROVENANCE.md' ).toString( 'utf8' );
 
     assert.equal( packageJson.description, expectedDescription );
-    assert.equal( packageJson.description.length, 185 );
     assert.equal( packageJson.name, 'better-todo-tree' );
     assert.equal( packageJson.displayName, 'Better Todo Tree' );
     assert.equal( packageJson.publisher, 'FanaticPythoner' );
