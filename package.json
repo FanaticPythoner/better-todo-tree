@@ -1,7 +1,7 @@
 {
     "name": "better-todo-tree",
     "displayName": "Better Todo Tree",
-    "description": "An independent, actively maintained fork of Todo Tree for VS Code: the familiar workflow, major new features, active fixes, benchmarked speedups of up to 696×, and modern compatibility.",
+    "description": "An independent, actively maintained fork of Todo Tree for VS Code: the familiar workflow, major new features, active fixes, benchmarked speedups of 696+ folds, modern compatibility.",
     "keywords": [
         "todo",
         "todos",
