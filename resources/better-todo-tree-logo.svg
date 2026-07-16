@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Better Todo Tree</title>
+  <desc id="desc">A broad flat green tree with layered foliage, a split trunk and roots, and two equal-size circular status badges stacked vertically: a checkmark above and two plus signs below.</desc>
+
+  <!-- Original flat-vector artwork. Transparent background; no gradients, shadows, filters, text, or traced paths. -->
+
+  <!-- Branch structure behind the canopy. -->
+  <path fill="#7C3F12" d="M39 117c7-12 11-25 12-38 1-8-3-14-13-22l8-8c8 7 14 14 17 22 3-9 10-17 22-25l7 9C80 63 75 71 76 81c1 13 6 25 14 36H70c-3-6-5-12-7-18-1 7-3 13-6 18H39Z"/>
+  <path fill="#A95516" d="M54 84c-1-10-6-17-13-24l5-5c8 7 14 15 17 25l-9 4Zm11-2c2-13 9-22 23-31l4 6c-11 8-17 16-19 27l-8-2Z"/>
+
+  <!-- Dark silhouette gives the canopy a coherent, larger outline. -->
+  <path fill="#0B6F36" d="M16 76c-8-6-8-19 0-26 2-9 10-16 20-16 4-11 15-18 27-16 9-9 25-8 33 2 12-1 22 8 23 20 8 5 11 16 6 24 1 11-8 21-19 22-8 7-20 8-29 3-9 7-23 7-32 0-11 4-24-2-26-13-1 0-2 0-3 0Z"/>
+
+  <!-- Layered broad canopy. -->
+  <circle cx="29" cy="56" r="18" fill="#17A64A"/>
+  <circle cx="43" cy="36" r="17" fill="#21B84E"/>
+  <circle cx="64" cy="30" r="21" fill="#18A948"/>
+  <circle cx="86" cy="36" r="18" fill="#25BE55"/>
+  <circle cx="104" cy="54" r="17" fill="#159845"/>
+  <circle cx="93" cy="69" r="20" fill="#1CAD4C"/>
+  <circle cx="63" cy="67" r="24" fill="#22B950"/>
+  <circle cx="35" cy="69" r="19" fill="#16A348"/>
+
+  <!-- Flat leaf highlights. -->
+  <ellipse cx="35" cy="42" rx="8" ry="5" fill="#5FD16A" transform="rotate(-20 35 42)"/>
+  <ellipse cx="58" cy="22" rx="9" ry="5" fill="#55CC63" transform="rotate(-8 58 22)"/>
+  <ellipse cx="80" cy="28" rx="8" ry="5" fill="#69D875" transform="rotate(18 80 28)"/>
+  <ellipse cx="105" cy="47" rx="7" ry="4" fill="#51C961" transform="rotate(24 105 47)"/>
+  <ellipse cx="81" cy="62" rx="9" ry="5" fill="#62D56E" transform="rotate(-12 81 62)"/>
+  <ellipse cx="48" cy="61" rx="8" ry="5" fill="#59CE66" transform="rotate(15 48 61)"/>
+  <ellipse cx="25" cy="66" rx="7" ry="4" fill="#4FC45D" transform="rotate(-25 25 66)"/>
+
+  <!-- Front trunk and visible roots. -->
+  <path fill="#B85F18" d="M43 117c7-11 11-24 12-36 1-8-2-15-8-22l6-5c7 8 11 16 12 26 1-10 6-18 15-25l6 6c-9 8-13 16-12 25 1 11 5 22 12 31H70c-3-6-5-12-7-19-1 8-3 14-6 19H43Z"/>
+  <path fill="#E18824" d="M57 113c3-11 4-23 3-34-1-8-4-14-8-20l3-2c6 8 9 16 9 25 0 12 2 23 6 31H57Z"/>
+  <path fill="#7C3F12" d="M39 117h20l4-9 5 9h22l-9-8-9 2-8-10-7 10-10-2-8 8Z"/>
+  <path fill="#D4741D" d="M47 113h10l6-7 6 7h12l-8-2-9-11-8 11-9 2Z"/>
+
+  <!-- Two exactly equal-size status badges: check above, ++ below. -->
+  <g aria-label="equal checkmark and plus-plus badges">
+    <!-- Badge 1: checkmark. Outer radius 18; inner radius 14. -->
+    <circle cx="98" cy="28" r="18" fill="#064E3B"/>
+    <circle cx="98" cy="28" r="14" fill="#0F766E"/>
+    <path d="m89 28 6 6 12-14" fill="none" stroke="#FFFFFF" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Badge 2: ++. Identical outer and inner dimensions. -->
+    <circle cx="98" cy="67" r="18" fill="#064E3B"/>
+    <circle cx="98" cy="67" r="14" fill="#0F766E"/>
+    <g fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round">
+      <path d="M88 67h8M92 63v8"/>
+      <path d="M100 67h8M104 63v8"/>
+    </g>
+  </g>
+</svg>

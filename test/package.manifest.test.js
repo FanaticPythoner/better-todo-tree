@@ -13,6 +13,38 @@ function readPackageNls( fileName )
     return JSON.parse( fs.readFileSync( path.join( __dirname, '..', fileName ), 'utf8' ) );
 }
 
+function readRepositoryFile( fileName )
+{
+    return fs.readFileSync( path.join( __dirname, '..', fileName ) );
+}
+
+function occurrenceCount( text, value )
+{
+    return text.split( value ).length - 1;
+}
+
+function circleRadii( svg, centerX, centersY )
+{
+    var radii = [];
+
+    centersY.forEach( function( centerY )
+    {
+        var marker = '<circle cx="' + centerX + '" cy="' + centerY + '" r="';
+        var markerStart = svg.indexOf( marker );
+
+        while( markerStart !== -1 )
+        {
+            var radiusStart = markerStart + marker.length;
+            var radiusEnd = svg.indexOf( '"', radiusStart );
+
+            radii.push( Number( svg.slice( radiusStart, radiusEnd ) ) );
+            markerStart = svg.indexOf( marker, radiusEnd );
+        }
+    } );
+
+    return radii;
+}
+
 function getConfigurationProperty( propertyName )
 {
     return languageMatrix.findConfigurationProperty( propertyName );
@@ -29,6 +61,42 @@ QUnit.test( 'stable hidden view ids are preserved while the public namespace is 
     assert.equal( activityView.id, 'todo-tree-container' );
     assert.equal( treeView.id, 'todo-tree-view' );
     assert.equal( treeView.when, '!better-todo-tree-is-empty' );
+} );
+
+QUnit.test( 'Marketplace presentation states independent fork identity consistently', function( assert )
+{
+    var expectedDescription = 'An independent, actively maintained fork of Todo Tree for VS Code: the familiar workflow, major new features, active fixes, benchmarked speedups of up to 696×, and modern compatibility.';
+    var expectedScreenshot = '![screenshot](https://raw.githubusercontent.com/FanaticPythoner/better-todo-tree/master/resources/screenshot.png)';
+    var packageJson = readPackageJson();
+    var packageLock = JSON.parse( readRepositoryFile( 'package-lock.json' ).toString( 'utf8' ) );
+    var readme = readRepositoryFile( 'README.md' ).toString( 'utf8' );
+    var provenance = readRepositoryFile( 'ARTWORK-PROVENANCE.md' ).toString( 'utf8' );
+
+    assert.equal( packageJson.description, expectedDescription );
+    assert.equal( packageJson.description.length, 185 );
+    assert.equal( packageJson.name, 'better-todo-tree' );
+    assert.equal( packageJson.displayName, 'Better Todo Tree' );
+    assert.equal( packageJson.publisher, 'FanaticPythoner' );
+    assert.equal( packageJson.repository, 'https://github.com/FanaticPythoner/better-todo-tree' );
+    assert.equal( packageJson.bugs.url, 'https://github.com/FanaticPythoner/better-todo-tree/issues' );
+    assert.equal( packageJson.homepage, 'https://bettertodotree.com' );
+    assert.equal( packageLock.version, packageJson.version );
+    assert.equal( packageLock.packages[ '' ].version, packageJson.version );
+    assert.ok( readme.indexOf( '**' + expectedDescription + '**' ) !== -1 );
+    assert.ok( readme.indexOf( 'not affiliated with, endorsed by, or published by Gruntfuggly' ) !== -1 );
+    assert.ok( readme.indexOf( '**Migration Ready 🤝:** Familiar workflow.' ) !== -1 );
+    assert.ok( readme.indexOf( '**Major Features & Bulletproof Fixes 🛠️:** Complete notebook scanning, embedded Vue/Svelte/Astro support' ) !== -1 );
+    assert.ok( readme.indexOf( '**Alive & Active 💖:** Keeping this project alive' ) !== -1 );
+    assert.equal( readme.indexOf( 'I took over to modernize the core' ), -1 );
+    assert.equal( readme.indexOf( 'drop-in replacement fork of Todo Tree' ), -1 );
+    assert.equal( occurrenceCount( readme, expectedScreenshot ), 1 );
+    assert.ok( readme.indexOf( '| **Custom Highlight Configs** | 1,391.93 ms | 2.00 ms | **696.0X** 🚀 |' ) !== -1 );
+    assert.ok( readme.indexOf( '| **Custom Regex Workspace Refreshes** | 36.72 ms | 3.76 ms | **9.8X** 🚀 |' ) !== -1 );
+    assert.ok( readme.indexOf( '[ARTWORK-PROVENANCE.md](ARTWORK-PROVENANCE.md)' ) !== -1 );
+    assert.equal( readme.indexOf( 'Main icons originally made by [Freepik]' ), -1 );
+    assert.ok( readme.indexOf( 'Tree view icons made by [Vaadin]' ) !== -1 );
+    assert.ok( provenance.indexOf( 'original project artwork' ) !== -1 );
+    assert.ok( provenance.indexOf( '`resources/better-todo-tree-logo.svg` | Full-color vector master' ) !== -1 );
 } );
 
 QUnit.test( 'issue #106 sidebar tree view activates on direct view demand', function( assert )
@@ -55,6 +123,27 @@ QUnit.test( 'scan progress contributes the Better Todo Tree product icon font', 
     assert.equal( fs.statSync( fontPath ).size > 0, true );
     assert.equal( english[ 'better-todo-tree.productIcon.description' ], 'Better Todo Tree status icon' );
     assert.equal( typeof chinese[ 'better-todo-tree.productIcon.description' ], 'string' );
+} );
+
+QUnit.test( 'brand icons use two equal circular status badges', function( assert )
+{
+    var marketplaceIcon = readRepositoryFile( 'resources/better-todo-tree.png' );
+    var marketplaceScreenshot = readRepositoryFile( 'resources/screenshot.png' );
+    var logoSource = readRepositoryFile( 'resources/better-todo-tree-logo.svg' ).toString( 'utf8' );
+    var containerIcon = readRepositoryFile( 'resources/better-todo-tree-container.svg' ).toString( 'utf8' );
+    var productIcon = readRepositoryFile( 'resources/product-icons/better-todo-tree.svg' ).toString( 'utf8' );
+
+    assert.equal( marketplaceIcon.readUInt32BE( 16 ), 128 );
+    assert.equal( marketplaceIcon.readUInt32BE( 20 ), 128 );
+    assert.equal( marketplaceScreenshot.readUInt32BE( 16 ), 2561 );
+    assert.equal( marketplaceScreenshot.readUInt32BE( 20 ), 1594 );
+    assert.deepEqual( circleRadii( logoSource, '98', [ '28', '67' ] ), [ 18, 14, 18, 14 ] );
+    assert.deepEqual( circleRadii( containerIcon, '19', [ '5.1', '14.35' ] ), [ 4, 4 ] );
+    assert.deepEqual( circleRadii( productIcon, '19', [ '5.1', '14.35' ] ), [ 4, 4 ] );
+    assert.ok( containerIcon.indexOf( 'm16.8 5.1 1.45 1.45 2.95-3.35' ) !== -1 );
+    assert.ok( containerIcon.indexOf( 'M16.2 14.35h2.2' ) !== -1 );
+    assert.ok( productIcon.indexOf( 'm16.8 5.1 1.45 1.45 2.95-3.35' ) !== -1 );
+    assert.ok( productIcon.indexOf( 'M16.2 14.35h2.2' ) !== -1 );
 } );
 
 QUnit.test( 'public commands use the better-todo-tree namespace', function( assert )
