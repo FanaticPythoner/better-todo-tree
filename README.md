@@ -1,8 +1,10 @@
 # Better Todo Tree
 
-**The actively maintained, extremely fast, drop-in replacement fork of Todo Tree.**
+**An independent, actively maintained fork of Todo Tree for VS Code: the familiar workflow, major new features, active fixes, benchmarked speedups of 696+ folds, modern compatibility.**
 
-Todo Tree is THE visual map I rely on to track every scattered issue across projects. When upstream stopped being maintained, new and existing bugs 🐛 took root and started choking the extension. Before it became firewood 🪵, I took over to modernize the core, clear the rot, and make it lightning fast ⚡.
+> **Independent fork:** Better Todo Tree is independently maintained and published by **FanaticPythoner**. It is based on the open-source [Todo Tree](https://marketplace.visualstudio.com/items?itemName=Gruntfuggly.todo-tree) project and is **not affiliated with, endorsed by, or published by Gruntfuggly**.
+
+Todo Tree was THE visual map I relied on to track every scattered issue across projects. When the upstream project stopped receiving updates, new and existing bugs took root and started choking the extension. Before it became firewood 🪵, I created Better Todo Tree as an independent fork to modernize the core, clear the rot, and make it lightning fast ⚡.
 
 <!-- README_BENCHMARK_SUMMARY:START -->
 **Made TODO rescans 51.4X faster (so you don't have time to feel guilty for not fixing them... 🥀)**
@@ -23,8 +25,8 @@ Todo Tree is THE visual map I rely on to track every scattered issue across proj
 
 **Why this fork exists**
 
-  * **Drop-in Ready 🤝:** Zero friction. Same workflow. Same exact settings.
-  * **Bulletproof Fixes 🛡️:** Notebook behavior, scan parity, strict regex handling, and modern VS Code compatibility actually move forward.
+  * **Migration Ready 🤝:** Familiar workflow. Existing Todo Tree settings remain supported and are imported into Better Todo Tree's own settings namespace.
+  * **Major Features & Bulletproof Fixes 🛠️:** Complete notebook scanning, embedded Vue/Svelte/Astro support, scan parity, strict regex handling, major performance improvements, and modern VS Code compatibility.
   * **Alive & Active 💖:** Keeping this project alive takes a lot of time and, predictably, more coffee than I'd like to admit (caffeine or rent? Who knows what it will be next week 💀 #tariffs). If you're in the same boat:  
   `// TODO: buy the Better Todo Tree guy a coffee` ☕ → [buymeacoffee.com/FanaticPythoner](https://buymeacoffee.com/FanaticPythoner)
 
@@ -651,7 +653,7 @@ Better Todo Tree keeps reading legacy `todo-tree.*` settings and imports them in
 
 Uses a modified version of [ripgrep-js](https://www.npmjs.com/package/ripgrep-js).
 
-Main icons originally made by [Freepik](http://www.freepik.com) from [www.flaticon.com](https://www.flaticon.com/) is licensed by [CC 3.0 BY](http://creativecommons.org/licenses/by/3.0/)
+Better Todo Tree's logo and primary iconography are original project artwork. See [ARTWORK-PROVENANCE.md](ARTWORK-PROVENANCE.md).
 
 Tree view icons made by [Vaadin](https://www.flaticon.com/authors/vaadin) from [www.flaticon.com](https://www.flaticon.com/) is licensed by [CC 3.0 BY](http://creativecommons.org/licenses/by/3.0/)
 

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
   <!-- Monochrome 24px companion. The tree is compressed horizontally to reserve a right-side badge column. -->
-  <g fill="#424242" transform="translate(0.15 0) scale(0.70 1)">
+  <g fill="#000000" transform="translate(0.15 0) scale(0.70 1)">
     <circle cx="5.0" cy="9.2" r="3.1"/>
     <circle cx="7.9" cy="6.4" r="3.2"/>
     <circle cx="11.5" cy="5.5" r="3.7"/>
@@ -13,7 +13,7 @@
   </g>
 
   <!-- Two equal-size circular badges, stacked vertically. -->
-  <g stroke="#424242" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <g stroke="#000000" fill="none" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="19" cy="5.1" r="4" stroke-width="1.35"/>
     <path d="m16.8 5.1 1.45 1.45 2.95-3.35" stroke-width="1.35"/>
 
