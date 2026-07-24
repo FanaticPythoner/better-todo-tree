@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Check out trusted workflow helpers
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 1
@@ -54,7 +54,7 @@ jobs:
 
       - name: Check out immutable build context
         if: steps.context.outputs.build == 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ steps.context.outputs.checkout-sha }}
           fetch-depth: 0
@@ -131,7 +131,7 @@ jobs:
 
     steps:
       - name: Check out trusted cleanup helper
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 1
