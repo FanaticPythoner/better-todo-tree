@@ -41,8 +41,7 @@ const previewTargetLabels = Object.freeze({
     'darwin-x64': 'macOS Intel',
     'darwin-arm64': 'macOS Apple silicon',
     'alpine-x64': 'Alpine Linux x64',
-    'alpine-arm64': 'Alpine Linux Arm64',
-    web: 'Web'
+    'alpine-arm64': 'Alpine Linux Arm64'
 });
 
 class PrVsixInvariantError extends Error {

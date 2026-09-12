@@ -26,6 +26,8 @@ function createVscodeStub()
     {
         this.event = function() {};
         this.fire = function( value ) { eventFires.push( value ); };
+        this.disposeCalls = 0;
+        this.dispose = function() { this.disposeCalls++; };
     }
 
     function TreeItem( label )
@@ -220,6 +222,11 @@ QUnit.module( "behavioral tree", function()
         assert.equal( provider.getChildren( todoNode ).length, 0 );
         assert.equal( todoNode.label, 'TODO first line' );
         assert.equal( treeItem.tooltip, 'first line\nsecond line' );
+        assert.strictEqual( provider.getElement( '/tmp/a.js' ), fileNode );
+        assert.strictEqual( provider.getElement( '/tmp/missing.js' ), undefined );
+        provider.dispose();
+        provider.dispose();
+        assert.equal( provider._onDidChangeTreeData.disposeCalls, 1 );
     } );
 
     QUnit.test( "issue #888 renders the multiline banner match as a single tree label", function( assert )

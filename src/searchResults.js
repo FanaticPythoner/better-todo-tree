@@ -48,11 +48,6 @@ function toResultArray( resultMap )
     return Array.from( resultMap.values() );
 }
 
-function cloneCounts( counts )
-{
-    return Object.assign( {}, counts );
-}
-
 function createEntry( uri )
 {
     return {

@@ -971,6 +971,7 @@ function createTreeVscodeStub()
                 this._listener( value );
             }
         }.bind( this );
+        this.dispose = function() {};
     }
 
     function TreeItem( label )
@@ -1326,6 +1327,11 @@ function createHighlightModule(relativePath)
                 this.end = end;
             },
             window: {
+                visibleTextEditors: [],
+                onDidChangeVisibleTextEditors: function()
+                {
+                    return { dispose: function() {} };
+                },
                 createTextEditorDecorationType: function( options )
                 {
                     creationCount.value++;

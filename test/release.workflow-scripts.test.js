@@ -136,7 +136,7 @@ QUnit.test( 'release-artifacts enumerates release VSIX files in a stable order',
     var workspace = createWorkspace();
     var result;
 
-    fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-web.vsix' ), 'web' );
+    fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-linux-arm64.vsix' ), 'arm64' );
     fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-linux-x64.vsix' ), 'linux' );
 
     result = childProcess.spawnSync(
@@ -156,8 +156,8 @@ QUnit.test( 'release-artifacts enumerates release VSIX files in a stable order',
     assert.deepEqual(
         result.stdout.trim().split( regexRegistry.createRegExp( 'optionalCarriageReturnLineBreak' ) ),
         [
-            'artifacts/release/better-todo-tree-0.0.225-linux-x64.vsix',
-            'artifacts/release/better-todo-tree-0.0.225-web.vsix'
+            'artifacts/release/better-todo-tree-0.0.225-linux-arm64.vsix',
+            'artifacts/release/better-todo-tree-0.0.225-linux-x64.vsix'
         ]
     );
 } );
@@ -172,7 +172,7 @@ QUnit.test( 'publish-vscode-marketplace publishes every VSIX with duplicate-safe
     } );
 
     fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-linux-x64.vsix' ), 'linux' );
-    fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-web.vsix' ), 'web' );
+    fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-linux-arm64.vsix' ), 'arm64' );
 
     makeExecutable(
         path.join( workspace.bin, 'npx' ),
@@ -188,7 +188,7 @@ QUnit.test( 'publish-vscode-marketplace publishes every VSIX with duplicate-safe
 
     assert.strictEqual( result.status, 0, result.stderr );
     assert.ok( callLog.indexOf( '@vscode/vsce publish --packagePath artifacts/release/better-todo-tree-0.0.225-linux-x64.vsix -p vsce-test-token --skip-duplicate' ) !== -1 );
-    assert.ok( callLog.indexOf( '@vscode/vsce publish --packagePath artifacts/release/better-todo-tree-0.0.225-web.vsix -p vsce-test-token --skip-duplicate' ) !== -1 );
+    assert.ok( callLog.indexOf( '@vscode/vsce publish --packagePath artifacts/release/better-todo-tree-0.0.225-linux-arm64.vsix -p vsce-test-token --skip-duplicate' ) !== -1 );
     assert.ok( callLog.indexOf( 'ovsx publish' ) === -1 );
 } );
 
@@ -202,7 +202,7 @@ QUnit.test( 'publish-open-vsx publishes every VSIX with duplicate-safe flags', f
     } );
 
     fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-linux-x64.vsix' ), 'linux' );
-    fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-web.vsix' ), 'web' );
+    fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-linux-arm64.vsix' ), 'arm64' );
 
     makeExecutable(
         path.join( workspace.bin, 'npx' ),
@@ -218,7 +218,7 @@ QUnit.test( 'publish-open-vsx publishes every VSIX with duplicate-safe flags', f
 
     assert.strictEqual( result.status, 0, result.stderr );
     assert.ok( callLog.indexOf( 'ovsx publish --packagePath artifacts/release/better-todo-tree-0.0.225-linux-x64.vsix -p ovsx-test-token --skip-duplicate' ) !== -1 );
-    assert.ok( callLog.indexOf( 'ovsx publish --packagePath artifacts/release/better-todo-tree-0.0.225-web.vsix -p ovsx-test-token --skip-duplicate' ) !== -1 );
+    assert.ok( callLog.indexOf( 'ovsx publish --packagePath artifacts/release/better-todo-tree-0.0.225-linux-arm64.vsix -p ovsx-test-token --skip-duplicate' ) !== -1 );
     assert.ok( callLog.indexOf( '@vscode/vsce publish' ) === -1 );
 } );
 
@@ -228,8 +228,8 @@ QUnit.test( 'publish-open-vsx waits on retryable registry failures and retries t
     var callLogPath = path.join( workspace.root, 'npx.log' );
     var sleepLogPath = path.join( workspace.root, 'sleep.log' );
     var counterPath = path.join( workspace.root, 'counter' );
-    var firstPackage = path.join( 'artifacts', 'release', 'better-todo-tree-0.0.225-linux-x64.vsix' );
-    var secondPackage = path.join( 'artifacts', 'release', 'better-todo-tree-0.0.225-web.vsix' );
+    var firstPackage = path.join( 'artifacts', 'release', 'better-todo-tree-0.0.225-linux-arm64.vsix' );
+    var secondPackage = path.join( 'artifacts', 'release', 'better-todo-tree-0.0.225-linux-x64.vsix' );
     var env = Object.assign( {}, process.env, {
         PATH: workspace.bin + path.delimiter + process.env.PATH,
         OVSX_PAT: 'ovsx-test-token',
@@ -237,7 +237,7 @@ QUnit.test( 'publish-open-vsx waits on retryable registry failures and retries t
     } );
 
     fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-linux-x64.vsix' ), 'linux' );
-    fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-web.vsix' ), 'web' );
+    fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-linux-arm64.vsix' ), 'arm64' );
     fs.writeFileSync( counterPath, '0\n' );
 
     makeExecutable(
@@ -450,7 +450,7 @@ QUnit.test( 'create-github-release uploads assets when the release already exist
     } );
 
     fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-linux-x64.vsix' ), 'linux' );
-    fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-web.vsix' ), 'web' );
+    fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-linux-arm64.vsix' ), 'arm64' );
     makeExecutable(
         path.join( workspace.bin, 'bash' ),
         '#!/bin/bash\n' +
@@ -486,7 +486,7 @@ QUnit.test( 'create-github-release uploads assets when the release already exist
     assert.ok( callLog.indexOf( 'api repos/{owner}/{repo}/releases/tags/v0.0.225 --jq .id' ) !== -1 );
     assert.ok( callLog.indexOf( 'api --method PATCH repos/{owner}/{repo}/releases/' ) !== -1 );
     assert.ok( callLog.indexOf( '--title' ) === -1 );
-    assert.ok( callLog.indexOf( 'release upload v0.0.225 artifacts/release/better-todo-tree-0.0.225-linux-x64.vsix artifacts/release/better-todo-tree-0.0.225-web.vsix --clobber' ) !== -1 );
+    assert.ok( callLog.indexOf( 'release upload v0.0.225 artifacts/release/better-todo-tree-0.0.225-linux-arm64.vsix artifacts/release/better-todo-tree-0.0.225-linux-x64.vsix --clobber' ) !== -1 );
     assert.ok( callLog.indexOf( 'release create v0.0.225' ) === -1 );
 } );
 
@@ -504,7 +504,7 @@ QUnit.test( 'create-or-update-moving-github-release creates a moving prerelease 
     } );
 
     fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-linux-x64.vsix' ), 'linux' );
-    fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-web.vsix' ), 'web' );
+    fs.writeFileSync( path.join( workspace.artifacts, 'better-todo-tree-0.0.225-linux-arm64.vsix' ), 'arm64' );
     makeExecutable(
         path.join( workspace.bin, 'bash' ),
         '#!/bin/bash\n' +
@@ -548,7 +548,7 @@ QUnit.test( 'create-or-update-moving-github-release creates a moving prerelease 
     assert.ok( callLog.indexOf( 'git tag -f latest 0123456789abcdef0123456789abcdef01234567' ) !== -1 );
     assert.ok( callLog.indexOf( 'git push --force origin refs/tags/latest' ) !== -1 );
     assert.ok( callLog.indexOf( 'gh release view latest' ) !== -1 );
-    assert.ok( callLog.indexOf( 'gh release create latest artifacts/release/better-todo-tree-0.0.225-linux-x64.vsix artifacts/release/better-todo-tree-0.0.225-web.vsix --title Latest Nightly Build (abc123def456) --notes-file ' ) !== -1 );
+    assert.ok( callLog.indexOf( 'gh release create latest artifacts/release/better-todo-tree-0.0.225-linux-arm64.vsix artifacts/release/better-todo-tree-0.0.225-linux-x64.vsix --title Latest Nightly Build (abc123def456) --notes-file ' ) !== -1 );
     assert.ok( callLog.indexOf( '--prerelease --target 0123456789abcdef0123456789abcdef01234567' ) !== -1 );
 } );
 
@@ -844,7 +844,7 @@ QUnit.test( 'verify-vscode-marketplace waits for public version metadata and cha
     fs.mkdirSync( path.join( workspace.root, 'scripts', 'release' ), { recursive: true } );
     fs.writeFileSync(
         path.join( workspace.root, 'scripts', 'release', 'targets.json' ),
-        JSON.stringify( [ 'linux-x64', 'web' ], null, 4 ) + '\n'
+        JSON.stringify( [ 'linux-x64', 'linux-arm64' ], null, 4 ) + '\n'
     );
     fs.writeFileSync(
         expectedChangelogPath,
@@ -884,7 +884,7 @@ QUnit.test( 'verify-vscode-marketplace waits for public version metadata and cha
                                     },
                                     {
                                         version: '0.0.228',
-                                        targetPlatform: state.queryCount > 1 ? 'web' : 'missing',
+                                        targetPlatform: state.queryCount > 1 ? 'linux-arm64' : 'missing',
                                         files: [
                                             {
                                                 assetType: 'Microsoft.VisualStudio.Services.Content.Changelog',
@@ -959,7 +959,7 @@ QUnit.test( 'verify-vscode-marketplace waits for public version metadata and cha
             {
                 assert.strictEqual( code, 0, stderr );
                 assert.ok( stdout.indexOf( 'Marketplace version 0.0.228 is publicly available' ) !== -1 );
-                assert.ok( stdout.indexOf( 'linux-x64, web' ) !== -1 );
+                assert.ok( stdout.indexOf( 'linux-arm64, linux-x64' ) !== -1 );
                 assert.ok( state.queryCount >= 2, String( state.queryCount ) );
                 done();
             } );

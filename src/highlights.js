@@ -24,7 +24,6 @@ var lanes =
 var decorations = {};
 var decorationCache = new Map();
 var highlightTimer = {};
-var highlightVersions = {};
 var context;
 var debug;
 var scanResultsProvider = function( document ) { return detection.scanDocument( document ); };
@@ -36,6 +35,40 @@ function init( context_, debug_ )
     context.subscriptions.push( {
         dispose: resetCaches
     } );
+    context.subscriptions.push( vscode.window.onDidChangeVisibleTextEditors( pruneEditorState ) );
+}
+
+function visibleEditorIds( editors )
+{
+    return new Set( editors.map( editorId ) );
+}
+
+function pruneEditorState( editors )
+{
+    var retainedIds = visibleEditorIds( editors );
+
+    Object.keys( highlightTimer ).forEach( function( id )
+    {
+        if( retainedIds.has( id ) !== true )
+        {
+            clearTimeout( highlightTimer[ id ] );
+            delete highlightTimer[ id ];
+        }
+    } );
+
+    Object.keys( decorations ).forEach( function( id )
+    {
+        if( retainedIds.has( id ) !== true )
+        {
+            delete decorations[ id ];
+        }
+    } );
+}
+
+function isEditorVisible( editor )
+{
+    return editor && editor.document && editor.document.isClosed !== true &&
+        vscode.window.visibleTextEditors.indexOf( editor ) !== -1;
 }
 
 function applyOpacity( colour, opacity )
@@ -420,9 +453,15 @@ function triggerHighlight( editor )
             clearTimeout( highlightTimer[ id ] );
         }
 
-        highlightVersions[ id ] = version;
         highlightTimer[ id ] = setTimeout( function( scheduledEditor, scheduledVersion )
         {
+            delete highlightTimer[ id ];
+            if( isEditorVisible( scheduledEditor ) !== true )
+            {
+                delete decorations[ id ];
+                return;
+            }
+
             if( scheduledEditor.document && scheduledVersion !== undefined && scheduledEditor.document.version !== scheduledVersion )
             {
                 return;

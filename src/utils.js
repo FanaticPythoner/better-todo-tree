@@ -301,11 +301,6 @@ function removeLineComments( text, fileName )
     return result;
 }
 
-function getTagRegex()
-{
-    return getTagRegexSource();
-}
-
 function escapeRegexLiteral( value )
 {
     return regexRegistry.escapeRegexLiteral( value );

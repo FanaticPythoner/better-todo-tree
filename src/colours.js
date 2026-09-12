@@ -1,8 +1,7 @@
-var vscode = require( 'vscode' );
 var utils = require( './utils.js' );
 var identity = require( './extensionIdentity.js' );
 
-function validateColours( workspace )
+function validateColours()
 {
     function check( setting )
     {
@@ -35,7 +34,7 @@ function validateColours( workspace )
     return result;
 }
 
-function validateIconColours( workspace )
+function validateIconColours()
 {
     var hasInvalidCodiconColour = false;
     var hasInvalidOcticonColour = false;

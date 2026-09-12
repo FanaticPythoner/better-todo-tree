@@ -531,6 +531,7 @@ class TreeNodeProvider
         this._rootListDirty = false;
         this._pendingRefreshRoots = undefined;
         this._expandedStateWriteHandle = undefined;
+        this._disposed = false;
     }
 
     getChildren( node )
@@ -1455,16 +1456,16 @@ class TreeNodeProvider
         return children === undefined ? nodes : children;
     }
 
-    getElement( filename, found, children )
+    getElement( filename )
     {
         var indexedNodes = Array.from( this._nodesByFsPath.get( filename ) || [] ).filter( isVisible );
 
         if( indexedNodes.length > 0 )
         {
-            var pathNode = indexedNodes.find( isPathNode ) || indexedNodes[ 0 ];
-            found( pathNode );
-            return;
+            return indexedNodes.find( isPathNode ) || indexedNodes[ 0 ];
         }
+
+        return undefined;
     }
 
     setExpanded( path, expanded )
@@ -1583,7 +1584,15 @@ class TreeNodeProvider
 
     dispose()
     {
+        if( this._disposed === true )
+        {
+            return;
+        }
+
+        this._disposed = true;
         clearTimeout( this._expandedStateWriteHandle );
+        this._expandedStateWriteHandle = undefined;
+        this._onDidChangeTreeData.dispose();
     }
 }
 

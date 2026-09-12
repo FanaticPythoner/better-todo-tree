@@ -439,6 +439,7 @@ QUnit.test( 'latest workflow publishes a moving prerelease from master', functio
 QUnit.test( 'release workflows build and publish from the resolved release ref', function( assert )
 {
     var releaseWorkflow = readWorkflow( 'release.yml' );
+    var latestWorkflow = readWorkflow( 'latest.yml' );
     var reusableBuildWorkflow = readWorkflow( 'reusable-build-vsix.yml' );
     var publishVsCodeScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'publish-vscode-marketplace.sh' ), 'utf8' );
     var publishOpenVsxScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'publish-open-vsx.sh' ), 'utf8' );
@@ -450,6 +451,12 @@ QUnit.test( 'release workflows build and publish from the resolved release ref',
     assert.ok( releaseWorkflow.indexOf( 'release_ref: ${{ steps.meta.outputs.release_ref }}' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'ref: ${{ needs.preflight.outputs.release_ref }}' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'run: bash scripts/release/resolve-release-metadata.sh' ) !== -1 );
+    [ releaseWorkflow, latestWorkflow ].forEach( function( workflow )
+    {
+        assert.ok( workflow.indexOf( "JSON.stringify(require('./scripts/release/targets.json'))" ) !== -1 );
+        assert.ok( workflow.indexOf( 'targets: ${{ needs.preflight.outputs.targets }}' ) !== -1 );
+        assert.equal( workflow.indexOf( '"web"' ), -1 );
+    } );
     assert.ok( releaseWorkflow.indexOf( 'verify-marketplace:' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'publish:' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'run: bash scripts/release/publish-vscode-marketplace.sh' ) !== -1 );

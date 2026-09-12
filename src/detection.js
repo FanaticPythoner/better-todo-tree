@@ -947,7 +947,7 @@ function resolveMarkdownCommentPattern()
     return markdownCommentPattern;
 }
 
-function scanMarkdownText( uri, text, pattern, lineOffsets, resourceConfig )
+function scanMarkdownText( uri, text, lineOffsets, resourceConfig )
 {
     var markdownCommentPattern = resolveMarkdownCommentPattern();
     var context = createScanContext( uri, text, undefined, { regexSource: resourceConfig.regex } );
@@ -1286,7 +1286,7 @@ function createShiftedNestedResult( result, charOffset, lineOffsets )
     return shifted;
 }
 
-function scanEmbeddedDocumentRegions( uri, text, resourceConfig, lineOffsets, embeddedDocument )
+function scanEmbeddedDocumentRegions( uri, resourceConfig, lineOffsets, embeddedDocument )
 {
     if( !embeddedDocument || !Array.isArray( embeddedDocument.regions ) )
     {
@@ -1347,7 +1347,7 @@ function scanCommentPatternText( uri, text, resourceConfig, patternFileName, opt
     {
         if( path.extname( patternLookupName ).toLowerCase() === '.md' || pattern.name === 'Markdown' )
         {
-            results = scanMarkdownText( uri, scanText, pattern, lineOffsets, resourceConfig );
+            results = scanMarkdownText( uri, scanText, lineOffsets, resourceConfig );
         }
         else
         {
@@ -1366,7 +1366,7 @@ function scanCommentPatternText( uri, text, resourceConfig, patternFileName, opt
         } );
     }
 
-    return sortResultsByLocation( results.concat( scanEmbeddedDocumentRegions( uri, text, resourceConfig, lineOffsets, embeddedDocument ) ) );
+    return sortResultsByLocation( results.concat( scanEmbeddedDocumentRegions( uri, resourceConfig, lineOffsets, embeddedDocument ) ) );
 }
 
 function normalizeRegexExecMatchWithContext( context, match )

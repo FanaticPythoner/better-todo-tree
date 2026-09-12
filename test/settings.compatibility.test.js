@@ -190,8 +190,8 @@ QUnit.test( 'manifest exposes current and legacy settings namespaces together', 
         return key.indexOf( 'todo-tree.' ) === 0;
     } );
 
-    assert.equal( currentSettings.length, 73 );
-    assert.equal( legacySettings.length, 73 );
+    assert.equal( currentSettings.length, 72 );
+    assert.equal( legacySettings.length, 72 );
     assert.ok( currentSettings.indexOf( 'general.tags' ) !== -1 );
     assert.ok( currentSettings.indexOf( 'general.showScanningProgress' ) !== -1 );
     assert.ok( currentSettings.indexOf( 'languages.customPatterns' ) !== -1 );

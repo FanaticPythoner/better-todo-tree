@@ -197,7 +197,7 @@ function getGutterIcon( context, tag, debug )
     return getFileBackedIcon( context, tag, debug );
 }
 
-function validateIcons( workspace )
+function validateIcons()
 {
     function checkIcon( setting )
     {

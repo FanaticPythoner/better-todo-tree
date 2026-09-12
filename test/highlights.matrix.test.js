@@ -27,6 +27,10 @@ function createVscodeStub( highlightConfiguration, decorationLog )
         Position: Position,
         Range: Range,
         window: {
+            onDidChangeVisibleTextEditors: function()
+            {
+                return { dispose: function() {} };
+            },
             createTextEditorDecorationType: function( options )
             {
                 decorationLog.push( options );

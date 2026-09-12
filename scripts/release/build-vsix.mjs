@@ -149,17 +149,12 @@ function copyRipgrepMetadata() {
 }
 
 function stageRipgrepForTarget(target) {
-    const platform = ripgrepTargetPlatforms.get(target);
-
     if (!ripgrepTargetPlatforms.has(target)) {
         throw new Error(`Unsupported ripgrep target "${target}".`);
     }
 
+    const platform = ripgrepTargetPlatforms.get(target);
     resetRipgrepStage();
-
-    if (platform === undefined) {
-        return;
-    }
 
     const packageJson = readJson(path.join(ripgrepPackageRoot, 'package.json'));
     const stagedPlatform = copyRipgrepPlatform(platform);

@@ -82,7 +82,7 @@ Found TODOs can also be highlighted in open files.
 
 ## Highlighting
 
->`better-todo-tree.highlights.useColourScheme` applies foreground and background colour sequences to tags in tag order.
+>`better-todo-tree.highlights.useColourScheme` is opt-in. When enabled, it applies foreground and background colour sequences to tags in tag order.
 
 Highlighting tags is configurable. Use `defaultHighlight` to set up highlights for all tags. If you need to configure individual tags differently, use `customHighlight`. If settings are not specified in `customHighlight`, the value from `defaultHighlight` is used.
 
@@ -177,6 +177,8 @@ You can install the latest version of the extension via the Visual Studio Market
 Alternatively, open Visual Studio code, press `Ctrl+P` or `Cmd+P` and type:
 
 > ext install FanaticPythoner.better-todo-tree
+
+Native packages cover Windows x64/Arm64, Linux x64/Arm64/Armhf, Alpine x64/Arm64, and macOS x64/Arm64. Browser-hosted VS Code is excluded because workspace scanning requires the Node extension host and the packaged ripgrep executable.
 
 ### Source Code
 
@@ -380,15 +382,15 @@ Set highlights per tag (or tag group). Example:
 }
 ```
 
-**better-todo-tree.highlights.useColourScheme** (`true`)</br>
-Applies foreground and background colour sequences to tags in tag order. This is a smaller configuration surface than per-tag `customHighlight` entries.
+**better-todo-tree.highlights.useColourScheme** (`false`)</br>
+Enable foreground and background colour sequences for tags in tag order. Custom and default highlight styles remain unchanged while this setting is disabled.
 
 <sup>*Note: The colour scheme overrides the colours defined in* `better-todo-tree.highlights.defaultHighlight` *but not* `better-todo-tree.highlights.customHighlight`*.*</sup>
 
 **better-todo-tree.highlights.backgroundColourScheme** (`["red","orange","yellow","green","blue","indigo","violet"]`)</br>
 Defines colours for use in conjunction with `better-todo-tree.highlights.useColourScheme` to colour highlights. Colours can be defined in the same way as other colours (e.g. hex code, theme names, etc.). If there are more tags than colours, the sequence is repeated.
 
-**better-todo-tree.highlights.foreroundColourScheme** (`["white","black","black","white","white","white","black"]`)</br>
+**better-todo-tree.highlights.foregroundColourScheme** (`["white","black","black","white","white","white","black"]`)</br>
 Defines colours for use in conjunction with `better-todo-tree.highlights.backgroundColourScheme` to colour highlights. These colours should be complementary to the background colours.
 
 **better-todo-tree.regex.enableMultiLine** (`false`)</br>
@@ -419,8 +421,7 @@ Empty value uses the packaged ripgrep binary. Set an absolute executable path to
 **better-todo-tree.ripgrep.ripgrepArgs** (`"--max-columns=1000"`)</br>
 Pass additional arguments to ripgrep. Engine arguments such as `--pcre2`, `-P`, and `--engine` override automatic engine selection.
 
-**better-todo-tree.ripgrep.ripgrepMaxBuffer** (`200`)</br>
-By default, the ripgrep process will have a buffer of 200KB. However, this is sometimes not enough for all the tags you might want to see. This setting can be used to increase the buffer size accordingly.
+Ripgrep output is parsed incrementally. No output-buffer size setting is required.
 
 **better-todo-tree.ripgrep.usePatternFile** (`true`)</br>
 A pattern file is used with ripgrep by default. If you experience issues with deleting the pattern file, set this to false to use the legacy method of providing the regex to ripgrep.

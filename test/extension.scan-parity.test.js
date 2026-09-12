@@ -329,6 +329,14 @@ function createProviderStub( options )
         exportTree: function() { return {}; },
         hasSubTags: function() { return false; },
         getChildren: function() { return []; },
+        getElement: function( filename )
+        {
+            if( typeof ( options.getElementImpl ) === 'function' )
+            {
+                return options.getElementImpl( filename );
+            }
+            return options.treeElement;
+        },
         clearExpansionState: function() {},
         setExpanded: function() {},
         dispose: function() {}
@@ -394,6 +402,8 @@ function createVscodeStub( options )
     var progressSessions = [];
     var statusBarItems = [];
     var treeViews = [];
+    var decorationTypes = [];
+    var outputChannels = [];
     var configurationUpdates = [];
     var automaticGitRefreshInterval = options.automaticGitRefreshInterval !== undefined ? options.automaticGitRefreshInterval : 0;
     var periodicRefreshInterval = options.periodicRefreshInterval !== undefined ? options.periodicRefreshInterval : 0;
@@ -428,7 +438,7 @@ function createVscodeStub( options )
                 expand: false,
                 export: false
             },
-            trackFile: false,
+            trackFile: options.trackFile === true,
             expanded: false,
             flat: false,
             tagsOnly: false,
@@ -441,7 +451,7 @@ function createVscodeStub( options )
         },
         filtering: filteringDefaults,
         general: {
-            debug: false,
+            debug: options.debug === true,
             automaticGitRefreshInterval: automaticGitRefreshInterval,
             periodicRefreshInterval: periodicRefreshInterval,
             rootFolder: "",
@@ -451,7 +461,6 @@ function createVscodeStub( options )
         },
         ripgrep: {
             ripgrepArgs: '',
-            ripgrepMaxBuffer: 200,
             usePatternFile: false
         },
         regex: {
@@ -460,7 +469,7 @@ function createVscodeStub( options )
     }, undefined, configurationUpdates, options.configurationUpdateImpl );
 
     var generalSection = createConfigurationSection( {
-            debug: false,
+            debug: options.debug === true,
             automaticGitRefreshInterval: automaticGitRefreshInterval,
             periodicRefreshInterval: periodicRefreshInterval,
             rootFolder: "",
@@ -475,7 +484,7 @@ function createVscodeStub( options )
         }, undefined, configurationUpdates );
     var treeSection = createConfigurationSection( {
             autoRefresh: true,
-            trackFile: false,
+            trackFile: options.trackFile === true,
             showCountsInTree: false,
             showBadges: false,
             scanMode: options.scanMode,
@@ -502,7 +511,6 @@ function createVscodeStub( options )
         }, undefined, configurationUpdates );
     var ripgrepSection = createConfigurationSection( {
             ripgrepArgs: '',
-            ripgrepMaxBuffer: 200,
             usePatternFile: false
         }, undefined, configurationUpdates );
 
@@ -530,14 +538,14 @@ function createVscodeStub( options )
         return { dispose: function() {} };
     }
 
-    function createTreeView( id, options )
+    function createTreeView( id, viewOptions )
     {
         var view = {
             badge: undefined,
             title: 'Tree',
             message: '',
-            visible: false,
-            treeDataProvider: options && options.treeDataProvider,
+            visible: options.treeViewVisible === true,
+            treeDataProvider: viewOptions && viewOptions.treeDataProvider,
             revealCalls: [],
             onDidExpandElement: function( listener ) { return registerListener( windowListeners, 'expand', listener ); },
             onDidCollapseElement: function( listener ) { return registerListener( windowListeners, 'collapse', listener ); },
@@ -547,6 +555,13 @@ function createVscodeStub( options )
                     element: element,
                     options: revealOptions
                 } );
+                if( typeof ( options.revealImpl ) === 'function' )
+                {
+                    return Promise.resolve().then( function()
+                    {
+                        return options.revealImpl( element, revealOptions );
+                    } );
+                }
                 return Promise.resolve();
             }
         };
@@ -599,6 +614,7 @@ function createVscodeStub( options )
     {
         this.event = function() {};
         this.fire = function() {};
+        this.dispose = function() {};
     }
 
     function TreeItem( label )
@@ -622,6 +638,8 @@ function createVscodeStub( options )
         progressSessions: progressSessions,
         statusBarItems: statusBarItems,
         treeViews: treeViews,
+        decorationTypes: decorationTypes,
+        outputChannels: outputChannels,
         configurationUpdates: configurationUpdates,
         extensions: {
             all: options.extensions || [ {
@@ -659,7 +677,22 @@ function createVscodeStub( options )
             },
             parse: function( value )
             {
-                return { path: value, fsPath: value, toString: function() { return value; } };
+                return {
+                    path: value,
+                    fsPath: value,
+                    query: '',
+                    with: function( changes )
+                    {
+                        var query = changes.query;
+                        return {
+                            path: value,
+                            fsPath: value,
+                            query: query,
+                            toString: function() { return value + '?' + query; }
+                        };
+                    },
+                    toString: function() { return value; }
+                };
             }
         },
         env: {
@@ -738,10 +771,29 @@ function createVscodeStub( options )
             },
             createOutputChannel: function()
             {
-                return {
+                var outputChannel = {
                     appendLine: function() {},
-                    dispose: function() {}
+                    disposeCalls: 0,
+                    dispose: function()
+                    {
+                        this.disposeCalls++;
+                    }
                 };
+                outputChannels.push( outputChannel );
+                return outputChannel;
+            },
+            createTextEditorDecorationType: function( decorationOptions )
+            {
+                var decoration = {
+                    options: decorationOptions,
+                    disposeCalls: 0,
+                    dispose: function()
+                    {
+                        this.disposeCalls++;
+                    }
+                };
+                decorationTypes.push( decoration );
+                return decoration;
             },
             showInformationMessage: function( message )
             {
@@ -881,7 +933,7 @@ function createExtensionHarness( options )
         }
     } );
     var context = {
-        subscriptions: { push: function() {} },
+        subscriptions: [],
         workspaceState: options.workspaceState || matrixHelpers.createWorkspaceState(),
         globalState: options.globalState || matrixHelpers.createWorkspaceState(),
         storageUri: matrixHelpers.createUri( '/tmp/storage' ),
@@ -1481,6 +1533,53 @@ function createDeferred()
         promise: promise,
         resolve: resolve,
         reject: reject
+    };
+}
+
+function createControlledTimers()
+{
+    var timeouts = [];
+    var intervals = [];
+
+    function createHandle( callback, delay )
+    {
+        return {
+            callback: callback,
+            delay: delay,
+            cancelled: false,
+            unref: function() {}
+        };
+    }
+
+    return {
+        timeouts: timeouts,
+        intervals: intervals,
+        setTimeout: function( callback, delay )
+        {
+            var handle = createHandle( callback, delay );
+            timeouts.push( handle );
+            return handle;
+        },
+        clearTimeout: function( handle )
+        {
+            if( handle )
+            {
+                handle.cancelled = true;
+            }
+        },
+        setInterval: function( callback, delay )
+        {
+            var handle = createHandle( callback, delay );
+            intervals.push( handle );
+            return handle;
+        },
+        clearInterval: function( handle )
+        {
+            if( handle )
+            {
+                handle.cancelled = true;
+            }
+        }
     };
 }
 
@@ -4932,6 +5031,39 @@ QUnit.test( "exportTree reports document open failures through the command bound
     } );
 } );
 
+QUnit.test( "exportTree uses a fresh virtual document generation for repeated paths", function( assert )
+{
+    var openedUris = [];
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        openTextDocumentImpl: function( uri )
+        {
+            openedUris.push( uri );
+            return {};
+        },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.exportTree' ]();
+    } ).then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.exportTree' ]();
+    } ).then( function()
+    {
+        assert.equal( openedUris.length, 2 );
+        assert.equal( openedUris[ 0 ].path, openedUris[ 1 ].path );
+        assert.equal( openedUris[ 0 ].query, 'generation=1' );
+        assert.equal( openedUris[ 1 ].query, 'generation=2' );
+        assert.notEqual( openedUris[ 0 ].toString(), openedUris[ 1 ].toString() );
+    } );
+} );
+
 QUnit.test( "revealInFile reports VS Code open failures through the command boundary", function( assert )
 {
     var harness = createExtensionHarness( {
@@ -4964,6 +5096,203 @@ QUnit.test( "revealInFile reports VS Code open failures through the command boun
                 'Better Todo Tree: failed to reveal todo in file (open command failed)'
             ] );
         } );
+    } );
+} );
+
+QUnit.test( "revealInFile disposes line flashes without writing to a closed editor", function( assert )
+{
+    var timers = createControlledTimers();
+    var decorationWrites = [];
+    var document = matrixHelpers.createDocument( '/workspace/file.js', '// TODO item' );
+    var editor = {
+        document: document,
+        selection: { active: { line: 0, character: 0 } },
+        setDecorations: function( decoration, ranges )
+        {
+            if( document.isClosed === true )
+            {
+                throw new Error( 'closed editor write' );
+            }
+            decorationWrites.push( { decoration: decoration, ranges: ranges } );
+        }
+    };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        activeTextEditor: editor,
+        timerStubs: timers,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.revealInFile' ]( document.uri, undefined );
+    } ).then( function()
+    {
+        var flashTimer = timers.timeouts.find( function( timer ) { return timer.delay === 150; } );
+
+        assert.ok( flashTimer );
+        assert.equal( decorationWrites.length, 1 );
+        assert.equal( decorationWrites[ 0 ].ranges.length, 1 );
+
+        document.isClosed = true;
+        harness.vscode.window.activeTextEditor = undefined;
+        flashTimer.callback();
+
+        assert.equal( decorationWrites.length, 1 );
+        assert.equal( harness.vscode.decorationTypes[ 0 ].disposeCalls, 1 );
+        harness.extension.deactivate();
+    } );
+} );
+
+QUnit.test( "active editor tracking cancels stale delayed reveals", function( assert )
+{
+    var timers = createControlledTimers();
+    var requestedFiles = [];
+    var firstDocument = matrixHelpers.createDocument( '/workspace/first.js', '// TODO first' );
+    var secondDocument = matrixHelpers.createDocument( '/workspace/second.js', '// TODO second' );
+    var firstEditor = { document: firstDocument };
+    var secondEditor = { document: secondDocument };
+    var treeElement = { fsPath: '/workspace/second.js' };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        trackFile: true,
+        treeViewVisible: true,
+        treeElement: treeElement,
+        activeTextEditor: firstEditor,
+        visibleTextEditors: [ firstEditor, secondEditor ],
+        timerStubs: timers,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        getElementImpl: function( filename )
+        {
+            requestedFiles.push( filename );
+            return treeElement;
+        },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+    harness.vscode.workspaceListeners.activeEditor( firstEditor );
+    harness.vscode.window.activeTextEditor = secondEditor;
+    harness.vscode.workspaceListeners.activeEditor( secondEditor );
+
+    var revealTimers = timers.timeouts.filter( function( timer ) { return timer.delay === 500; } );
+
+    assert.equal( revealTimers.length, 2 );
+    assert.true( revealTimers[ 0 ].cancelled );
+    assert.false( revealTimers[ 1 ].cancelled );
+    revealTimers[ 1 ].callback();
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.deepEqual( requestedFiles, [ '/workspace/second.js' ] );
+        assert.equal( harness.vscode.treeViews[ 0 ].revealCalls.length, 1 );
+        assert.strictEqual( harness.vscode.treeViews[ 0 ].revealCalls[ 0 ].element, treeElement );
+        harness.extension.deactivate();
+    } );
+} );
+
+QUnit.test( "reveal command propagates tree view failures through the command boundary", function( assert )
+{
+    var document = matrixHelpers.createDocument( '/workspace/file.js', '// TODO item' );
+    var editor = { document: document };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        treeViewVisible: true,
+        treeElement: { fsPath: document.fileName },
+        activeTextEditor: editor,
+        visibleTextEditors: [ editor ],
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        revealImpl: function()
+        {
+            return Promise.reject( new Error( 'tree reveal failed' ) );
+        },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.reveal' ]().then( function()
+        {
+            assert.ok( false, 'reveal rejects tree view failures' );
+        }, function( error )
+        {
+            assert.equal( error.message, 'tree reveal failed' );
+            assert.deepEqual( harness.vscode.errorMessages, [
+                'Better Todo Tree: failed to reveal active editor in tree (tree reveal failed)'
+            ] );
+            harness.extension.deactivate();
+        } );
+    } );
+} );
+
+QUnit.test( "deactivation cancels scheduled work and disposes activation-owned resources", function( assert )
+{
+    var timers = createControlledTimers();
+    var document = matrixHelpers.createDocument( '/workspace/file.js', '// TODO item' );
+    var editor = {
+        document: document,
+        selection: { active: { line: 0, character: 0 } },
+        setDecorations: function() {}
+    };
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        debug: true,
+        automaticGitRefreshInterval: 1,
+        periodicRefreshInterval: 1,
+        activeTextEditor: editor,
+        timerStubs: timers,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        return harness.vscode.commandHandlers[ 'better-todo-tree.revealInFile' ]( document.uri, undefined );
+    } ).then( function()
+    {
+        assert.equal( harness.vscode.outputChannels.length, 1 );
+        assert.equal( harness.vscode.decorationTypes.length, 1 );
+        assert.equal( timers.intervals.length, 2 );
+
+        harness.extension.deactivate();
+        harness.extension.deactivate();
+
+        assert.true( timers.timeouts.every( function( timer ) { return timer.cancelled; } ) );
+        assert.true( timers.intervals.every( function( timer ) { return timer.cancelled; } ) );
+        assert.equal( harness.vscode.outputChannels[ 0 ].disposeCalls, 1 );
+        assert.equal( harness.vscode.decorationTypes[ 0 ].disposeCalls, 1 );
+        assert.equal( harness.provider.clearCalls, 1 );
+    } );
+} );
+
+QUnit.test( "deactivation settles pending tree UI work without touching the disposed view", function( assert )
+{
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        scanAtStartup: false,
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        fileContents: {}
+    } );
+
+    harness.extension.activate( harness.context );
+
+    var expansionPromise = harness.vscode.commandHandlers[ 'better-todo-tree.expand' ]();
+    harness.extension.deactivate();
+
+    return expansionPromise.then( function()
+    {
+        assert.equal( harness.vscode.treeViews[ 0 ].revealCalls.length, 0 );
     } );
 } );
 

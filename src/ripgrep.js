@@ -8,8 +8,7 @@ var fs = require( 'fs' );
 var regexEngine = require( './regexEngine.js' );
 var regexRegistry = require( './regexRegistry.js' );
 
-var currentProcess;
-var currentProcessState;
+var activeProcesses = new Map();
 var whitespaceCharacterRegex = regexRegistry.createRegExp( 'whitespaceCharacter' );
 
 var MAX_DEBUG_PREVIEW_LINES = 10;
@@ -313,13 +312,23 @@ function normalizeSearchOptions( options )
     return normalizedOptions;
 }
 
-function clearCurrentProcess( processRef )
+function clearActiveProcess( processRef )
 {
-    if( currentProcess && ( processRef === undefined || currentProcess === processRef ) )
+    if( processRef !== undefined )
     {
-        currentProcess = undefined;
-        currentProcessState = undefined;
+        activeProcesses.delete( processRef );
     }
+}
+
+function beginProcessCompletion( state )
+{
+    if( state.completionStarted === true )
+    {
+        return false;
+    }
+
+    state.completionStarted = true;
+    return true;
 }
 
 function rejectAfterPatternCleanup( options, state, reject, error, beforeCleanup, processRef )
@@ -331,11 +340,11 @@ function rejectAfterPatternCleanup( options, state, reject, error, beforeCleanup
 
     return cleanupPatternFile( options.patternFilePath ).then( function()
     {
-        clearCurrentProcess( processRef );
+        clearActiveProcess( processRef );
         reject( toRipgrepError( error, state.stderr, false, createErrorDetails( state ) ) );
     }, function( cleanupError )
     {
-        clearCurrentProcess( processRef );
+        clearActiveProcess( processRef );
         reject( toRipgrepError( cleanupError, state.stderr, false, createErrorDetails( state ) ) );
     } );
 }
@@ -373,13 +382,14 @@ module.exports.search = function ripGrep( cwd, options, onEvent )
                 stderr: "",
                 stdoutTail: "",
                 matchCount: 0,
-                summary: undefined
+                summary: undefined,
+                completionStarted: false
             };
             var eventHandler = typeof ( onEvent ) === 'function' ? onEvent : function() {};
 
             try
             {
-                currentProcess = child_process.spawn( options.rgPath, args, { cwd: cwd, windowsHide: true } );
+                var searchProcess = child_process.spawn( options.rgPath, args, { cwd: cwd, windowsHide: true } );
             }
             catch( error )
             {
@@ -387,20 +397,28 @@ module.exports.search = function ripGrep( cwd, options, onEvent )
                 return;
             }
 
-            var searchProcess = currentProcess;
-            currentProcessState = state;
+            activeProcesses.set( searchProcess, state );
 
             searchProcess.stdout.on( 'data', function( data )
             {
+                if( state.completionStarted === true )
+                {
+                    return;
+                }
+
                 try
                 {
                     processStdoutChunk( data, state, eventHandler );
                 }
                 catch( error )
                 {
+                    if( beginProcessCompletion( state ) !== true )
+                    {
+                        return;
+                    }
                     rejectAfterPatternCleanup( options, state, reject, error, function()
                     {
-                        if( currentProcess === searchProcess )
+                        if( activeProcesses.has( searchProcess ) )
                         {
                             searchProcess.kill( 'SIGINT' );
                         }
@@ -410,16 +428,31 @@ module.exports.search = function ripGrep( cwd, options, onEvent )
 
             searchProcess.stderr.on( 'data', function( data )
             {
+                if( state.completionStarted === true )
+                {
+                    return;
+                }
                 state.stderr = appendBoundedText( state.stderr, data.toString(), MAX_DEBUG_TEXT_LENGTH );
             } );
 
             searchProcess.on( 'error', function( error )
             {
+                if( beginProcessCompletion( state ) !== true )
+                {
+                    return;
+                }
                 rejectAfterPatternCleanup( options, state, reject, error, undefined, searchProcess );
             } );
 
             searchProcess.on( 'close', function( code, signal )
             {
+                if( beginProcessCompletion( state ) !== true )
+                {
+                    clearActiveProcess( searchProcess );
+                    return;
+                }
+
+                clearActiveProcess( searchProcess );
                 var completion = Promise.resolve();
 
                 if( state.stdoutTail.length > 0 )
@@ -446,7 +479,7 @@ module.exports.search = function ripGrep( cwd, options, onEvent )
                     return cleanupPatternFile( options.patternFilePath );
                 } ).then( function()
                 {
-                    clearCurrentProcess( searchProcess );
+                    clearActiveProcess( searchProcess );
 
                     if( state.previewLines.length > 0 )
                     {
@@ -475,7 +508,7 @@ module.exports.search = function ripGrep( cwd, options, onEvent )
                     } ) ) );
                 } ).catch( function( error )
                 {
-                    clearCurrentProcess( searchProcess );
+                    clearActiveProcess( searchProcess );
                     reject( toRipgrepError( error, state.stderr, false, createErrorDetails( state ) ) );
                 } );
             } );
@@ -501,14 +534,14 @@ module.exports.search = function ripGrep( cwd, options, onEvent )
 
 module.exports.kill = function()
 {
-    if( currentProcess !== undefined )
+    Array.from( activeProcesses.entries() ).forEach( function( entry )
     {
-        if( currentProcessState )
-        {
-            currentProcessState.cancellationRequested = true;
-        }
-        currentProcess.kill( 'SIGINT' );
-    }
+        var processRef = entry[ 0 ];
+        var state = entry[ 1 ];
+
+        state.cancellationRequested = true;
+        processRef.kill( 'SIGINT' );
+    } );
 };
 
 module.exports.decodeJsonValue = decodeJsonValue;

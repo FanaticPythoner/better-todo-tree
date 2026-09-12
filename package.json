@@ -1604,12 +1604,12 @@
                         "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
                     },
                     "better-todo-tree.highlights.useColourScheme": {
-                        "default": true,
+                        "default": false,
                         "markdownDescription": "%better-todo-tree.configuration.highlights.useColourScheme.markdownDescription%",
                         "type": "boolean"
                     },
                     "todo-tree.highlights.useColourScheme": {
-                        "default": true,
+                        "default": false,
                         "markdownDescription": "%better-todo-tree.configuration.highlights.useColourScheme.markdownDescription%",
                         "type": "boolean",
                         "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
@@ -2371,18 +2371,6 @@
                 "order": 8,
                 "type": "object",
                 "properties": {
-                    "better-todo-tree.ripgrep.ripgrepMaxBuffer": {
-                        "default": 200,
-                        "markdownDescription": "%better-todo-tree.configuration.ripgrep.ripgrepMaxBuffer.markdownDescription%",
-                        "type": "integer"
-                    },
-                    "todo-tree.ripgrep.ripgrepMaxBuffer": {
-                        "default": 200,
-                        "markdownDescription": "%better-todo-tree.configuration.ripgrep.ripgrepMaxBuffer.markdownDescription%",
-                        "type": "integer",
-                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
-                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
-                    },
                     "better-todo-tree.ripgrep.usePatternFile": {
                         "default": true,
                         "markdownDescription": "%better-todo-tree.configuration.ripgrep.usePatternFile.markdownDescription%",

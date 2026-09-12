@@ -396,10 +396,12 @@ QUnit.module( "ripgrep streaming search", function( hooks )
     QUnit.test( "malformed ripgrep json reports pattern cleanup failures", function( assert )
     {
         var originalUnlink = fs.promises.unlink;
+        var unlinkCalls = 0;
         var patternFilePath = path.join( os.tmpdir(), 'todo-tree-pattern-json-test.txt' );
 
         fs.promises.unlink = function()
         {
+            unlinkCalls++;
             return Promise.reject( Object.assign( new Error( 'json cleanup failed' ), { code: 'EPERM' } ) );
         };
 
@@ -428,6 +430,7 @@ QUnit.module( "ripgrep streaming search", function( hooks )
         {
             assert.ok( error instanceof ripgrep.RipgrepError );
             assert.equal( error.message, 'json cleanup failed' );
+            assert.equal( unlinkCalls, 1 );
         } ).finally( function()
         {
             fs.promises.unlink = originalUnlink;
@@ -533,7 +536,7 @@ QUnit.module( "ripgrep streaming search", function( hooks )
         } );
     } );
 
-    QUnit.test( "kill cancels only the active search state", function( assert )
+    QUnit.test( "kill cancels every concurrent search", function( assert )
     {
         var firstProcess = createFakeProcess();
         var secondProcess = createFakeProcess();
@@ -581,21 +584,17 @@ QUnit.module( "ripgrep streaming search", function( hooks )
         {
             ripgrep.kill();
 
-            return secondSearch.then( function()
+            return Promise.all( [ firstSearch, secondSearch ].map( function( searchPromise )
             {
-                assert.ok( false, 'expected second search cancellation' );
-            }, function( error )
-            {
-                assert.ok( error instanceof ripgrep.RipgrepError );
-                assert.equal( error.cancelled, true );
-            } );
-        } ).then( function()
-        {
-            firstProcess.emit( 'close', 0, null );
-            return firstSearch;
-        } ).then( function( summary )
-        {
-            assert.deepEqual( summary, { stats: { matches: 0 } } );
+                return searchPromise.then( function()
+                {
+                    assert.ok( false, 'expected concurrent search cancellation' );
+                }, function( error )
+                {
+                    assert.ok( error instanceof ripgrep.RipgrepError );
+                    assert.equal( error.cancelled, true );
+                } );
+            } ) );
         } );
     } );
 

@@ -24,6 +24,7 @@ var regexRegistry = require( './regexRegistry.js' );
 var settingsSnapshotModule = require( './runtime/settingsSnapshot.js' );
 var documentScanCacheModule = require( './runtime/documentScanCache.js' );
 var streamScanner = require( './runtime/streamScanner.js' );
+var activationSchedulerModule = require( './runtime/activationScheduler.js' );
 var regexEngine = require( './regexEngine.js' );
 var packageJson = require( '../package.json' );
 var packageNls = require( '../package.nls.json' );
@@ -31,7 +32,6 @@ var packageNls = require( '../package.nls.json' );
 var searchList = [];
 var currentFilter;
 var interrupted = false;
-var selectedDocument;
 var treeRefreshTimeout;
 var rescanTimeout;
 var hideTimeout;
@@ -39,7 +39,6 @@ var autoGitRefreshTimer;
 var periodicRefreshTimer;
 var lastGitHead = {};
 var openDocuments = {};
-var provider;
 var ignoreMarkdownUpdate = false;
 var markdownUpdatePopupOpen = false;
 var scanGeneration = 0;
@@ -51,6 +50,7 @@ var documentRefreshTimers = new Map();
 var documentVersions = new Map();
 var pendingDocumentRefreshes = new Map();
 var gitHeadCheckInFlight = new Set();
+var activeRuntimeDisposer;
 var nlsTokenRegex = regexRegistry.createRegExp( 'nlsToken' );
 var workspaceFolderPlaceholderRegex = regexRegistry.createRegExp( 'workspaceFolderPlaceholder', 'g' );
 var diagnosticPathBackslashRegex = regexRegistry.createRegExp( 'pathBackslash', 'g' );
@@ -80,6 +80,11 @@ var EXPORT_DIAGNOSTICS_BUTTON = "Export Diagnostics";
 
 function activate( context )
 {
+    if( activeRuntimeDisposer )
+    {
+        activeRuntimeDisposer();
+    }
+
     var outputChannel;
     var legacySettingImportMarker = 'importedLegacyNamespaceVersion';
     var currentManifestSettingSuffixes = identity.getManifestSettingSuffixes( packageJson );
@@ -108,6 +113,18 @@ function activate( context )
     var scanStatusBarSpinnerVisible = false;
     var startupOpenScanRetryTimer;
     var startupOpenScanRetryIndex = 0;
+    var exportDocumentGeneration = 0;
+    var activeEditorTrackTimer;
+    var lineFlashStyles = new Set();
+    var pendingTreeUiTurnResolvers = new Set();
+    var runtimeScheduler = activationSchedulerModule.createActivationScheduler( {
+        setTimeout: setTimeout,
+        clearTimeout: clearTimeout,
+        setInterval: setInterval,
+        clearInterval: clearInterval,
+        setImmediate: setImmediate,
+        clearImmediate: clearImmediate
+    } );
 
     var SCAN_PROGRESS_MIN_FILE_UNITS = 1;
     var SCAN_DIAGNOSTIC_EVENT_LIMIT = 500;
@@ -119,6 +136,89 @@ function activate( context )
         'tree': Object.freeze( { notification: false, statusBar: false, tree: true } ),
         'all': Object.freeze( { notification: true, statusBar: true, tree: true } )
     } );
+
+    function disposeRuntime()
+    {
+        if( runtimeScheduler.isDisposed() === true )
+        {
+            return;
+        }
+
+        pendingTreeUiTurnResolvers.forEach( function( resolve )
+        {
+            resolve( false );
+        } );
+        pendingTreeUiTurnResolvers.clear();
+        runtimeScheduler.dispose();
+
+        lineFlashStyles.forEach( function( decoration )
+        {
+            if( decoration && decoration.dispose )
+            {
+                decoration.dispose();
+            }
+        } );
+        lineFlashStyles.clear();
+
+        if( scanProgressSession && scanProgressSession.resolve )
+        {
+            scanProgressSession.resolve();
+            scanProgressSession = undefined;
+        }
+        if( outputChannel )
+        {
+            outputChannel.dispose();
+            outputChannel = undefined;
+        }
+
+        if( activeScanGeneration !== 0 )
+        {
+            cancelledScanGenerations.add( activeScanGeneration );
+        }
+        activeScanGeneration = 0;
+        scanInFlight = false;
+        pendingRescan = false;
+        interrupted = false;
+        searchList = [];
+        currentFilter = undefined;
+        markdownUpdatePopupOpen = false;
+        documentRefreshTimers.clear();
+        documentVersions.clear();
+        pendingDocumentRefreshes.clear();
+        gitHeadCheckInFlight.clear();
+        openDocuments = {};
+        lastGitHead = {};
+
+        treeRefreshTimeout = undefined;
+        rescanTimeout = undefined;
+        hideTimeout = undefined;
+        autoGitRefreshTimer = undefined;
+        periodicRefreshTimer = undefined;
+        streamingTreeApplyTimer = undefined;
+        startupOpenScanRetryTimer = undefined;
+        activeEditorTrackTimer = undefined;
+        nextSearchResults = undefined;
+        workspaceScanIssues = [];
+        scanProgressState = undefined;
+        scanStatusBarSpinnerVisible = false;
+
+        ripgrep.kill();
+        highlights.resetCaches();
+        if( provider )
+        {
+            provider.clear( [] );
+            provider.dispose();
+            provider = undefined;
+        }
+
+        if( activeRuntimeDisposer === disposeRuntime )
+        {
+            activeRuntimeDisposer = undefined;
+        }
+    }
+
+    activeRuntimeDisposer = disposeRuntime;
+    context.subscriptions.push( { dispose: disposeRuntime } );
 
     function settingLocation( setting, uri )
     {
@@ -201,6 +301,11 @@ function activate( context )
             return undefined;
         } ).then( function()
         {
+            if( runtimeScheduler.isDisposed() === true )
+            {
+                return undefined;
+            }
+
             var changedEntries = Array.from( latestEntries.entries() ).reduce( function( filtered, entry )
             {
                 if( extensionContextValues[ entry[ 0 ] ] !== entry[ 1 ] )
@@ -241,7 +346,10 @@ function activate( context )
 
         extensionContextUpdateQueue = scheduled.catch( function( error )
         {
-            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to update command contexts (" + formatErrorMessage( error ) + ")" );
+            if( runtimeScheduler.isDisposed() !== true )
+            {
+                vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to update command contexts (" + formatErrorMessage( error ) + ")" );
+            }
         } );
 
         return scheduled;
@@ -260,6 +368,11 @@ function activate( context )
         context.subscriptions.push( vscode.workspace.registerTextDocumentContentProvider( scheme, {
             provideTextDocumentContent( uri )
             {
+                if( runtimeScheduler.isDisposed() === true || !provider )
+                {
+                    return '';
+                }
+
                 if( path.extname( uri.path ) === '.json' )
                 {
                     return JSON.stringify( provider.exportTree(), null, 2 );
@@ -920,6 +1033,11 @@ function activate( context )
             var commandArguments = arguments;
             var commandThis = this;
 
+            if( runtimeScheduler.isDisposed() === true )
+            {
+                return Promise.resolve();
+            }
+
             return runCommandOperation( boundaryOperationName, function()
             {
                 return handler.apply( commandThis, commandArguments );
@@ -962,13 +1080,11 @@ function activate( context )
 
     var resolveCommentPatternFileNameForLanguage = commentPatternLanguageResolver.createCommentPatternLanguageResolver( vscode, utils );
 
-    provider = new tree.TreeNodeProvider( context, debug, setButtonsAndContext );
+    var provider = new tree.TreeNodeProvider( context, debug, setButtonsAndContext );
     var statusBarIndicator = vscode.window.createStatusBarItem( vscode.StatusBarAlignment.Left, 0 );
     var scanStatusBarSpinner = vscode.window.createStatusBarItem( vscode.StatusBarAlignment.Left, 1 );
 
     var todoTreeView = vscode.window.createTreeView( identity.VIEW_ID, { treeDataProvider: provider } );
-
-    var fileSystemWatcher;
 
     context.subscriptions.push( provider );
     context.subscriptions.push( statusBarIndicator );
@@ -982,6 +1098,11 @@ function activate( context )
 
     function resetOutputChannel()
     {
+        if( runtimeScheduler.isDisposed() === true )
+        {
+            return;
+        }
+
         if( outputChannel )
         {
             outputChannel.dispose();
@@ -995,7 +1116,12 @@ function activate( context )
 
     function refreshTree( immediate )
     {
-        clearTimeout( treeRefreshTimeout );
+        if( runtimeScheduler.isDisposed() === true || !provider )
+        {
+            return Promise.resolve();
+        }
+
+        runtimeScheduler.cancelTimeout( treeRefreshTimeout );
         if( immediate === true )
         {
             treeRefreshTimeout = undefined;
@@ -1003,8 +1129,9 @@ function activate( context )
             return setButtonsAndContext();
         }
 
-        treeRefreshTimeout = setTimeout( function()
+        treeRefreshTimeout = runtimeScheduler.scheduleTimeout( function()
         {
+            treeRefreshTimeout = undefined;
             provider.refresh();
             setButtonsAndContext();
         }, 200 );
@@ -1105,7 +1232,7 @@ function activate( context )
     {
         var commandError = normalizeCommandError( error );
 
-        if( commandError.reportedToUser !== true )
+        if( commandError.reportedToUser !== true && runtimeScheduler.isDisposed() !== true )
         {
             commandError.reportedToUser = true;
             vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to " + operationName + " (" + formatErrorMessage( commandError ) + ")" );
@@ -1118,7 +1245,10 @@ function activate( context )
     {
         return Promise.resolve( promise ).catch( function( error )
         {
-            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to " + operationName + " (" + formatErrorMessage( error ) + ")" );
+            if( runtimeScheduler.isDisposed() !== true )
+            {
+                vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to " + operationName + " (" + formatErrorMessage( error ) + ")" );
+            }
         } );
     }
 
@@ -2003,15 +2133,27 @@ function activate( context )
         treeBusyStateCounts[ busyContextKey ] = ( treeBusyStateCounts[ busyContextKey ] || 0 ) + 1;
         updateTreeBusyContexts();
 
-        var scheduled = treeStateMutationQueue.then( mutation );
+        var scheduled = treeStateMutationQueue.then( function()
+        {
+            if( runtimeScheduler.isDisposed() !== true )
+            {
+                return mutation();
+            }
+        } );
 
         treeStateMutationQueue = scheduled.catch( function( error )
         {
-            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to update " + operationName + " (" + formatErrorMessage( error ) + ")" );
+            if( runtimeScheduler.isDisposed() !== true )
+            {
+                vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": failed to update " + operationName + " (" + formatErrorMessage( error ) + ")" );
+            }
         } ).finally( function()
         {
             treeBusyStateCounts[ busyContextKey ] = Math.max( ( treeBusyStateCounts[ busyContextKey ] || 0 ) - 1, 0 );
-            updateTreeBusyContexts();
+            if( runtimeScheduler.isDisposed() !== true )
+            {
+                updateTreeBusyContexts();
+            }
         } );
 
         return scheduled;
@@ -2087,7 +2229,7 @@ function activate( context )
     {
         if( streamingTreeApplyTimer )
         {
-            clearTimeout( streamingTreeApplyTimer );
+            runtimeScheduler.cancelTimeout( streamingTreeApplyTimer );
             streamingTreeApplyTimer = undefined;
         }
 
@@ -2114,7 +2256,7 @@ function activate( context )
             return;
         }
 
-        streamingTreeApplyTimer = setTimeout( function()
+        streamingTreeApplyTimer = runtimeScheduler.scheduleTimeout( function()
         {
             streamingTreeApplyTimer = undefined;
 
@@ -2135,6 +2277,11 @@ function activate( context )
 
     function updateInformation()
     {
+        if( runtimeScheduler.isDisposed() === true || !provider )
+        {
+            return;
+        }
+
         var statusBar = getSetting( 'general.statusBar', 'none' );
 
         var activityBarCounts = provider.getTagCountsForActivityBar();
@@ -2759,7 +2906,6 @@ function activate( context )
 
         options.outputChannel = outputChannel;
         options.additional = getSetting( 'ripgrep.ripgrepArgs', '' );
-        options.maxBuffer = getSetting( 'ripgrep.ripgrepMaxBuffer', 200 );
         options.multiline = regexSource.indexOf( "\\n" ) > -1 || resourceConfig.enableMultiLine === true;
 
         if( context.storageUri && context.storageUri.fsPath && getSetting( 'ripgrep.usePatternFile', true ) === true )
@@ -2949,7 +3095,7 @@ function activate( context )
 
         if( documentRefreshTimers.has( key ) )
         {
-            clearTimeout( documentRefreshTimers.get( key ) );
+            runtimeScheduler.cancelTimeout( documentRefreshTimers.get( key ) );
             documentRefreshTimers.delete( key );
         }
     }
@@ -3325,6 +3471,11 @@ function activate( context )
 
     function applyDirtyResultsToTree( options, store )
     {
+        if( runtimeScheduler.isDisposed() === true || !provider )
+        {
+            return;
+        }
+
         options = options || {};
         var resultsStore = getSearchResultsStore( store );
 
@@ -3750,7 +3901,7 @@ function activate( context )
         streamingTreeApplyGeneration = generation;
         if( streamingTreeApplyTimer )
         {
-            clearTimeout( streamingTreeApplyTimer );
+            runtimeScheduler.cancelTimeout( streamingTreeApplyTimer );
             streamingTreeApplyTimer = undefined;
         }
 
@@ -3775,6 +3926,11 @@ function activate( context )
         {
             nextSearchResults = undefined;
 
+            if( runtimeScheduler.isDisposed() === true )
+            {
+                return;
+            }
+
             if( isCancelledError( error ) !== true )
             {
                 if( streamingTreePreparedGeneration === generation )
@@ -3792,9 +3948,14 @@ function activate( context )
             }
         } ).finally( function()
         {
+            if( runtimeScheduler.isDisposed() === true )
+            {
+                return;
+            }
+
             if( streamingTreeApplyTimer )
             {
-                clearTimeout( streamingTreeApplyTimer );
+                runtimeScheduler.cancelTimeout( streamingTreeApplyTimer );
                 streamingTreeApplyTimer = undefined;
             }
             if( streamingTreePreparedGeneration === generation )
@@ -3810,7 +3971,7 @@ function activate( context )
 
     function rebuild()
     {
-        clearTimeout( rescanTimeout );
+        runtimeScheduler.cancelTimeout( rescanTimeout );
 
         if( scanInFlight === true )
         {
@@ -3823,9 +3984,10 @@ function activate( context )
 
     function triggerRescan( delay )
     {
-        clearTimeout( rescanTimeout );
-        rescanTimeout = setTimeout( function()
+        runtimeScheduler.cancelTimeout( rescanTimeout );
+        rescanTimeout = runtimeScheduler.scheduleTimeout( function()
         {
+            rescanTimeout = undefined;
             if( scanInFlight === true )
             {
                 pendingRescan = true;
@@ -3840,7 +4002,7 @@ function activate( context )
     {
         if( startupOpenScanRetryTimer )
         {
-            clearTimeout( startupOpenScanRetryTimer );
+            runtimeScheduler.cancelTimeout( startupOpenScanRetryTimer );
             startupOpenScanRetryTimer = undefined;
         }
     }
@@ -3867,7 +4029,7 @@ function activate( context )
         var retryDelay = STARTUP_OPEN_SCAN_RETRY_DELAYS[ startupOpenScanRetryIndex ];
         startupOpenScanRetryIndex++;
 
-        startupOpenScanRetryTimer = setTimeout( function()
+        startupOpenScanRetryTimer = runtimeScheduler.scheduleTimeout( function()
         {
             startupOpenScanRetryTimer = undefined;
             rememberVisibleTextEditors();
@@ -3906,6 +4068,11 @@ function activate( context )
                     {
                         gitHeadCheckInFlight.delete( folder.uri.fsPath );
 
+                        if( runtimeScheduler.isDisposed() === true )
+                        {
+                            return;
+                        }
+
                         if( err )
                         {
                             debug( "git rev-parse HEAD failed for " + folder.uri.fsPath + ": " + stderr.toString().trim() );
@@ -3928,13 +4095,14 @@ function activate( context )
 
         if( autoGitRefreshTimer )
         {
-            clearInterval( autoGitRefreshTimer );
+            runtimeScheduler.cancelInterval( autoGitRefreshTimer );
+            autoGitRefreshTimer = undefined;
         }
 
         if( timerInterval > 0 )
         {
             debug( 'Setting automatic Git refresh interval to ' + timerInterval + ' seconds' );
-            autoGitRefreshTimer = setInterval( checkGitHead, timerInterval * 1000 );
+            autoGitRefreshTimer = runtimeScheduler.scheduleInterval( checkGitHead, timerInterval * 1000 );
         }
         else
         {
@@ -3948,13 +4116,14 @@ function activate( context )
 
         if( periodicRefreshTimer )
         {
-            clearInterval( periodicRefreshTimer );
+            runtimeScheduler.cancelInterval( periodicRefreshTimer );
+            periodicRefreshTimer = undefined;
         }
 
         if( timerInterval > 0 )
         {
             debug( 'Setting periodic refresh interval to ' + timerInterval + ' minutes' );
-            periodicRefreshTimer = setInterval( triggerRescan, timerInterval * 1000 * 60 );
+            periodicRefreshTimer = runtimeScheduler.scheduleInterval( triggerRescan, timerInterval * 1000 * 60 );
         }
         else
         {
@@ -3964,6 +4133,11 @@ function activate( context )
 
     function setButtonsAndContext()
     {
+        if( runtimeScheduler.isDisposed() === true || !provider )
+        {
+            return Promise.resolve();
+        }
+
         var isFlat = config.shouldFlatten();
         var isTagsOnly = config.shouldShowTagsOnly();
         var isGroupedByTag = config.shouldGroupByTag();
@@ -3988,8 +4162,12 @@ function activate( context )
             return total + treeBusyStateCounts[ key ];
         }, 0 );
 
-        clearTimeout( hideTimeout );
-        hideTimeout = setTimeout( hideTreeIfEmpty, 1000 );
+        runtimeScheduler.cancelTimeout( hideTimeout );
+        hideTimeout = runtimeScheduler.scheduleTimeout( function()
+        {
+            hideTimeout = undefined;
+            hideTreeIfEmpty();
+        }, 1000 );
 
         return queueExtensionContextUpdates( [
             { suffix: 'show-reveal-button', value: showRevealButton && !getSetting( 'tree.trackFile', false ) },
@@ -4023,6 +4201,11 @@ function activate( context )
 
     function hideTreeIfEmpty()
     {
+        if( runtimeScheduler.isDisposed() === true || !provider )
+        {
+            return;
+        }
+
         var children = provider.getChildren();
         children = children.filter( function( child )
         {
@@ -4094,10 +4277,10 @@ function activate( context )
 
         if( documentRefreshTimers.has( key ) )
         {
-            clearTimeout( documentRefreshTimers.get( key ) );
+            runtimeScheduler.cancelTimeout( documentRefreshTimers.get( key ) );
         }
 
-        documentRefreshTimers.set( key, setTimeout( function()
+        documentRefreshTimers.set( key, runtimeScheduler.scheduleTimeout( function()
         {
             documentRefreshTimers.delete( key );
 
@@ -4220,6 +4403,11 @@ function activate( context )
 
     function refresh( options )
     {
+        if( runtimeScheduler.isDisposed() === true || !provider )
+        {
+            return;
+        }
+
         options = options || {};
         var resultsStore = getDisplayedSearchResultsStore();
 
@@ -4241,14 +4429,42 @@ function activate( context )
 
     function waitForTreeUiTurn()
     {
+        if( runtimeScheduler.isDisposed() === true )
+        {
+            return Promise.resolve( false );
+        }
+
         return new Promise( function( resolve )
         {
-            setImmediate( resolve );
+            var settled = false;
+
+            function settle( ready )
+            {
+                if( settled === true )
+                {
+                    return;
+                }
+
+                settled = true;
+                pendingTreeUiTurnResolvers.delete( settle );
+                resolve( ready );
+            }
+
+            pendingTreeUiTurnResolvers.add( settle );
+            runtimeScheduler.scheduleImmediate( function()
+            {
+                settle( true );
+            } );
         } );
     }
 
     function getVisibleTreeChildren( node )
     {
+        if( !provider )
+        {
+            return [];
+        }
+
         var children = provider.getChildren( node );
         return Array.isArray( children ) ? children : [];
     }
@@ -4298,9 +4514,12 @@ function activate( context )
         provider.clearExpansionState();
         return Promise.resolve( refresh( { immediateRefresh: true, forceFullRefresh: true } ) )
             .then( waitForTreeUiTurn )
-            .then( function()
+            .then( function( treeUiReady )
             {
-                return syncRenderedTreeExpansion( expanded );
+                if( treeUiReady === true )
+                {
+                    return syncRenderedTreeExpansion( expanded );
+                }
             } );
     }
 
@@ -4476,7 +4695,7 @@ function activate( context )
             if( getSetting( 'regex.regex', '' ).indexOf( utils.LEGACY_MARKDOWN_TASK_FRAGMENT ) > -1 )
             {
                 markdownUpdatePopupOpen = true;
-                setTimeout( function()
+                runtimeScheduler.scheduleTimeout( function()
                 {
                     markdownUpdatePopupOpen = false;
                 }, 15000 );
@@ -4633,7 +4852,6 @@ function activate( context )
             migrateLegacyFlatSettingIfRequired( legacyRootConfiguration, updates, 'revealBehaviour', 'string', 'general' );
             migrateLegacyFlatSettingIfRequired( legacyRootConfiguration, updates, 'ripgrep', 'string', 'ripgrep' );
             migrateLegacyFlatSettingIfRequired( legacyRootConfiguration, updates, 'ripgrepArgs', 'string', 'ripgrep' );
-            migrateLegacyFlatSettingIfRequired( legacyRootConfiguration, updates, 'ripgrepMaxBuffer', 'number', 'ripgrep' );
             migrateLegacyFlatSettingIfRequired( legacyRootConfiguration, updates, 'rootFolder', 'string', 'general' );
             migrateLegacyFlatSettingIfRequired( legacyRootConfiguration, updates, 'showBadges', 'boolean', 'tree' );
             migrateLegacyFlatSettingIfRequired( legacyRootConfiguration, updates, 'showCountsInTree', 'boolean', 'tree' );
@@ -4731,20 +4949,23 @@ function activate( context )
         function showInTree( uri, options )
         {
             options = options || {};
-            var revealPromise = Promise.resolve();
-            provider.getElement( uri.fsPath, function( element )
+            if( runtimeScheduler.isDisposed() === true || !provider )
             {
-                if( todoTreeView.visible === true )
-                {
-                    revealPromise = todoTreeView.reveal( element, { focus: false, select: options.select !== false } );
-                }
-            } );
-            return revealPromise;
+                return Promise.resolve();
+            }
+
+            var element = provider.getElement( uri.fsPath );
+            if( todoTreeView.visible === true && element )
+            {
+                return todoTreeView.reveal( element, { focus: false, select: options.select !== false } );
+            }
+
+            return Promise.resolve();
         }
 
         function scheduleStartupScan()
         {
-            var startupScanImmediate = setImmediate( function()
+            var startupScanImmediate = runtimeScheduler.scheduleImmediate( function()
             {
                 startupOpenScanRetryIndex = 0;
                 rememberVisibleTextEditors();
@@ -4755,7 +4976,7 @@ function activate( context )
             context.subscriptions.push( {
                 dispose: function()
                 {
-                    clearImmediate( startupScanImmediate );
+                    runtimeScheduler.cancelImmediate( startupScanImmediate );
                     clearStartupOpenScanRetry();
                 }
             } );
@@ -4763,6 +4984,9 @@ function activate( context )
 
         function activeEditorChanged( editor )
         {
+            runtimeScheduler.cancelTimeout( activeEditorTrackTimer );
+            activeEditorTrackTimer = undefined;
+
             if( !editor || !editor.document )
             {
                 return;
@@ -4772,7 +4996,6 @@ function activate( context )
             var activeDocumentIsNotebookCell = notebooks.isNotebookCellDocument( document ) === true;
             var activeNotebook = activeDocumentIsNotebookCell === true ? getNotebookForDocument( document ) : undefined;
             var ownerUri = activeNotebook ? activeNotebook.uri : getOwnerUriForDocument( document );
-            var ownerFileFilter = ownerUri && ownerUri.fsPath !== undefined ? ownerUri.fsPath : document.fileName;
 
             triggerHighlightsForVisibleEditors( document );
 
@@ -4787,14 +5010,15 @@ function activate( context )
             {
                 if( ownerUri && config.isValidScheme( ownerUri ) )
                 {
-                    if( selectedDocument !== ownerFileFilter )
+                    activeEditorTrackTimer = runtimeScheduler.scheduleTimeout( function()
                     {
-                        setTimeout( function()
+                        activeEditorTrackTimer = undefined;
+                        if( vscode.window.activeTextEditor === editor && editor.document.isClosed !== true &&
+                            getSetting( 'tree.autoRefresh', true ) === true && getSetting( 'tree.trackFile', true ) === true )
                         {
                             observeOperationFailure( 'track active file in tree', showInTree( ownerUri, { select: false } ) );
-                        }, 500 );
-                    }
-                    selectedDocument = undefined;
+                        }
+                    }, 500 );
                 }
             }
 
@@ -4832,12 +5056,12 @@ function activate( context )
 
         function validateColours()
         {
-            var invalidColourMessage = colours.validateColours( vscode.workspace );
+            var invalidColourMessage = colours.validateColours();
             if( invalidColourMessage )
             {
                 vscode.window.showWarningMessage( identity.DISPLAY_NAME + ": " + invalidColourMessage );
             }
-            var invalidIconColourMessage = colours.validateIconColours( vscode.workspace );
+            var invalidIconColourMessage = colours.validateIconColours();
             if( invalidIconColourMessage )
             {
                 vscode.window.showWarningMessage( identity.DISPLAY_NAME + ": " + invalidIconColourMessage );
@@ -4846,7 +5070,7 @@ function activate( context )
 
         function validateIcons()
         {
-            var invalidIconMessage = icons.validateIcons( vscode.workspace );
+            var invalidIconMessage = icons.validateIcons();
             if( invalidIconMessage )
             {
                 vscode.window.showWarningMessage( identity.DISPLAY_NAME + ": " + invalidIconMessage );
@@ -4908,7 +5132,10 @@ function activate( context )
                 exportPath = utils.replaceEnvironmentVariables( exportPath );
                 exportPath = utils.formatExportPath( exportPath );
 
-                var uri = vscode.Uri.parse( identity.EXPORT_SCHEME + ':' + exportPath );
+                exportDocumentGeneration++;
+                var uri = vscode.Uri.parse( identity.EXPORT_SCHEME + ':' + exportPath ).with( {
+                    query: 'generation=' + exportDocumentGeneration
+                } );
                 return vscode.workspace.openTextDocument( uri ).then( function( document )
                 {
                     return vscode.window.showTextDocument( document, { preview: true } );
@@ -5359,7 +5586,7 @@ function activate( context )
                 function flashLine()
                 {
                     var editor = vscode.window.activeTextEditor;
-                    if( !editor )
+                    if( runtimeScheduler.isDisposed() === true || !editor || !editor.document || editor.document.isClosed === true )
                     {
                         return;
                     }
@@ -5379,11 +5606,24 @@ function activate( context )
 
                     var lineRangeHighlight = { range: currentLineRange };
 
-                    editor.setDecorations( lineFlashStyle, [ lineRangeHighlight ] );
-
-                    setTimeout( function()
+                    lineFlashStyles.add( lineFlashStyle );
+                    try
                     {
-                        editor.setDecorations( lineFlashStyle, [] );
+                        editor.setDecorations( lineFlashStyle, [ lineRangeHighlight ] );
+                    }
+                    catch( error )
+                    {
+                        lineFlashStyles.delete( lineFlashStyle );
+                        if( lineFlashStyle.dispose )
+                        {
+                            lineFlashStyle.dispose();
+                        }
+                        throw error;
+                    }
+
+                    runtimeScheduler.scheduleTimeout( function()
+                    {
+                        lineFlashStyles.delete( lineFlashStyle );
                         if( lineFlashStyle.dispose )
                         {
                             lineFlashStyle.dispose();
@@ -5395,8 +5635,20 @@ function activate( context )
             } );
         } );
 
-        context.subscriptions.push( todoTreeView.onDidExpandElement( function( e ) { provider.setExpanded( e.element.fsPath, true ); } ) );
-        context.subscriptions.push( todoTreeView.onDidCollapseElement( function( e ) { provider.setExpanded( e.element.fsPath, false ); } ) );
+        context.subscriptions.push( todoTreeView.onDidExpandElement( function( e )
+        {
+            if( runtimeScheduler.isDisposed() !== true && provider )
+            {
+                provider.setExpanded( e.element.fsPath, true );
+            }
+        } ) );
+        context.subscriptions.push( todoTreeView.onDidCollapseElement( function( e )
+        {
+            if( runtimeScheduler.isDisposed() !== true && provider )
+            {
+                provider.setExpanded( e.element.fsPath, false );
+            }
+        } ) );
 
         registerCommandPair( 'filterClear', function()
         {
@@ -5515,7 +5767,7 @@ function activate( context )
 
         if( typeof ( vscode.workspace.onDidOpenNotebookDocument ) === 'function' )
         {
-            context.subscriptions.push( vscode.workspace.onDidOpenNotebookDocument( function( notebook )
+            context.subscriptions.push( vscode.workspace.onDidOpenNotebookDocument( function()
             {
                 handleVisibleNotebookEditorsChanged( 'open' );
             } ) );
@@ -5544,7 +5796,7 @@ function activate( context )
 
         if( typeof ( vscode.workspace.onDidCloseNotebookDocument ) === 'function' )
         {
-            context.subscriptions.push( vscode.workspace.onDidCloseNotebookDocument( function( notebook )
+            context.subscriptions.push( vscode.workspace.onDidCloseNotebookDocument( function()
             {
                 handleVisibleNotebookEditorsChanged( 'open' );
             } ) );
@@ -5667,14 +5919,15 @@ function activate( context )
             documentChanged( e.document );
         } ) );
 
-        context.subscriptions.push( outputChannel );
-
         resetOutputChannel();
 
 
         migrateSettings().catch( function( error )
         {
-            vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": Failed to migrate legacy settings (" + formatErrorMessage( error ) + ")" );
+            if( runtimeScheduler.isDisposed() !== true )
+            {
+                vscode.window.showErrorMessage( identity.DISPLAY_NAME + ": Failed to migrate legacy settings (" + formatErrorMessage( error ) + ")" );
+            }
         } );
         validateColours();
         validateIcons();
@@ -5700,10 +5953,13 @@ function activate( context )
 
 function deactivate()
 {
-    ripgrep.kill();
-    if( provider )
+    if( activeRuntimeDisposer )
     {
-        provider.clear( [] );
+        activeRuntimeDisposer();
+    }
+    else
+    {
+        ripgrep.kill();
     }
 }
 

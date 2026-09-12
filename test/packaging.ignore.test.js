@@ -14,6 +14,8 @@ QUnit.test( '.vscodeignore excludes local workflow tooling and release-only docu
         'TODOS_LISTS/',
         '.tools/',
         '.act-artifacts/',
+        '.forge/',
+        '.npmignore',
         'MIGRATION.md',
         'OPEN_VSX_CERTIFICATE_REPORT.md',
         'CHANGELOG.upstream.md',
@@ -38,6 +40,9 @@ QUnit.test( '.npmignore excludes local workflow tooling and keeps dist package r
         'TODOS_LISTS/',
         '.tools/',
         '.act-artifacts/',
+        '.forge/',
+        '.devcontainer/',
+        '.vscodeignore',
         'webpack.config.js',
         'buildCodiconNames.js',
         'Better.TODO.Tree.settings.txt'

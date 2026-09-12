@@ -137,6 +137,19 @@ function createDirectoryEntry( name )
 
 QUnit.module( 'behavioral config' );
 
+QUnit.test( 'issue #110 colour schemes require explicit opt-in', function( assert )
+{
+    var defaultConfig = loadConfigModule();
+    var optedInConfig = loadConfigModule( {
+        settingValues: {
+            'highlights.useColourScheme': true
+        }
+    } );
+
+    assert.strictEqual( defaultConfig.shouldUseColourScheme(), false );
+    assert.strictEqual( optedInConfig.shouldUseColourScheme(), true );
+} );
+
 QUnit.test( 'regex reads only language-overridable regex source with a resource URI', function( assert )
 {
     var uri = { toString: function() { return '/workspace/source.vue'; } };

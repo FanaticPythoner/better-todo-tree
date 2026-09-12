@@ -34,7 +34,7 @@ QUnit.test( 'bundle filenames cover the complete canonical target matrix', async
         return packageMetadata.name + '-' + packageMetadata.version + '-' + target + '.vsix';
     } ).sort();
 
-    assert.equal( targets.length, 10 );
+    assert.equal( targets.length, 9 );
     assert.deepEqual( verifier.expectedBundleFileNames( packageMetadata, targets ), expected );
     verifier.verifyTargetMap( targets );
 } );
@@ -57,16 +57,23 @@ QUnit.test( 'native targets contain one matching executable and metadata set', a
     }, messageContains( 'metadata entries mismatch' ) );
 } );
 
-QUnit.test( 'web target rejects native executables and metadata', async function( assert )
+QUnit.test( 'every published target requires one native executable and metadata set', async function( assert )
 {
     var verifier = await verifierPromise;
 
-    assert.deepEqual( verifier.expectedRipgrepEntries( 'web' ), [] );
-    assert.deepEqual( verifier.verifyEntrySet( [], 'web' ), [] );
+    targets.forEach( function( target )
+    {
+        var expected = verifier.expectedRipgrepEntries( target );
+
+        assert.equal( expected.length, 1, target + ' has one executable' );
+        assert.deepEqual( verifier.verifyEntrySet( expected.concat( metadataEntries() ), target ), expected );
+    } );
+
+    assert.notOk( targets.includes( 'web' ) );
     assert.throws( function()
     {
-        verifier.verifyEntrySet( metadataEntries(), 'web' );
-    }, messageContains( 'metadata entries mismatch' ) );
+        verifier.expectedRipgrepEntries( 'web' );
+    }, messageContains( 'Unsupported VSIX target' ) );
 } );
 
 QUnit.test( 'target map verifier rejects order and membership drift', async function( assert )

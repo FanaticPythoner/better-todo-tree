@@ -26,6 +26,7 @@ jobs:
       prerelease: ${{ steps.meta.outputs.prerelease }}
       release_ref: ${{ steps.meta.outputs.release_ref }}
       release_sha: ${{ steps.meta.outputs.release_sha }}
+      targets: ${{ steps.targets.outputs.targets }}
 
     steps:
       - name: Check out repository
@@ -57,6 +58,10 @@ jobs:
           REF_TYPE: ${{ github.ref_type }}
         run: bash scripts/release/resolve-release-metadata.sh
 
+      - name: Resolve platform targets
+        id: targets
+        run: echo "targets=$(node -p "JSON.stringify(require('./scripts/release/targets.json'))")" >> "$GITHUB_OUTPUT"
+
       - name: Run release test suite
         run: npm test
 
@@ -69,7 +74,7 @@ jobs:
     with:
       ref: ${{ needs.preflight.outputs.release_ref }}
       release_tag: ${{ needs.preflight.outputs.tag }}
-      targets: '["win32-x64","win32-arm64","linux-x64","linux-arm64","linux-armhf","darwin-x64","darwin-arm64","alpine-x64","alpine-arm64","web"]'
+      targets: ${{ needs.preflight.outputs.targets }}
     secrets: inherit
 
   publish:

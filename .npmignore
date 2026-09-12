@@ -1,4 +1,6 @@
 .vscode/
+.devcontainer/
+.vscodeignore
 .gitignore
 node_modules/
 src/
@@ -16,6 +18,7 @@ TODOS_LISTS/
 TODOS_LISTS/**
 .tools/
 .act-artifacts/
+.forge/
 MIGRATION.md
 OPEN_VSX_CERTIFICATE_REPORT.md
 CHANGELOG.upstream.md
