@@ -488,6 +488,8 @@ QUnit.test( 'release workflows build and publish from the resolved release ref',
 QUnit.test( 'trusted PR workflow builds every verified platform VSIX after all gates', function( assert )
 {
     var buildWorkflow = readWorkflow( 'pr-vsix-build.yml' );
+    var checkoutIndex = buildWorkflow.indexOf( '      - name: Check out immutable build context' );
+    var targetIndex = buildWorkflow.indexOf( '      - name: Resolve platform targets' );
     var testIndex = buildWorkflow.indexOf( 'run: npm test' );
     var bundleIndex = buildWorkflow.indexOf( 'run: npm run vscode:prepublish' );
     var platformBuildIndex = buildWorkflow.indexOf( 'node scripts/release/build-vsix.mjs all' );
@@ -495,10 +497,13 @@ QUnit.test( 'trusted PR workflow builds every verified platform VSIX after all g
     var uploadIndex = buildWorkflow.indexOf('name: Upload ${{ matrix.target }} VSIX');
 
     assert.ok( buildWorkflow.indexOf( 'rm -rf artifacts/vsix' ) !== -1 );
-    [ testIndex, bundleIndex, platformBuildIndex, verifyIndex, uploadIndex ].forEach( function( index )
+    [ checkoutIndex, targetIndex, testIndex, bundleIndex, platformBuildIndex, verifyIndex, uploadIndex ]
+        .forEach( function( index )
     {
         assert.ok( index >= 0 );
     } );
+    assert.ok( checkoutIndex < targetIndex );
+    assert.ok( targetIndex < testIndex );
     assert.ok( testIndex < bundleIndex );
     assert.ok( bundleIndex < platformBuildIndex );
     assert.ok( platformBuildIndex < verifyIndex );
@@ -536,6 +541,9 @@ QUnit.test( 'trusted PR workflow builds every verified platform VSIX after all g
         7
     );
     assert.ok( buildWorkflow.indexOf( 'matrix:\n        target: ${{ fromJson(needs.test-build.outputs.targets) }}' ) !== -1 );
+    var targetResolution = getWorkflowStepBlock( buildWorkflow, 'Resolve platform targets' );
+    assert.ok( targetResolution.indexOf( 'verifyTargetMap(targets);' ) !== -1 );
+    assert.ok( targetResolution.indexOf( 'fs.appendFileSync(process.env.GITHUB_OUTPUT' ) !== -1 );
     assert.ok( buildWorkflow.indexOf( 'node scripts/ci/delete-pr-vsix-staging.mjs' ) !== -1 );
 } );
 

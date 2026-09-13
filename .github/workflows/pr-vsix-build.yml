@@ -47,11 +47,6 @@ jobs:
           PR_VSIX_MERGE_INTERVAL_MS: 5000
         run: node scripts/ci/resolve-pr-vsix-context.mjs
 
-      - name: Resolve platform targets
-        id: targets
-        if: steps.context.outputs.build == 'true'
-        run: echo "targets=$(node -p "JSON.stringify(require('./scripts/release/targets.json'))")" >> "$GITHUB_OUTPUT"
-
       - name: Check out immutable build context
         if: steps.context.outputs.build == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -59,6 +54,18 @@ jobs:
           ref: ${{ steps.context.outputs.checkout-sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Resolve platform targets
+        id: targets
+        if: steps.context.outputs.build == 'true'
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { verifyTargetMap } from './scripts/ci/verify-pr-vsix.mjs';
+          const targets = JSON.parse(fs.readFileSync('scripts/release/targets.json', 'utf8'));
+          verifyTargetMap(targets);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `targets=${JSON.stringify(targets)}\n`);
+          NODE
 
       - name: Install dependencies
         if: steps.context.outputs.build == 'true'
