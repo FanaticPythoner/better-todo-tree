@@ -242,6 +242,21 @@ QUnit.module( "behavioral highlights", function( hooks )
 {
     var originalVscode;
 
+    QUnit.test( "prototype-named custom tags retain every highlight range", function( assert )
+    {
+        var harness = createActualDetectionHighlightHarness( {
+            tags: [ 'constructor', '__proto__', 'toString' ],
+            type: 'tag',
+            text: '// constructor first\n// __proto__ second\n// toString third'
+        } );
+
+        assert.equal( harness.recorded.length, 3 );
+        assert.deepEqual( harness.recorded.map( function( ranges )
+        {
+            return ranges.map( function( item ) { return item.range.start.line; } );
+        } ), [ [ 0 ], [ 1 ], [ 2 ] ] );
+    } );
+
     hooks.beforeEach( function()
     {
         originalVscode = require.cache[ require.resolve( './moduleHelpers.js' ) ];

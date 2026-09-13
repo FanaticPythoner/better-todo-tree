@@ -1,10 +1,13 @@
 var vscode = require( 'vscode' );
+var compatibility = require( './settingsCompatibility.js' );
+var settingSchemas = compatibility.getSchemas( require( '../package.json' ) );
 
-var CURRENT_NAMESPACE = 'better-todo-tree';
-var LEGACY_NAMESPACE = 'todo-tree';
+var CURRENT_NAMESPACE = compatibility.CURRENT_NAMESPACE;
+var SOURCE_NAMESPACE = compatibility.SOURCE_NAMESPACE;
+var explicitFields = [ 'globalValue', 'workspaceValue', 'workspaceFolderValue',
+    'globalLanguageValue', 'workspaceLanguageValue', 'workspaceFolderLanguageValue' ];
 
 var DISPLAY_NAME = 'Better Todo Tree';
-var LEGACY_DISPLAY_NAME = 'Todo Tree';
 var STATUS_SCAN_ICON = 'better-todo-tree';
 var STATUS_SCAN_ICON_LABEL = '$(' + STATUS_SCAN_ICON + ')';
 var STATUS_SCAN_SPIN_ICON_LABEL = '$(' + STATUS_SCAN_ICON + '~spin)';
@@ -12,7 +15,6 @@ var STATUS_SCAN_SPIN_ICON_LABEL = '$(' + STATUS_SCAN_ICON + '~spin)';
 var VIEW_CONTAINER_ID = 'todo-tree-container';
 var VIEW_ID = 'todo-tree-view';
 var EXPORT_SCHEME = 'better-todo-tree-export';
-var LEGACY_EXPORT_SCHEME = 'todotree-export';
 
 var commandSuffixes = [
     'showFlatView',
@@ -60,11 +62,6 @@ var commandSuffixes = [
     'onStatusBarClicked',
     'importLegacySettings'
 ];
-
-var legacyCommandSuffixes = commandSuffixes.filter( function( suffix )
-{
-    return suffix !== 'importLegacySettings';
-} );
 
 var contextSuffixes = [
     'show-reveal-button',
@@ -115,15 +112,7 @@ function buildContextMap( namespace, suffixes )
 }
 
 var COMMANDS = buildCommandMap( CURRENT_NAMESPACE, commandSuffixes );
-var LEGACY_COMMANDS = buildCommandMap( LEGACY_NAMESPACE, legacyCommandSuffixes );
 var CONTEXT_KEYS = buildContextMap( CURRENT_NAMESPACE, contextSuffixes );
-var LEGACY_CONTEXT_KEYS = buildContextMap( LEGACY_NAMESPACE, contextSuffixes );
-
-var COMMAND_ALIAS_MAP = Object.freeze( legacyCommandSuffixes.reduce( function( aliases, suffix )
-{
-    aliases[ LEGACY_COMMANDS[ suffix ] ] = COMMANDS[ suffix ];
-    return aliases;
-}, {} ) );
 
 function getConfiguration( namespace, uri )
 {
@@ -135,71 +124,76 @@ function inspectSetting( namespace, setting, uri )
     return getConfiguration( namespace, uri ).inspect( setting ) || {};
 }
 
-function hasExplicitValue( inspection )
+function inspectSettings( setting, uri )
 {
-    return inspection &&
-        ( inspection.workspaceFolderValue !== undefined ||
-        inspection.workspaceValue !== undefined ||
-        inspection.globalValue !== undefined );
+    var sourceConfiguration = getConfiguration( SOURCE_NAMESPACE, uri );
+    return {
+        current: inspectSetting( CURRENT_NAMESPACE, setting, uri ),
+        sources: compatibility.getSources( setting ).map( function( source )
+        {
+            return { name: source, inspection: sourceConfiguration.inspect( source ) || {} };
+        } )
+    };
+}
+
+function valueAtScope( setting, inspections, field )
+{
+    if( inspections.current[ field ] !== undefined ) { return inspections.current[ field ]; }
+    var source = inspections.sources.find( function( entry )
+    {
+        return compatibility.accepts( entry.name, setting, entry.inspection[ field ], settingSchemas.get( setting ) );
+    } );
+    return source ? compatibility.convert( source.name, source.inspection[ field ] ) : undefined;
 }
 
 function getSetting( setting, defaultValue, uri )
 {
-    var currentInspection = inspectSetting( CURRENT_NAMESPACE, setting, uri );
-    if( hasExplicitValue( currentInspection ) )
+    var inspections = inspectSettings( setting, uri );
+    var result = inspections.current.defaultValue;
+    var hasExplicit = false;
+    explicitFields.forEach( function( field )
     {
-        return getConfiguration( CURRENT_NAMESPACE, uri ).get( setting, defaultValue );
-    }
-
-    var legacyInspection = inspectSetting( LEGACY_NAMESPACE, setting, uri );
-    if( hasExplicitValue( legacyInspection ) )
-    {
-        return getConfiguration( LEGACY_NAMESPACE, uri ).get( setting, defaultValue );
-    }
-
-    return getConfiguration( CURRENT_NAMESPACE, uri ).get( setting, defaultValue );
+        if( field === 'globalLanguageValue' && inspections.current.defaultLanguageValue !== undefined )
+        {
+            result = mergeSettingValue( result, inspections.current.defaultLanguageValue );
+        }
+        var value = valueAtScope( setting, inspections, field );
+        if( value !== undefined )
+        {
+            result = mergeSettingValue( result, value );
+            hasExplicit = true;
+        }
+    } );
+    return hasExplicit ? result : getConfiguration( CURRENT_NAMESPACE, uri ).get( setting, defaultValue );
 }
 
-function getCurrentSetting( setting, defaultValue, uri )
+function mergeSettingValue( base, value )
 {
-    return getConfiguration( CURRENT_NAMESPACE, uri ).get( setting, defaultValue );
-}
-
-function getLegacySetting( setting, defaultValue, uri )
-{
-    return getConfiguration( LEGACY_NAMESPACE, uri ).get( setting, defaultValue );
+    if( !base || !value || typeof base !== 'object' || typeof value !== 'object' ||
+        Array.isArray( base ) || Array.isArray( value ) )
+    {
+        return value;
+    }
+    var result = Object.assign( Object.create( null ), base );
+    Object.keys( value ).forEach( function( key )
+    {
+        result[ key ] = mergeSettingValue( result[ key ], value[ key ] );
+    } );
+    return result;
 }
 
 function getSettingTarget( setting, uri )
 {
-    var currentInspection = inspectSetting( CURRENT_NAMESPACE, setting, uri );
-    if( currentInspection.workspaceFolderValue !== undefined )
+    var inspections = inspectSettings( setting, uri );
+    for( var index = explicitFields.length - 1; index >= 0; index-- )
     {
-        return vscode.ConfigurationTarget.WorkspaceFolder;
+        var field = explicitFields[ index ];
+        if( valueAtScope( setting, inspections, field ) !== undefined )
+        {
+            return [ vscode.ConfigurationTarget.Global, vscode.ConfigurationTarget.Workspace,
+                vscode.ConfigurationTarget.WorkspaceFolder ][ index % 3 ];
+        }
     }
-    if( currentInspection.workspaceValue !== undefined )
-    {
-        return vscode.ConfigurationTarget.Workspace;
-    }
-    if( currentInspection.globalValue !== undefined )
-    {
-        return vscode.ConfigurationTarget.Global;
-    }
-
-    var legacyInspection = inspectSetting( LEGACY_NAMESPACE, setting, uri );
-    if( legacyInspection.workspaceFolderValue !== undefined )
-    {
-        return vscode.ConfigurationTarget.WorkspaceFolder;
-    }
-    if( legacyInspection.workspaceValue !== undefined )
-    {
-        return vscode.ConfigurationTarget.Workspace;
-    }
-    if( legacyInspection.globalValue !== undefined )
-    {
-        return vscode.ConfigurationTarget.Global;
-    }
-
     return vscode.ConfigurationTarget.Global;
 }
 
@@ -210,61 +204,45 @@ function updateSetting( setting, value, target, uri )
 
 function affectsNamespace( event, namespace )
 {
-    return event.affectsConfiguration( namespace );
+    if( event.affectsConfiguration( namespace ) ) { return true; }
+    if( namespace !== CURRENT_NAMESPACE && !namespace.startsWith( CURRENT_NAMESPACE + '.' ) ) { return false; }
+    var suffix = namespace.substring( CURRENT_NAMESPACE.length );
+    return event.affectsConfiguration( SOURCE_NAMESPACE + suffix ) ||
+        Object.entries( compatibility.flatSettings ).some( function( entry )
+        {
+            return ( '.' + entry[ 1 ] ).startsWith( suffix + '.' ) &&
+                event.affectsConfiguration( SOURCE_NAMESPACE + '.' + entry[ 0 ] );
+        } );
 }
 
 function affectsSetting( event, setting )
 {
     return event.affectsConfiguration( CURRENT_NAMESPACE + '.' + setting ) ||
-        event.affectsConfiguration( LEGACY_NAMESPACE + '.' + setting );
+        compatibility.getSources( setting ).some( function( source )
+        {
+            return event.affectsConfiguration( SOURCE_NAMESPACE + '.' + source );
+        } );
 }
 
 function getManifestSettingSuffixes( packageJson )
 {
-    var configurationGroups = packageJson &&
-        packageJson.contributes &&
-        Array.isArray( packageJson.contributes.configuration ) ?
-        packageJson.contributes.configuration :
-        [];
-
-    var prefix = CURRENT_NAMESPACE + '.';
-
-    return configurationGroups.reduce( function( settings, group )
-    {
-        Object.keys( group.properties || {} ).forEach( function( key )
-        {
-            if( key.indexOf( prefix ) === 0 )
-            {
-                settings.push( key.substring( prefix.length ) );
-            }
-        } );
-
-        return settings;
-    }, [] );
+    return Array.from( compatibility.getSchemas( packageJson ).keys() );
 }
 
 module.exports.CURRENT_NAMESPACE = CURRENT_NAMESPACE;
-module.exports.LEGACY_NAMESPACE = LEGACY_NAMESPACE;
+module.exports.SOURCE_NAMESPACE = SOURCE_NAMESPACE;
 module.exports.DISPLAY_NAME = DISPLAY_NAME;
-module.exports.LEGACY_DISPLAY_NAME = LEGACY_DISPLAY_NAME;
 module.exports.STATUS_SCAN_ICON = STATUS_SCAN_ICON;
 module.exports.STATUS_SCAN_ICON_LABEL = STATUS_SCAN_ICON_LABEL;
 module.exports.STATUS_SCAN_SPIN_ICON_LABEL = STATUS_SCAN_SPIN_ICON_LABEL;
 module.exports.VIEW_CONTAINER_ID = VIEW_CONTAINER_ID;
 module.exports.VIEW_ID = VIEW_ID;
 module.exports.EXPORT_SCHEME = EXPORT_SCHEME;
-module.exports.LEGACY_EXPORT_SCHEME = LEGACY_EXPORT_SCHEME;
 module.exports.COMMANDS = COMMANDS;
-module.exports.LEGACY_COMMANDS = LEGACY_COMMANDS;
 module.exports.CONTEXT_KEYS = CONTEXT_KEYS;
-module.exports.LEGACY_CONTEXT_KEYS = LEGACY_CONTEXT_KEYS;
-module.exports.COMMAND_ALIAS_MAP = COMMAND_ALIAS_MAP;
 module.exports.getConfiguration = getConfiguration;
 module.exports.inspectSetting = inspectSetting;
-module.exports.hasExplicitValue = hasExplicitValue;
 module.exports.getSetting = getSetting;
-module.exports.getCurrentSetting = getCurrentSetting;
-module.exports.getLegacySetting = getLegacySetting;
 module.exports.getSettingTarget = getSettingTarget;
 module.exports.updateSetting = updateSetting;
 module.exports.affectsNamespace = affectsNamespace;

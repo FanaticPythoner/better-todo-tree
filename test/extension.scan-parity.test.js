@@ -630,7 +630,7 @@ function createVscodeStub( options )
     ThemeIcon.Folder = new ThemeIcon( 'folder' );
     ThemeIcon.File = new ThemeIcon( 'file' );
 
-    return {
+    var vscodeStub = {
         commandHandlers: commandHandlers,
         workspaceListeners: workspaceListeners,
         windowListeners: windowListeners,
@@ -733,6 +733,16 @@ function createVscodeStub( options )
         },
         window: {
             visibleTextEditors: options.visibleTextEditors || [],
+            tabGroups: {
+                get all()
+                {
+                    var uris = options.openTabUris || vscodeStub.workspace.textDocuments.concat(
+                        vscodeStub.window.visibleTextEditors.map( function( editor ) { return editor.document; } )
+                    ).map( function( document ) { return document.uri; } );
+                    return [ { tabs: uris.map( function( uri ) { return { input: { uri: uri } }; } ) } ];
+                },
+                onDidChangeTabs: function( listener ) { return registerListener( windowListeners, 'tabs', listener ); }
+            },
             activeTextEditor: options.activeTextEditor,
             activeNotebookEditor: activeNotebookEditor,
             visibleNotebookEditors: visibleNotebookEditors,
@@ -868,7 +878,17 @@ function createVscodeStub( options )
             },
             notebookDocuments: options.notebookDocuments || [],
             onDidSaveTextDocument: function( listener ) { return registerListener( workspaceListeners, 'save', listener ); },
-            onDidOpenTextDocument: function( listener ) { return registerListener( workspaceListeners, 'open', listener ); },
+            onDidOpenTextDocument: function( listener )
+            {
+                return registerListener( workspaceListeners, 'open', function( document )
+                {
+                    if( vscodeStub.workspace.textDocuments.indexOf( document ) === -1 )
+                    {
+                        vscodeStub.workspace.textDocuments.push( document );
+                    }
+                    return listener( document );
+                } );
+            },
             onDidCloseTextDocument: function( listener ) { return registerListener( workspaceListeners, 'close', listener ); },
             onDidOpenNotebookDocument: function( listener ) { return registerListener( workspaceListeners, 'openNotebook', listener ); },
             onDidChangeNotebookDocument: function( listener ) { return registerListener( workspaceListeners, 'changeNotebook', listener ); },
@@ -887,6 +907,7 @@ function createVscodeStub( options )
             }
         }
     };
+    return vscodeStub;
 }
 
 function createExtensionHarness( options )
@@ -913,6 +934,11 @@ function createExtensionHarness( options )
     };
 
     var vscodeStub = createVscodeStub( options );
+    var getHarnessConfiguration = vscodeStub.workspace.getConfiguration;
+    vscodeStub.workspace.getConfiguration = function( section, uri )
+    {
+        return section === 'todo-tree' ? createConfigurationSection( {} ) : getHarnessConfiguration( section, uri );
+    };
     var identityStub = helpers.loadWithStubs( '../src/extensionIdentity.js', {
         vscode: vscodeStub
     } );
@@ -1267,7 +1293,11 @@ function createExtensionHarness( options )
             validateIconColours: function() { return undefined; }
         },
         './icons.js': {
-            validateIcons: function() { return undefined; }
+            validateIcons: function() { return undefined; },
+            resetCaches: function()
+            {
+                if( options.resetIconCaches ) { options.resetIconCaches(); }
+            }
         },
         './highlights.js': {
             init: function() {},
@@ -1429,14 +1459,23 @@ function createExtensionHarness( options )
                     }
                     return Promise.resolve( options.fileContents[ filePath ] );
                 },
-                readdir: function() { return Promise.resolve( [] ); },
-                unlink: function() { return Promise.resolve(); }
+                readdir: function( folder )
+                {
+                    return options.cacheReaddir ? options.cacheReaddir( folder ) : Promise.resolve( [] );
+                },
+                unlink: function( file )
+                {
+                    return options.cacheUnlink ? options.cacheUnlink( file ) : Promise.resolve();
+                }
             }
         },
-        treeify: { asTree: function() { return ''; } },
         child_process: {
             execFile: function( executable, args, execOptions, callback )
             {
+                if( options.execFileImpl )
+                {
+                    return options.execFileImpl( executable, args, execOptions, callback );
+                }
                 callback( null, 'head', '' );
             }
         }
@@ -1455,6 +1494,7 @@ function createExtensionHarness( options )
 
     return {
         extension: extension,
+        config: configStub,
         context: context,
         options: options,
         get provider()
@@ -1642,6 +1682,51 @@ function fireVisibleNotebookEditorsChanged( harness, notebooksToShow, activeNote
 
 QUnit.module( "extension scan parity" );
 
+[ false, true ].forEach( function( combined )
+{
+    QUnit.test( "regex configuration changes refresh existing editors" + ( combined ? " with tag groups" : "" ), async function( assert )
+    {
+        var document = matrixHelpers.createDocument( '/workspace/regex-change.js', '// TODO first\n// FIXME second' );
+        var order = [];
+        var changed = false;
+        var harness = createExtensionHarness( {
+            scanMode: 'open files',
+            resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+            visibleTextEditors: [ { document: document } ],
+            fileContents: {},
+            scanDocumentImpl: function()
+            {
+                order.push( 'scan' );
+                return [ { uri: document.uri, actualTag: changed ? 'FIXME' : 'TODO',
+                    displayText: changed ? 'second' : 'first', continuationText: [] } ];
+            }
+        } );
+        harness.config.refreshTagGroupLookup = function() { order.push( 'groups' ); };
+        harness.extension.activate( harness.context );
+        await matrixHelpers.flushAsyncWork();
+        var previousHighlights = harness.highlightCalls.length;
+        order.length = 0;
+        changed = true;
+        var settings = [ 'better-todo-tree', 'better-todo-tree.regex', 'better-todo-tree.regex.regex' ];
+        if( combined )
+        {
+            settings.push( 'better-todo-tree.general.tagGroups', 'better-todo-tree.highlights.customHighlight' );
+        }
+        harness.vscode.workspaceListeners.configuration( {
+            affectsConfiguration: function( name ) { return settings.indexOf( name ) !== -1; }
+        } );
+        await matrixHelpers.flushAsyncWork();
+        assert.ok( order.indexOf( 'scan' ) >= 0, 'existing document rescanned' );
+        assert.ok( harness.highlightCalls.length > previousHighlights, 'existing editor redecorated' );
+        assert.equal( harness.provider.replaceCalls.slice( -1 )[ 0 ].results[ 0 ].actualTag, 'FIXME' );
+        if( combined )
+        {
+            assert.equal( order[ 0 ], 'groups', 'group lookup refresh precedes rescanning' );
+        }
+        harness.extension.deactivate();
+    } );
+} );
+
 QUnit.test( "issue #41 total status bar uses status counts and activity badge uses activity counts", function( assert )
 {
     var harness = createExtensionHarness( {
@@ -1759,6 +1844,54 @@ QUnit.test( "open-files mode stores canonical document results through the refre
         assert.equal( harness.scanDocumentCalls.length, 1 );
         assert.equal( harness.scanDocumentCalls[ 0 ].fileName, '/tmp/open.js' );
         assert.deepEqual( harness.provider.replaceCalls[ 0 ].results, fixture );
+    } );
+} );
+
+QUnit.test( "open-files scan excludes cached documents without tabs and retains hidden tabs", function( assert )
+{
+    var hidden = matrixHelpers.createDocument( '/tmp/hidden-tab.js', '// TODO hidden tab' );
+    var cached = matrixHelpers.createDocument( '/tmp/closed-tab.js', '// TODO closed tab' );
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        textDocuments: [ hidden, cached ],
+        openTabUris: [ hidden.uri ],
+        visibleTextEditors: [],
+        documentResults: [],
+        fileContents: {}
+    } );
+    harness.extension.activate( harness.context );
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.deepEqual( harness.scanDocumentCalls.map( function( document ) { return document.fileName; } ),
+            [ '/tmp/hidden-tab.js' ] );
+    } );
+} );
+
+QUnit.test( "closing the final tab clears open-files results before document disposal", function( assert )
+{
+    var document = matrixHelpers.createDocument( '/tmp/last-tab.js', '// TODO last tab' );
+    var tabs = [ document.uri ];
+    var harness = createExtensionHarness( {
+        scanMode: 'open files',
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        textDocuments: [ document ],
+        openTabUris: tabs,
+        visibleTextEditors: [],
+        documentResults: [ { uri: document.uri, actualTag: 'TODO', displayText: 'last tab', continuationText: [] } ],
+        fileContents: {}
+    } );
+    harness.extension.activate( harness.context );
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        assert.equal( harness.provider.latestResultsByUri.size, 1 );
+        tabs.length = 0;
+        harness.windowListeners.tabs( { opened: [], changed: [], closed: [ { input: { uri: document.uri } } ] } );
+        return waitForDelay( 0 ).then( matrixHelpers.flushAsyncWork );
+    } ).then( function()
+    {
+        assert.equal( harness.provider.latestResultsByUri.size, 0 );
+        assert.equal( harness.scanDocumentCalls.length, 1 );
     } );
 } );
 
@@ -4965,6 +5098,49 @@ QUnit.test( "registered command boundary uses manifest titles for operation name
     } );
 } );
 
+[ false, true ].forEach( function( failDeletion )
+{
+    QUnit.test( 'cache reset waits for deletions before invalidation, failure=' + failDeletion, async function( assert )
+    {
+        var delayed = createDeferred();
+        var resets = 0;
+        var completed = false;
+        var failure = new Error( 'icon deletion denied' );
+        var harness = createExtensionHarness( {
+            scanMode: 'open files', scanAtStartup: false, fileContents: {},
+            resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+            resetIconCaches: function() { resets += 1; },
+            cacheReaddir: function( folder )
+            {
+                return Promise.resolve( folder === '/tmp/global-storage' ? [ 'first.svg', 'last.svg' ] : [] );
+            },
+            cacheUnlink: function( file )
+            {
+                if( file.endsWith( 'last.svg' ) ) { return delayed.promise; }
+                return failDeletion ? Promise.reject( failure ) : Promise.resolve();
+            }
+        } );
+        await harness.extension.activate( harness.context );
+        await matrixHelpers.flushAsyncWork();
+        var operation = harness.vscode.commandHandlers[ 'better-todo-tree.resetCache' ]().then( function()
+        {
+            assert.notOk( failDeletion, 'successful reset resolves' );
+        }, function( error )
+        {
+            assert.ok( failDeletion, 'failed deletion rejects' );
+            assert.strictEqual( error.errors[ 0 ].errors[ 0 ], failure );
+            assert.strictEqual( error.reportedToUser, true );
+        } ).then( function() { completed = true; } );
+        await matrixHelpers.flushAsyncWork();
+        assert.strictEqual( resets, 0, 'invalidation waits for every deletion' );
+        assert.strictEqual( completed, false, 'command waits for every deletion' );
+        delayed.resolve();
+        await operation;
+        assert.strictEqual( resets, 1, 'completed deletions invalidate paths on success and failure' );
+        harness.extension.deactivate();
+    } );
+} );
+
 QUnit.test( "registered command boundary reports setting write failures once", function( assert )
 {
     var harness = createExtensionHarness( {
@@ -5276,6 +5452,42 @@ QUnit.test( "deactivation cancels scheduled work and disposes activation-owned r
     } );
 } );
 
+QUnit.test( "Git callbacks from a disposed activation preserve the new activation guard", function( assert )
+{
+    var timers = createControlledTimers();
+    var callbacks = [];
+    var harness = createExtensionHarness( {
+        scanMode: 'open files', scanAtStartup: false,
+        automaticGitRefreshInterval: 1, timerStubs: timers,
+        workspaceFolders: [ { uri: matrixHelpers.createUri( '/workspace' ), name: 'workspace' } ],
+        resourceConfig: { isDefaultRegex: true, enableMultiLine: false, regexCaseSensitive: true },
+        fileContents: {},
+        execFileImpl: function( executable, args, options, callback ) { callbacks.push( callback ); }
+    } );
+
+    harness.extension.activate( harness.context );
+    return matrixHelpers.flushAsyncWork().then( function()
+    {
+        timers.intervals[ 0 ].callback();
+        harness.extension.deactivate();
+        harness.extension.activate( harness.context );
+        return matrixHelpers.flushAsyncWork();
+    } ).then( function()
+    {
+        var newInterval = timers.intervals[ timers.intervals.length - 1 ];
+        newInterval.callback();
+        assert.equal( callbacks.length, 2 );
+        callbacks[ 0 ]( null, 'old-head', '' );
+        newInterval.callback();
+        assert.equal( callbacks.length, 2, 'the new Git poll remains in flight' );
+        callbacks[ 1 ]( null, 'new-head', '' );
+        newInterval.callback();
+        assert.equal( callbacks.length, 3, 'the completed new poll permits another request' );
+        callbacks[ 2 ]( null, 'new-head', '' );
+        harness.extension.deactivate();
+    } );
+} );
+
 QUnit.test( "deactivation settles pending tree UI work without touching the disposed view", function( assert )
 {
     var harness = createExtensionHarness( {
@@ -5296,7 +5508,7 @@ QUnit.test( "deactivation settles pending tree UI work without touching the disp
     } );
 } );
 
-QUnit.test( "markdown migration writes the shared default regex source", function( assert )
+QUnit.test( "explicit historical markdown regex remains unchanged without migration prompts", function( assert )
 {
     var harness = createExtensionHarness( {
         scanMode: 'open files',
@@ -5318,14 +5530,10 @@ QUnit.test( "markdown migration writes the shared default regex source", functio
         return matrixHelpers.flushAsyncWork();
     } ).then( function()
     {
-        assert.deepEqual( harness.vscode.informationMessages, [
-            'Better Todo Tree: There is now an improved method of locating markdown TODOs. Apply settings automatically?'
-        ] );
-        assert.ok( harness.vscode.configurationUpdates.some( function( update )
+        assert.deepEqual( harness.vscode.informationMessages, [] );
+        assert.notOk( harness.vscode.configurationUpdates.some( function( update )
         {
-            return update.key === 'regex.regex' &&
-                update.value === actualUtils.DEFAULT_REGEX_SOURCE &&
-                update.target === harness.vscode.ConfigurationTarget.Global;
+            return update.key === 'regex.regex';
         } ) );
     } );
 } );

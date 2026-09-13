@@ -1,0 +1,27 @@
+name: Better Todo Tree native workbench
+version: "1.0"
+base_url: "http://127.0.0.1"
+plugins:
+  directories: [./plugins]
+executor:
+  name: native_vscode
+  options:
+    code: /usr/bin/code
+    vsix: TODOS_LISTS/qa-pr178-todo-tree-settings/vsix-final/better-todo-tree-settings-final-linux-x64.vsix
+permutation:
+  mode: explicit
+flows:
+  - id: native_smoke
+    concepts: [installed_editor]
+concepts:
+  - id: installed_editor
+    actions:
+      - id: observe
+        type: native_inspect
+execution:
+  parallel: false
+  reuse_context: true
+  retry_failed: 0
+  timeout_per_flow: 120
+report:
+  formats: [console, json, data, html, junit]

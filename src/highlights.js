@@ -343,8 +343,8 @@ function highlight( editor )
         addDecorationRange( tag, startPos, endPos );
     }
 
-    var documentHighlights = {};
-    var subTagHighlights = {};
+    var documentHighlights = Object.create( null );
+    var subTagHighlights = Object.create( null );
     if( editor )
     {
         var id = editorId( editor );

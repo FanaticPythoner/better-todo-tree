@@ -44,7 +44,6 @@ QUnit.test( '.npmignore excludes local workflow tooling and keeps dist package r
         '.devcontainer/',
         '.vscodeignore',
         'webpack.config.js',
-        'buildCodiconNames.js',
         'Better.TODO.Tree.settings.txt'
     ].forEach( function( entry )
     {

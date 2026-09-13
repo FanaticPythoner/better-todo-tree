@@ -841,7 +841,7 @@ QUnit.test( '.vscodeignore excludes the upstream clone, test fixtures, build too
     assert.ok( lines.indexOf( 'TODOS_LISTS/' ) !== -1, '.vscodeignore lists `TODOS_LISTS/`' );
     assert.ok( lines.indexOf( '.github/' ) !== -1, '.vscodeignore lists `.github/`' );
     assert.ok( lines.indexOf( '.tools/' ) !== -1, '.vscodeignore lists `.tools/` (upstream clone cache)' );
-    assert.ok( lines.indexOf( 'buildCodiconNames.js' ) !== -1, '.vscodeignore lists `buildCodiconNames.js` (build-time tool, not needed at runtime)' );
+    assert.ok( lines.indexOf( 'scripts/' ) !== -1, '.vscodeignore excludes build-time scripts' );
     assert.ok( lines.indexOf( 'old-*.js' ) !== -1, '.vscodeignore lists `old-*.js` (pre-refactor scratch files never ship)' );
     assert.ok( lines.indexOf( '*.bak' ) !== -1, '.vscodeignore lists `*.bak` (editor backups never ship)' );
     assert.ok( lines.indexOf( '*~' ) !== -1, '.vscodeignore lists `*~` (editor backups never ship)' );

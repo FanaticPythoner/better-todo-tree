@@ -229,6 +229,92 @@ QUnit.module( "behavioral tree", function()
         assert.equal( provider._onDidChangeTreeData.disposeCalls, 1 );
     } );
 
+    QUnit.test( "prototype-named tags keep numeric counts through document replacement", function( assert )
+    {
+        var tags = [ 'constructor', '__proto__', 'toString' ];
+        var tree = loadTreeModule( createConfig( { tags: function() { return tags; } } ) );
+        var provider = new tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+        var results = tags.map( function( tag, index )
+        {
+            var result = createResult( '/tmp/reserved.js', tag, 'item' );
+            result.line = index + 1;
+            return result;
+        } );
+
+        provider.clear( [] );
+        provider.replaceDocument( results[ 0 ].uri, results );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+
+        [ provider.getTagCountsForStatusBar(), provider.getTagCountsForActivityBar() ].forEach( function( counts )
+        {
+            assert.deepEqual( Object.keys( counts ).sort(), tags.slice().sort() );
+            tags.forEach( function( tag ) { assert.strictEqual( counts[ tag ], 1 ); } );
+        } );
+
+        provider.replaceDocument( results[ 0 ].uri, [] );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+        assert.deepEqual( provider.getTagCountsForStatusBar(), {} );
+        assert.deepEqual( provider.getTagCountsForActivityBar(), {} );
+        provider.dispose();
+    } );
+
+    QUnit.test( "prototype-named file labels survive JSON export", function( assert )
+    {
+        var tree = loadTreeModule( createConfig() );
+        var provider = new tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+        var result = createResult( '/tmp/__proto__', 'TODO', 'retained export' );
+
+        provider.clear( [] );
+        provider.replaceDocument( result.uri, [ result ] );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+
+        var exported = JSON.parse( JSON.stringify( provider.exportTree() ) );
+        assert.true( Object.prototype.hasOwnProperty.call( exported, '__proto__' ) );
+        assert.equal( exported[ '__proto__' ][ 'line 3' ], 'TODO retained export' );
+        provider.dispose();
+    } );
+
+    QUnit.test( "JSON exports retain distinct matches on the same line", function( assert )
+    {
+        [ false, true ].forEach( function( tagsOnly )
+        {
+            var tree = loadTreeModule( createConfig( { shouldShowTagsOnly: function() { return tagsOnly; } } ) );
+            var provider = new tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+            var first = createResult( '/tmp/a.js', 'TODO', 'first' );
+            var second = createResult( '/tmp/a.js', 'FIXME', 'second' );
+            second.column = 17;
+            provider.clear( [] );
+            provider.replaceDocument( first.uri, [ first, second ] );
+            provider.finalizePendingChanges( undefined, { fullSort: true } );
+            var exported = JSON.parse( JSON.stringify( provider.exportTree() ) );
+            var items = tagsOnly ? exported : exported[ 'a.js' ];
+            var prefix = tagsOnly ? '/tmp/a.js ' : '';
+
+            assert.equal( Object.keys( items ).length, 2 );
+            assert.equal( items[ prefix + 'line 3, column 5' ], 'TODO first' );
+            assert.equal( items[ prefix + 'line 3, column 17' ], 'FIXME second' );
+            provider.dispose();
+        } );
+    } );
+
+    QUnit.test( "JSON exports retain notebook cells sharing line and column coordinates", function( assert )
+    {
+        var tree = loadTreeModule( createConfig() );
+        var provider = new tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+        var first = createResult( '/tmp/a.ipynb', 'TODO', 'first cell' );
+        var second = createResult( '/tmp/a.ipynb', 'TODO', 'second cell' );
+        first.sourceId = 'cell-1';
+        second.sourceId = 'cell-2';
+        provider.clear( [] );
+        provider.replaceDocument( first.uri, [ first, second ] );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+        var items = JSON.parse( JSON.stringify( provider.exportTree() ) )[ 'a.ipynb' ];
+        assert.equal( Object.keys( items ).length, 2 );
+        assert.equal( items[ 'line 3, column 5, source cell-1' ], 'TODO first cell' );
+        assert.equal( items[ 'line 3, column 5, source cell-2' ], 'TODO second cell' );
+        provider.dispose();
+    } );
+
     QUnit.test( "issue #888 renders the multiline banner match as a single tree label", function( assert )
     {
         var configStub = createConfig( {

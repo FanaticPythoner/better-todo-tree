@@ -1,0 +1,23 @@
+[
+  {
+    "source": "\\.ts$",
+    "flags": "",
+    "file": "webpack.config.js",
+    "removedConsumer": "ts-loader",
+    "reason": "TypeScript loader removed from the JavaScript-only build."
+  },
+  {
+    "source": "node_modules",
+    "flags": "",
+    "file": "webpack.config.js",
+    "removedConsumer": "ts-loader",
+    "reason": "TypeScript loader exclusion removed with its loader."
+  },
+  {
+    "source": "[^0-9a-zA-Z]",
+    "flags": "g",
+    "file": "src/icons.js",
+    "removedConsumer": "compactColourName",
+    "reason": "Generated icon filenames use the SVG content digest instead of lossy color sanitization."
+  }
+]

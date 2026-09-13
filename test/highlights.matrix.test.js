@@ -125,6 +125,13 @@ function createHarness( options )
                 return { dark: '/tmp/gutter.svg', light: '/tmp/gutter.svg' };
             }
         },
+        './extensionIdentity.js': {
+            getSetting: function( key, defaultValue )
+            {
+                var values = { 'highlights.enabled': true, 'highlights.highlightDelay': 0 };
+                return Object.prototype.hasOwnProperty.call( values, key ) ? values[ key ] : defaultValue;
+            }
+        },
         './detection.js': {
             scanDocument: function()
             {

@@ -273,7 +273,7 @@ function loadModule( relativePath, stubs )
             return loadModule( path.posix.join( path.posix.dirname( normalized ), request ) );
         }
 
-        return require( request );
+        return upstreamModule.require( request );
     }
 
     var compiled = compileWrapper( source, syntheticPath );
@@ -310,10 +310,20 @@ function loadCompiledBundle( stubs )
         {
             return stubs[ request ];
         }
-        return require( request );
+        return bundleModule.require( request );
     }
 
-    var compiled = vm.runInThisContext( Module.wrap( source ), { filename: bundlePath } );
+    var compiled = vm.runInNewContext( Module.wrap( source ), {
+        Buffer: Buffer,
+        console: console,
+        process: process,
+        setTimeout: setTimeout,
+        clearTimeout: clearTimeout,
+        setInterval: setInterval,
+        clearInterval: clearInterval,
+        setImmediate: setImmediate,
+        clearImmediate: clearImmediate
+    }, { filename: bundlePath } );
     compiled.call( bundleModule.exports, bundleModule.exports, bundleRequire, bundleModule, bundlePath, path.dirname( bundlePath ) );
 
     if( hasStubs !== true )

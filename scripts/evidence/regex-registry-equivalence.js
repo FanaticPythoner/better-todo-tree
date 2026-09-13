@@ -84,6 +84,7 @@ function renderMarkdown( payload )
         '| Registry fragments | ' + metrics.registryFragments + ' |',
         '| Registry patterns | ' + metrics.registryPatterns + ' |',
         '| Source coverage | ' + metrics.sourceCoverageCovered + '/' + metrics.sourceCoverageTotal + ' |',
+        '| Removed consumers | ' + metrics.sourceCoverageRetired + ' |',
         '| Behavior parity | ' + metrics.behaviorParityPassed + '/' + metrics.behaviorParityTotal + ' |',
         '| Compiled baseline regexes | ' + metrics.compiledBaselineRegexes + '/' + metrics.baselineUniqueRegexes + ' |',
         '| Elapsed ms | ' + metrics.elapsedMs + ' |',
@@ -125,6 +126,12 @@ function renderMarkdown( payload )
         } );
     }
 
+    lines.push( '', '## Removed Consumers', '', '| Source | Baseline refs | Reason |', '| --- | --- | --- |' );
+    payload.sourceCoverage.retired.forEach( function( row )
+    {
+        lines.push( '| `' + escapeMarkdownCode( row.source ) + '` | ' +
+            row.baselineRefs.join( ', ' ) + ' | ' + row.retirement + ' |' );
+    } );
     lines.push( '' );
     return lines.join( '\n' );
 }
@@ -142,6 +149,11 @@ function main()
     fs.writeFileSync( options.jsonPath, JSON.stringify( payload, null, 2 ) + '\n' );
     fs.writeFileSync( options.markdownPath, renderMarkdown( payload ) );
     process.stdout.write( JSON.stringify( payload.metrics, null, 2 ) + '\n' );
+    if( payload.currentHardcodedRegexEntries.length > 0 ||
+        payload.sourceCoverage.missing.length > 0 || payload.behaviorParity.failures.length > 0 )
+    {
+        process.exitCode = 1;
+    }
 }
 
 if( require.main === module )

@@ -3,56 +3,55 @@
 ## Extension Identity
 
 - New public extension ID: `FanaticPythoner.better-todo-tree`
-- Legacy public extension ID: `Gruntfuggly.todo-tree`
-- Stable hidden view IDs kept for layout compatibility:
+- Source extension ID: `Gruntfuggly.todo-tree`
+- View IDs:
   - `todo-tree-container`
   - `todo-tree-view`
 
-## Settings Compatibility
+## Todo Tree settings compatibility
 
-Better Todo Tree keeps both configuration namespaces in the manifest during the `0.x` line:
+Todo Tree settings are supported directly. Activation reads configuration without rewriting settings files.
 
-- current namespace: `better-todo-tree.*`
-- legacy namespace: `todo-tree.*`
+| Contract | Behavior |
+| --- | --- |
+| Recognized settings | `better-todo-tree.*`, grouped `todo-tree.*`, historical flat Todo Tree keys |
+| Live edits | Changes under either namespace refresh the affected scanners, highlights and tree controls |
+| Scope | User, workspace, workspace folder and language overrides |
+| Precedence | VS Code scope order; at the same scope: explicit current setting, grouped Todo Tree setting, historical flat key |
+| Empty values | Explicit `false`, `0`, empty arrays and empty objects remain configured values |
+| Object inheritance | Properties merge across scopes using VS Code object-setting semantics |
+| Palette | `highlights.useColourScheme` defaults to `false` under both namespaces |
+| Import command | `Better Todo Tree: Import Todo Tree Settings` copies recognized source values into unset destinations at the original scope |
+| Source preservation | Import preserves every source key, unknown setting, retained historical setting and unrelated setting |
+| Language import | Exact single-language and combined-language selector blocks remain intact |
+| Failed write | Typed error; source retained; destination propagation verified before completion |
+| Retry | Existing destination values remain intact; repeated import performs no writes |
+| New workspace folder | Todo Tree settings work immediately; manual import includes the added folder |
 
-Runtime reads resolve in this order:
+Explicit import creates `better-todo-tree.*` overrides. Subsequent Todo Tree edits follow the same
+scope and namespace precedence rules.
 
-1. explicit `better-todo-tree.*` value
-2. explicit `todo-tree.*` value
-3. current default
+| Historical setting | Current behavior |
+| --- | --- |
+| `todo-tree.tree.showTagsFromOpenFilesOnly` | Maps `true` to `open files`, `false` to `workspace` |
+| `todo-tree.tree.showScanOpenFilesOrWorkspaceButton` | Maps to `tree.buttons.scanMode` |
+| `todo-tree.highlights.schemes` | Maps to `general.schemes` |
+| `todo-tree.general.enableFileWatcher` | Enables external-file refresh in workspace scan modes |
+| `todo-tree.general.fileWatcherGlob` | Selects file events that trigger the optional watcher |
+| `todo-tree.ripgrep.ripgrepMaxBuffer`, `todo-tree.ripgrepMaxBuffer` | Preserved; streaming output has no aggregate output buffer |
+| `todo-tree.tree.showInExplorer` | Preserved; VS Code owns view placement through Move View |
 
-All writes go to `better-todo-tree.*`.
+Extension storage owned by `Gruntfuggly.todo-tree` is separate from settings and is not read or copied.
+Setting aliases are generated from current schemas by `npm run settings:sync` and checked during packaging.
 
-On activation, the extension copies legacy `todo-tree.*` values into the matching `better-todo-tree.*` key at the same scope when the new key is unset. Supported scopes:
+## Commands and exports
 
-- Global
-- Workspace
-- Workspace Folder
-
-Manual re-import command:
-
-- `Better Todo Tree: Import Legacy Settings`
-
-## Command Compatibility
-
-All legacy `todo-tree.*` command IDs remain registered as hidden aliases to the rebranded command handlers. Existing keybindings, macros, and scripts keep working while public menus and the command palette expose the `better-todo-tree.*` IDs.
-
-## Export Compatibility
-
-Both export schemes are registered:
-
-- current: `better-todo-tree-export:`
-- legacy: `todotree-export:`
-
-## Non-Portable State
-
-Extension storage keyed by the old extension identifier is not migrated. The compatibility guarantee covers:
-
-- settings
-- public command IDs
-- stable hidden view/container IDs
-
-It does not cover old extension-local cache state or global/workspace mementos stored under the previous publisher/name.
+- Command IDs: `better-todo-tree.*`.
+- Export scheme: `better-todo-tree-export:`.
+- Removed command aliases: `todo-tree.*`.
+- Removed export alias: `todotree-export:`.
+- Existing keybindings and macros must reference the current command IDs.
+- View identifiers remain `todo-tree-container` and `todo-tree-view`.
 
 ## GitHub Release Environment
 

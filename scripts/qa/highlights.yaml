@@ -1,0 +1,45 @@
+name: Better Todo Tree native highlight matrix
+version: "1.0"
+base_url: "http://127.0.0.1"
+plugins:
+  directories: [./plugins]
+executor:
+  name: native_vscode
+  options:
+    code: /usr/bin/code
+    await_initial_highlight: true
+    vsix: TODOS_LISTS/qa-pr178-todo-tree-settings/vsix-final/better-todo-tree-settings-final-linux-x64.vsix
+parameters:
+  - id: theme
+    type: enum
+    values: [dark, light, high_contrast_dark, high_contrast_light]
+  - id: mode
+    type: enum
+    values: [tag, text, tag-and-comment, tag-and-subTag, text-and-comment, line, whole-line, 'capture-groups:1,3', none]
+  - id: profile
+    type: enum
+    values: [default_opt_in, explicit_off, scheme_on, background, rich, theme, disabled, codicons]
+permutation:
+  mode: full
+concepts:
+  - id: rendered_highlights
+    actions:
+      - id: observe
+        type: native_highlight
+        extract:
+          expected_ui: expected
+          actual_ui: actual
+      - id: compare
+        type: qa_validate_ui
+        params:
+          mode: deterministic
+          expected: "${expected_ui}"
+          actual: "${actual_ui}"
+execution:
+  parallel: false
+  reuse_context: true
+  retry_failed: 0
+  fail_fast: false
+  timeout_per_flow: 60
+report:
+  formats: [console, json, data, html, junit]

@@ -1,0 +1,5 @@
+{
+    // Todo Tree configuration retained.
+    "todo-tree.regex.regex": "(TODO_FIRST)",
+    "[python]": {"todo-tree.regex.regex": "(PYTHON_FIRST)"},
+}

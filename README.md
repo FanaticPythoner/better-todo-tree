@@ -88,7 +88,7 @@ Highlighting tags is configurable. Use `defaultHighlight` to set up highlights f
 
 Custom highlights can also be specified for sub tags (if used).
 
-<sup>*Note: `defaultHighlight` is not applied to sub tags.*</sup>
+Subtags require a matching `customHighlight` entry. Omitted attributes inherit `defaultHighlight`.
 
 Both `defaultHighlight` and `customHighlight` allow for the following settings:
 
@@ -114,7 +114,7 @@ Both `defaultHighlight` and `customHighlight` allow for the following settings:
 
 `gutterIcon` - set to true to show the icon in the editor gutter.
 
-<sup>*Note: Unfortunately, only octicons and the better-todo-tree icon can be displayed in the gutter.*</sup>
+Octicons, codicons, and the Better Todo Tree icon can be displayed in the gutter. Gutter codicons use bundled default SVG shapes. Product icon themes control the tree icons.
 
 `rulerColour` - used to set the colour of the marker in the overview ruler. If not specified, it will default to use the foreground colour. Colour can be specified as per foreground and background colours.
 
@@ -129,12 +129,12 @@ Both `defaultHighlight` and `customHighlight` allow for the following settings:
 - `tag` - highlights just the tag
 - `text` - highlights the tag and any text after the tag
 - `tag-and-comment` - highlights the comment characters (or the start of the match) and the tag
-- `tag-and-subTag` - as above, but allows the sub tag to be highlight too (with colours defined in custom highlights)
+- `tag-and-subTag` - highlights the tag and a subtag with a matching custom highlight
 - `text-and-comment` - highlights the comment characters (or the start of the match), the tag and the text after the tag
 - `line` - highlights the entire line containing the tag
 - `whole-line` - highlights the entire line containing the tag to the full width of the editor
 - `capture-groups:n,m...` - highlights capture groups from the regex, where 'n' is the index into the regex
-- `none` - disable highlightling in the document
+- `none` - disables highlighting in the document
 
 `hideFromTree` - used to hide tags from the tree, but still highlight in files
 
@@ -301,6 +301,9 @@ This treats any of `FIXME`, `FIXIT` or `FIX` as `FIXME`. When the tree is groupe
 
 <sup>*Note: all tags in the group should also appear in `better-todo-tree.general.tags`.*</sup>
 
+VS Code omits the exact `__proto__` object key from its configuration API.
+Assign that tag to a named group such as `PrototypeMarker`, then configure the group in `customHighlight`.
+
 **better-todo-tree.general.revealBehaviour** (`start of todo`)</br>
 Change the cursor behaviour when double-clicking a todo in the tree. You can choose from: `start of todo` (moves the cursor to the beginning of the todo), `end of todo` (moves the cursor to the end of the todo) or `start of line` (moves the cursor to the start of the line).
 
@@ -338,7 +341,7 @@ A list of workspace names to include as roots in the tree (wildcards can be used
 A list of workspace names to exclude as roots in the tree (wildcards can be used).
 
 **better-todo-tree.filtering.passGlobsToRipgrep** (`true`)</br>
-Set this to false to apply the globs *after* the search (legacy behaviour).
+Set this to false to apply the globs *after* the search.
 
 **better-todo-tree.filtering.useBuiltInExcludes** (`none`)</br>
 Set this to use VSCode's built in files or search excludes. Can be one of `none`, `file excludes` (uses Files:Exclude), `search excludes` (Uses Search:Exclude) or `file and search excludes` (uses both).
@@ -404,7 +407,7 @@ This defines the regex used to locate TODOs. By default, it searches for tags in
 <sup>*Regexes use ripgrep's Rust engine unless look-around, backreferences, or explicit ripgrep engine arguments select PCRE2.*</sup>
 
 **better-todo-tree.regex.subTagRegex**
-This is a regular expression for processing the text to the right of the tag, e.g. for extracting a sub tag, or removing unwanted characters. Anything that the regex matches will be removed from the text. If a capture group is included, the contents are extracted into a sub tag, which will be used in the tree to group similar tags. The sub tag can also be used as a placeholder in `better-todo-tree.tree.subTagClickUrl` and `better-todo-tree.tree.labelFormat`. Sub tags can also be highlighted by specifying a section in the `better-todo-tree.highlights.customHighlights` setting. To highlight the sub tag itself, set "type" to "tag-and-subTag" in custom highlights for the tag.
+Extract a subtag or remove text following a tag with this regular expression. Matched text is removed from the displayed label. A capture group supplies the subtag for tree grouping and the `better-todo-tree.tree.subTagClickUrl` and `better-todo-tree.tree.labelFormat` placeholders. A matching `better-todo-tree.highlights.customHighlight` entry and the `tag-and-subTag` type enable subtag decoration.
 
 Examples:
 
@@ -424,7 +427,7 @@ Pass additional arguments to ripgrep. Engine arguments such as `--pcre2`, `-P`, 
 Ripgrep output is parsed incrementally. No output-buffer size setting is required.
 
 **better-todo-tree.ripgrep.usePatternFile** (`true`)</br>
-A pattern file is used with ripgrep by default. If you experience issues with deleting the pattern file, set this to false to use the legacy method of providing the regex to ripgrep.
+A pattern file is used with ripgrep by default. Setting this to false passes the regex as a command argument and avoids pattern-file creation and deletion.
 
 **better-todo-tree.tree.hideTreeWhenEmpty** (`true`)</br>
 Normally, the tree is removed from the explorer view if nothing is found. Set this to false to keep the view present.
@@ -648,7 +651,7 @@ When there is no current workspace, default icons will be shown in the tree.
 
 ## Compatibility
 
-Better Todo Tree keeps reading legacy `todo-tree.*` settings and imports them into the new `better-todo-tree.*` namespace, so existing user configuration keeps working after the rebrand.
+Existing Todo Tree configurations work directly, including `todo-tree.*` settings and historical flat keys. Changes take effect while the extension is running. **Better Todo Tree: Import Todo Tree Settings** copies settings into `better-todo-tree.*` at their original scopes and preserves the source configuration. Scope precedence follows VS Code; explicit `better-todo-tree.*` values win ties at the same scope. See [settings compatibility and import](MIGRATION.md#todo-tree-settings-compatibility).
 
 ### Credits
 

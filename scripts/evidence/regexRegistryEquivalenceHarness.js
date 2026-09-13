@@ -12,6 +12,7 @@ var vm = require( 'vm' );
 var regexRegistry = require( '../../src/regexRegistry.js' );
 var languageMatrix = require( '../../test/languageMatrix.js' );
 var stubs = require( '../../test/stubs.js' );
+var retiredRegexes = require( './retired-regexes.json' );
 
 var REPO_ROOT = path.resolve( __dirname, '..', '..' );
 var DEFAULT_BASELINE_REF = 'auto';
@@ -528,6 +529,16 @@ function compareSourceCoverage( baselineGroups )
     var rows = baselineGroups.map( function( group )
     {
         var registryNames = sourceIndex.get( group.source ) || [];
+        var retirement = retiredRegexes.find( function( entry )
+        {
+            return entry.source === group.source && entry.flags === group.flags &&
+                group.refs.every( function( ref )
+                {
+                    return ref.indexOf( entry.file + ':' ) === 0;
+                } ) &&
+                fs.readFileSync( path.join( REPO_ROOT, entry.file ), 'utf8' )
+                    .indexOf( entry.removedConsumer ) === -1;
+        } );
 
         return {
             source: group.source,
@@ -535,17 +546,23 @@ function compareSourceCoverage( baselineGroups )
             baselineCount: group.count,
             baselineRefs: group.refs,
             registryNames: registryNames,
-            covered: registryNames.length > 0
+            covered: registryNames.length > 0,
+            retirement: registryNames.length === 0 && retirement ? retirement.reason : null
         };
     } );
     var missing = rows.filter( function( row )
     {
-        return row.covered !== true;
+        return row.covered !== true && row.retirement === null;
+    } );
+    var retired = rows.filter( function( row )
+    {
+        return row.retirement !== null;
     } );
 
     return {
         total: rows.length,
-        covered: rows.length - missing.length,
+        covered: rows.length - missing.length - retired.length,
+        retired: retired,
         missing: missing,
         rows: rows
     };
@@ -1103,6 +1120,7 @@ function runEquivalenceAudit( options )
             registryFragments: regexRegistry.fragmentNames().length,
             registryPatterns: regexRegistry.patternNames().length,
             sourceCoverageCovered: sourceCoverage.covered,
+            sourceCoverageRetired: sourceCoverage.retired.length,
             sourceCoverageTotal: sourceCoverage.total,
             behaviorParityPassed: behaviorParity.passed,
             behaviorParityTotal: behaviorParity.total,

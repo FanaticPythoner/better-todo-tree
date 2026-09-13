@@ -1,0 +1,13 @@
+{
+    "name": "better-todo-tree-customer-probe",
+    "displayName": "Better Todo Tree Customer Probe",
+    "version": "1.0.0",
+    "publisher": "qa",
+    "engines": {
+        "vscode": "^1.72.0"
+    },
+    "activationEvents": [
+        "onStartupFinished"
+    ],
+    "main": "./extension.js"
+}

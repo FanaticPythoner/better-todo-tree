@@ -1,0 +1,45 @@
+name: Todo Tree settings customer compatibility
+version: "1.0"
+base_url: "http://127.0.0.1"
+plugins:
+  directories: [./plugins]
+executor:
+  name: native_vscode
+  options:
+    code: /usr/bin/code
+    vsix: TODOS_LISTS/qa-pr178-todo-tree-settings/vsix-final/better-todo-tree-settings-final-linux-x64.vsix
+    workspace_fixture: scripts/qa/settings-workspace
+    probe_extension: scripts/qa/customer-probe
+    x11_python: /usr/bin/python3
+    entry: source.js
+    probe_mode: settings
+permutation:
+  mode: explicit
+flows:
+  - id: todo_tree_settings
+    concepts: [installed_settings]
+concepts:
+  - id: installed_settings
+    actions:
+      - id: execute
+        type: native_customer
+        timeout: 240
+        extract:
+          observed_state: state
+      - id: verify
+        type: qa_validate
+        params:
+          mode: deterministic
+          expected:
+            state:
+              success: true
+              unexecuted: []
+          actual:
+            state: "${observed_state}"
+execution:
+  parallel: false
+  reuse_context: true
+  retry_failed: 0
+  timeout_per_flow: 300
+report:
+  formats: [console, json, data, html, junit]

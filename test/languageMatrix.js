@@ -104,8 +104,8 @@ function cloneMultiLineEntry( entry )
     };
 }
 
-var DEFAULT_TAGS = findConfigurationProperty( 'todo-tree.general.tags' ).default.slice();
-var DEFAULT_REGEX_SOURCE = findConfigurationProperty( 'todo-tree.regex.regex' ).default;
+var DEFAULT_TAGS = findConfigurationProperty( 'better-todo-tree.general.tags' ).default.slice();
+var DEFAULT_REGEX_SOURCE = findConfigurationProperty( 'better-todo-tree.regex.regex' ).default;
 var CURRENT_LANGUAGE_NAMES = baseLanguages.map( function( entry ) { return entry.name; } );
 var LANGUAGES = baseLanguages.map( function( entry )
 {

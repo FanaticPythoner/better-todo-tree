@@ -1,0 +1,10 @@
+parameters:
+  - id: theme
+    type: enum
+    values: [dark, light, high_contrast_dark, high_contrast_light]
+  - id: mode
+    type: enum
+    values: [tag, text, tag-and-comment, tag-and-subTag, text-and-comment, line, whole-line, 'capture-groups:1,3', none]
+  - id: profile
+    type: enum
+    values: [codicons]
