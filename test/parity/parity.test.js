@@ -406,6 +406,8 @@ QUnit.module( 'parity todo-tree vs better-todo-tree', function( hooks )
     {
         var fs = require( 'fs' );
         var upstreamGitLoader = require( './upstreamGitLoader.js' );
+        var nativeExec = RegExp.prototype.exec;
+        var nativeIndices = Object.getOwnPropertyDescriptor( RegExp.prototype, 'hasIndices' );
 
         var bundlePath = upstreamGitLoader.ensureUpstreamBuild();
         assert.ok( fs.existsSync( bundlePath ), 'compiled bundle exists at ' + bundlePath );
@@ -458,5 +460,10 @@ QUnit.module( 'parity todo-tree vs better-todo-tree', function( hooks )
 
         assert.equal( typeof( bundleExports.activate ), 'function', 'compiled bundle exports activate()' );
         assert.equal( typeof( bundleExports.deactivate ), 'function', 'compiled bundle exports deactivate()' );
+        assert.strictEqual( RegExp.prototype.exec, nativeExec, 'host RegExp.exec remains unchanged' );
+        assert.deepEqual( Object.getOwnPropertyDescriptor( RegExp.prototype, 'hasIndices' ), nativeIndices );
+        var source = regexRegistry.captureLiteralSource( 'a' );
+        assert.deepEqual( new RegExp( source, 'd' ).exec( 'a' ).indices[ 1 ], [ 0, 1 ] );
+        assert.strictEqual( new RegExp( source ).exec( 'a' ).indices, undefined );
     } );
 } );

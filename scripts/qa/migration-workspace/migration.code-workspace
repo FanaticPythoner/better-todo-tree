@@ -1,0 +1,9 @@
+{
+    "folders": [{"path": "first"}, {"path": "second"}],
+    "settings": {
+        "todo-tree.highlights.useColourScheme": false,
+        "todo-tree.filtering.includeGlobs": [],
+        "todo-tree.tree.showInExplorer": true,
+        "better-todo-tree.tree.scanAtStartup": false
+    }
+}

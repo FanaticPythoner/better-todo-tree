@@ -27,6 +27,10 @@ function createVscodeStub( highlightConfiguration, decorationLog )
         Position: Position,
         Range: Range,
         window: {
+            onDidChangeVisibleTextEditors: function()
+            {
+                return { dispose: function() {} };
+            },
             createTextEditorDecorationType: function( options )
             {
                 decorationLog.push( options );
@@ -119,6 +123,13 @@ function createHarness( options )
             getGutterIcon: function()
             {
                 return { dark: '/tmp/gutter.svg', light: '/tmp/gutter.svg' };
+            }
+        },
+        './extensionIdentity.js': {
+            getSetting: function( key, defaultValue )
+            {
+                var values = { 'highlights.enabled': true, 'highlights.highlightDelay': 0 };
+                return Object.prototype.hasOwnProperty.call( values, key ) ? values[ key ] : defaultValue;
             }
         },
         './detection.js': {

@@ -1,5 +1,7 @@
 var fs = require( 'fs' );
+var os = require( 'os' );
 var path = require( 'path' );
+var spawnSync = require( 'child_process' ).spawnSync;
 var regexRegistry = require( '../src/regexRegistry.js' );
 
 var ACTION_REVISIONS = Object.freeze( {
@@ -266,6 +268,66 @@ function getWorkflowStepBlock( contents, stepName )
     return contents.slice( start, end === -1 ? contents.length : end );
 }
 
+function runPlatformTargetResolution( trustedManifest, buildManifest, outputIsDirectory )
+{
+    var workflow = readWorkflow( 'pr-vsix-build.yml' );
+    var directory = fs.mkdtempSync( path.join( os.tmpdir(), 'pr-vsix-targets-' ) );
+    var manifest = path.join( directory, 'scripts', 'release', 'targets.json' );
+    var output = path.join( directory, 'github-output' );
+    var result;
+    var steps = [ 'Check out trusted workflow helpers', 'Check out immutable build context', 'Resolve platform targets' ]
+        .map( function( name )
+        {
+            var index = workflow.indexOf( '      - name: ' + name );
+            if( index < 0 ) { throw new Error( 'missing workflow step: ' + name ); }
+            return { name: name, index: index };
+        } ).sort( function( left, right ) { return left.index - right.index; } );
+    try
+    {
+        fs.mkdirSync( path.dirname( manifest ), { recursive: true } );
+        [ 'scripts/ci/verify-pr-vsix.mjs', 'scripts/release/ripgrep-targets.mjs' ].forEach( function( relativePath )
+        {
+            var destination = path.join( directory, relativePath );
+            fs.mkdirSync( path.dirname( destination ), { recursive: true } );
+            fs.writeFileSync( destination, readRepositoryFile( relativePath ) );
+        } );
+        if( outputIsDirectory ) { fs.mkdirSync( output ); }
+        else { fs.writeFileSync( output, 'preserved=1\n' ); }
+        steps.forEach( function( step )
+        {
+            if( step.name !== 'Resolve platform targets' )
+            {
+                var contents = step.name === 'Check out trusted workflow helpers' ? trustedManifest : buildManifest;
+                if( contents === null ) { fs.rmSync( manifest, { force: true } ); }
+                else { fs.writeFileSync( manifest, contents ); }
+                return;
+            }
+            var lines = getWorkflowStepBlock( workflow, step.name ).split( '\n' );
+            var runIndex = lines.findIndex( function( line ) { return line.startsWith( '        run: ' ); } );
+            if( runIndex < 0 ) { throw new Error( 'target resolution command is missing' ); }
+            var command = lines[ runIndex ].slice( '        run: '.length );
+            if( command === '|' )
+            {
+                command = lines.slice( runIndex + 1 ).map( function( line ) { return line.slice( 10 ); } ).join( '\n' );
+            }
+            result = spawnSync( 'bash', [ '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', command ], {
+                cwd: directory,
+                encoding: 'utf8',
+                env: Object.assign( {}, process.env, {
+                    PATH: path.dirname( process.execPath ) + path.delimiter + process.env.PATH,
+                    GITHUB_OUTPUT: output
+                } )
+            } );
+            if( result.error ) { throw result.error; }
+        } );
+        return { status: result.status, stderr: result.stderr, output: outputIsDirectory ? '' : fs.readFileSync( output, 'utf8' ) };
+    }
+    finally
+    {
+        fs.rmSync( directory, { recursive: true, force: true } );
+    }
+}
+
 function assertSecurityWorkflowContract( assert, securityWorkflow, label )
 {
     var references = getExternalActionReferences( securityWorkflow );
@@ -439,6 +501,7 @@ QUnit.test( 'latest workflow publishes a moving prerelease from master', functio
 QUnit.test( 'release workflows build and publish from the resolved release ref', function( assert )
 {
     var releaseWorkflow = readWorkflow( 'release.yml' );
+    var latestWorkflow = readWorkflow( 'latest.yml' );
     var reusableBuildWorkflow = readWorkflow( 'reusable-build-vsix.yml' );
     var publishVsCodeScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'publish-vscode-marketplace.sh' ), 'utf8' );
     var publishOpenVsxScript = fs.readFileSync( path.join( __dirname, '..', 'scripts', 'release', 'publish-open-vsx.sh' ), 'utf8' );
@@ -450,6 +513,12 @@ QUnit.test( 'release workflows build and publish from the resolved release ref',
     assert.ok( releaseWorkflow.indexOf( 'release_ref: ${{ steps.meta.outputs.release_ref }}' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'ref: ${{ needs.preflight.outputs.release_ref }}' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'run: bash scripts/release/resolve-release-metadata.sh' ) !== -1 );
+    [ releaseWorkflow, latestWorkflow ].forEach( function( workflow )
+    {
+        assert.ok( workflow.indexOf( "JSON.stringify(require('./scripts/release/targets.json'))" ) !== -1 );
+        assert.ok( workflow.indexOf( 'targets: ${{ needs.preflight.outputs.targets }}' ) !== -1 );
+        assert.equal( workflow.indexOf( '"web"' ), -1 );
+    } );
     assert.ok( releaseWorkflow.indexOf( 'verify-marketplace:' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'publish:' ) !== -1 );
     assert.ok( releaseWorkflow.indexOf( 'run: bash scripts/release/publish-vscode-marketplace.sh' ) !== -1 );
@@ -518,6 +587,7 @@ QUnit.test( 'trusted PR workflow builds every verified platform VSIX after all g
     assert.ok( buildWorkflow.indexOf( 'timeout-minutes: 30' ) !== -1 );
     [
         'Check out immutable build context',
+        'Resolve platform targets',
         'Install dependencies',
         'Run test suite',
         'Build production bundle',
@@ -537,6 +607,83 @@ QUnit.test( 'trusted PR workflow builds every verified platform VSIX after all g
     );
     assert.ok( buildWorkflow.indexOf( 'matrix:\n        target: ${{ fromJson(needs.test-build.outputs.targets) }}' ) !== -1 );
     assert.ok( buildWorkflow.indexOf( 'node scripts/ci/delete-pr-vsix-staging.mjs' ) !== -1 );
+} );
+
+QUnit.test( 'publish targets follow the immutable checkout when trusted manifests differ', function( assert )
+{
+    var targets = require( '../scripts/release/targets.json' );
+    [ targets.concat( 'web' ), targets.slice( 1 ), targets.slice().reverse() ].forEach( function( trustedTargets )
+    {
+        var result = runPlatformTargetResolution( JSON.stringify( trustedTargets ), JSON.stringify( targets ) );
+        assert.strictEqual( result.status, 0, result.stderr );
+        assert.strictEqual( result.output, 'preserved=1\ntargets=' + JSON.stringify( targets ) + '\n' );
+    } );
+    var workflow = readWorkflow( 'pr-vsix-build.yml' );
+    assert.ok( workflow.indexOf( '      - name: Resolve platform targets' ) <
+        workflow.indexOf( '      - name: Build platform VSIX bundle' ) );
+    assert.ok( workflow.includes( 'targets: ${{ steps.targets.outputs.targets }}' ) );
+} );
+
+QUnit.test( 'target resolution ignores a malformed trusted manifest after immutable checkout', function( assert )
+{
+    var manifest = JSON.stringify( require( '../scripts/release/targets.json' ) );
+    var result = runPlatformTargetResolution( '{', manifest );
+    assert.strictEqual( result.status, 0, result.stderr );
+    assert.strictEqual( result.output, 'preserved=1\ntargets=' + manifest + '\n' );
+} );
+
+[ { name: 'missing', contents: null }, { name: 'malformed', contents: '{' } ].forEach( function( fixture )
+{
+    QUnit.test( 'target resolution fails without output for a ' + fixture.name + ' build manifest', function( assert )
+    {
+        var result = runPlatformTargetResolution( JSON.stringify( require( '../scripts/release/targets.json' ) ), fixture.contents );
+        assert.notStrictEqual( result.status, 0 );
+        assert.ok( result.stderr.length > 0 );
+        assert.strictEqual( result.output, 'preserved=1\n' );
+    } );
+} );
+
+QUnit.test( 'target resolution propagates output write failures', function( assert )
+{
+    var manifest = JSON.stringify( require( '../scripts/release/targets.json' ) );
+    var result = runPlatformTargetResolution( manifest, manifest, true );
+    assert.notStrictEqual( result.status, 0 );
+    assert.ok( result.stderr.length > 0 );
+} );
+
+QUnit.test( 'target resolution rejects invalid target lists before output', function( assert )
+{
+    var targets = require( '../scripts/release/targets.json' );
+    [ null, {}, [], targets.concat( targets[ 0 ] ), targets.concat( 'web' ), targets.slice().reverse() ]
+        .forEach( function( invalidTargets )
+        {
+            var result = runPlatformTargetResolution( JSON.stringify( targets ), JSON.stringify( invalidTargets ) );
+            assert.notStrictEqual( result.status, 0 );
+            assert.ok( result.stderr.includes( 'PrVsixVerificationError' ) );
+            assert.strictEqual( result.output, 'preserved=1\n' );
+        } );
+} );
+
+QUnit.test( 'staging cleanup requires an upload receipt across publish outcomes', function( assert )
+{
+    var workflow = readWorkflow( 'pr-vsix-build.yml' );
+    var staging = getWorkflowStepBlock( workflow, 'Stage platform VSIX files' );
+    assert.ok( staging.includes( 'id: staging' ) );
+    assert.ok( workflow.includes( 'staging-artifact-id: ${{ steps.staging.outputs.artifact-id }}' ) );
+    var cleanup = workflow.slice( workflow.indexOf( '  cleanup-staging:' ) );
+    var condition = cleanup.split( '\n' ).find( function( line ) { return line.startsWith( '    if: ' ); } )
+        .slice( '    if: '.length );
+    var shouldClean = new Function( 'always', 'artifactId', 'publishResult', 'return ' + condition
+        .replaceAll( 'needs.test-build.outputs.staging-artifact-id', 'artifactId' )
+        .replaceAll( 'needs.publish.result', 'publishResult' ) );
+    [ 'success', 'failure', 'cancelled', 'skipped' ].forEach( function( publishResult )
+    {
+        [ '', '400' ].forEach( function( artifactId )
+        {
+            assert.strictEqual( shouldClean( function() { return true; }, artifactId, publishResult ),
+                artifactId !== '', publishResult + '/' + ( artifactId || 'no upload' ) );
+        } );
+    } );
 } );
 
 QUnit.test( 'trusted orchestration isolates and cancels only one PR generation', function( assert )
@@ -834,7 +981,7 @@ QUnit.test( '.vscodeignore excludes the upstream clone, test fixtures, build too
     assert.ok( lines.indexOf( 'TODOS_LISTS/' ) !== -1, '.vscodeignore lists `TODOS_LISTS/`' );
     assert.ok( lines.indexOf( '.github/' ) !== -1, '.vscodeignore lists `.github/`' );
     assert.ok( lines.indexOf( '.tools/' ) !== -1, '.vscodeignore lists `.tools/` (upstream clone cache)' );
-    assert.ok( lines.indexOf( 'buildCodiconNames.js' ) !== -1, '.vscodeignore lists `buildCodiconNames.js` (build-time tool, not needed at runtime)' );
+    assert.ok( lines.indexOf( 'scripts/' ) !== -1, '.vscodeignore excludes build-time scripts' );
     assert.ok( lines.indexOf( 'old-*.js' ) !== -1, '.vscodeignore lists `old-*.js` (pre-refactor scratch files never ship)' );
     assert.ok( lines.indexOf( '*.bak' ) !== -1, '.vscodeignore lists `*.bak` (editor backups never ship)' );
     assert.ok( lines.indexOf( '*~' ) !== -1, '.vscodeignore lists `*~` (editor backups never ship)' );

@@ -18,3 +18,4 @@ artifacts/**/*.log
 artifacts/perf/runtime-benchmarks.json
 artifacts/**/*.json
 Better.TODO.Tree.settings.txt
+.forge/

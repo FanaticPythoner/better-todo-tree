@@ -9,7 +9,7 @@ var context;
 var treeStateOverrides = {};
 var windowsPlatformRegex = regexRegistry.createRegExp( 'windowsPlatform' );
 
-var tagGroupLookup = {};
+var tagGroupLookup = new Map();
 var ripgrepPathCache = {
     signature: undefined,
     value: undefined
@@ -30,6 +30,7 @@ var RIPGREP_PACKAGE_LAYOUTS = Object.freeze( [
 function init( c )
 {
     context = c;
+    treeStateOverrides = {};
 
     refreshTagGroupLookup();
 }
@@ -326,17 +327,19 @@ function shouldIgnoreGitSubmodules()
 function refreshTagGroupLookup()
 {
     var tagGroups = identity.getSetting( 'general.tagGroups', {} );
-    tagGroupLookup = Object.keys( tagGroups ).reduce( ( acc, propName ) =>
-        tagGroups[ propName ].reduce( ( a, num ) =>
+    tagGroupLookup = new Map();
+    Object.keys( tagGroups ).forEach( function( group )
+    {
+        tagGroups[ group ].forEach( function( tag )
         {
-            a[ num ] = propName;
-            return a;
-        }, acc ), {} );
+            tagGroupLookup.set( tag, group );
+        } );
+    } );
 }
 
 function tagGroup( tag )
 {
-    return tagGroupLookup[ tag ];
+    return tagGroupLookup.get( tag );
 }
 
 function shouldCompactFolders()
@@ -377,7 +380,7 @@ function shouldShowScanModeInTree()
 
 function shouldUseColourScheme()
 {
-    return identity.getSetting( 'highlights.useColourScheme', true );
+    return identity.getSetting( 'highlights.useColourScheme', false );
 }
 
 function foregroundColourScheme()

@@ -11,6 +11,7 @@ function createVscodeStub()
     {
         this.event = function() {};
         this.fire = function() {};
+        this.dispose = function() {};
     }
 
     function TreeItem( label )

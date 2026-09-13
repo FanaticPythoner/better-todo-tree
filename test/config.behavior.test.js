@@ -137,6 +137,47 @@ function createDirectoryEntry( name )
 
 QUnit.module( 'behavioral config' );
 
+QUnit.test( 'activation initialization discards transient tree overrides', function( assert )
+{
+    var config = loadConfigModule( { extensionPath: '/workspace/extension' } );
+    config.setTreeStateOverrides( { flat: true, tagsOnly: true } );
+    assert.true( config.shouldFlatten() );
+    assert.true( config.shouldShowTagsOnly() );
+    config.init( {
+        extensionPath: '/workspace/other',
+        workspaceState: { get: function( key, value ) { return value; } }
+    } );
+    assert.false( config.shouldFlatten() );
+    assert.false( config.shouldShowTagsOnly() );
+} );
+
+QUnit.test( 'prototype-named tags resolve only explicitly configured groups', function( assert )
+{
+    var config = loadConfigModule( {
+        extensionPath: '/workspace/extension',
+        settingValues: {
+            'general.tagGroups': { reserved: [ 'constructor', '__proto__' ] }
+        }
+    } );
+
+    assert.equal( config.tagGroup( 'constructor' ), 'reserved' );
+    assert.equal( config.tagGroup( '__proto__' ), 'reserved' );
+    assert.strictEqual( config.tagGroup( 'toString' ), undefined );
+} );
+
+QUnit.test( 'issue #110 colour schemes require explicit opt-in', function( assert )
+{
+    var defaultConfig = loadConfigModule();
+    var optedInConfig = loadConfigModule( {
+        settingValues: {
+            'highlights.useColourScheme': true
+        }
+    } );
+
+    assert.strictEqual( defaultConfig.shouldUseColourScheme(), false );
+    assert.strictEqual( optedInConfig.shouldUseColourScheme(), true );
+} );
+
 QUnit.test( 'regex reads only language-overridable regex source with a resource URI', function( assert )
 {
     var uri = { toString: function() { return '/workspace/source.vue'; } };

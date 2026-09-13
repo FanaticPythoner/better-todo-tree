@@ -41,9 +41,6 @@ function expectedBundleFileNames(packageMetadata, targets, baseName = `${package
 
 function expectedRipgrepEntries(target) {
     const platform = requireTarget(target);
-    if (platform === undefined) {
-        return [];
-    }
     return [
         `extension/dist/ripgrep/${platformDirectory(platform)}/${executableName(platform)}`
     ];
@@ -72,8 +69,7 @@ function verifyEntrySet(entries, target) {
     }
 
     const actualMetadata = ripgrepMetadataEntries.filter((entry) => entries.includes(entry));
-    const expectedMetadata = expectedExecutables.length === 0 ? [] : ripgrepMetadataEntries;
-    if (JSON.stringify(actualMetadata) !== JSON.stringify(expectedMetadata)) {
+    if (JSON.stringify(actualMetadata) !== JSON.stringify(ripgrepMetadataEntries)) {
         throw new PrVsixVerificationError(`${target} VSIX ripgrep metadata entries mismatch`);
     }
     return expectedExecutables;
@@ -124,9 +120,6 @@ function verifyTargetManifest(vsixPath, target) {
 }
 
 function verifyRipgrepManifest(vsixPath, target, executableEntries) {
-    if (executableEntries.length === 0) {
-        return;
-    }
     const raw = runUnzip(['-p', vsixPath, 'extension/dist/ripgrep/manifest.json']);
     let manifest;
     try {

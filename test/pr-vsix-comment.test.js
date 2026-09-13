@@ -384,11 +384,14 @@ QUnit.test( 'successful current run publishes one platform bundle and removes du
 
     assert.deepEqual( results, [ { pullRequestNumber: 19, applied: true, removedArtifacts: 1 } ] );
     assert.ok( body.indexOf( 'actions/runs/200/artifacts/300' ) !== -1 );
-    assert.equal( body.split( '[Download VSIX]' ).length - 1, 10 );
+    assert.equal( body.split( '[Download VSIX]' ).length - 1, TARGETS.length );
     assert.ok( body.indexOf( 'Windows x64' ) !== -1 );
     assert.ok( body.indexOf( 'macOS Apple silicon' ) !== -1 );
     assert.ok( body.indexOf( '`win32-x64`' ) !== -1 );
-    assert.ok( body.indexOf( '`web`' ) !== -1 );
+    TARGETS.forEach( function( target )
+    {
+        assert.ok( body.indexOf( '`' + target + '`' ) !== -1, target );
+    } );
     assert.ok( body.indexOf( 'Download the VSIX matching the test platform' ) !== -1 );
     assert.ok( body.indexOf( 'unreviewed code from this pull request' ) !== -1 );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 299 ] );
@@ -515,7 +518,7 @@ QUnit.test( 'successful rerun rejects an artifact created before the current att
     await assert.rejects( synchronize( module, fixture, rerun ), function( error )
     {
         return error instanceof module.PrVsixInvariantError &&
-            error.message.indexOf( 'expected 10 target artifacts, found 0' ) !== -1;
+            error.message.indexOf( 'expected ' + TARGETS.length + ' target artifacts, found 0' ) !== -1;
     } );
     assert.deepEqual( fixture.calls.deletedArtifacts, [ 300 ] );
 } );

@@ -1,26 +1,4 @@
-/**
- * Clones the upstream Gruntfuggly/todo-tree repository at the pinned commit
- * into a workspace-local cache directory, builds its webpack bundle (the
- * same artefact that ships in the published VSIX), and exposes module and
- * compiled-bundle loaders for the parity harness.
- *
- * Exports:
- *   loadModule(relativePath, stubs):
- *     Compile a single upstream source file as a CommonJS module with the
- *     supplied stub map. The parity harness uses it to swap stubs for
- *     vscode, ./tree.js, ./ripgrep.js, etc. while still executing real
- *     upstream detection logic.
- *   loadCompiledBundle(stubs):
- *     Load the compiled dist/extension.js bundle (the artefact inside the
- *     VSIX) as a CommonJS module with vscode stubbed. Used by smoke tests
- *     that verify the upstream produces a usable build artefact.
- *   ensureUpstreamCheckout() / ensureUpstreamBuild():
- *     Idempotent bootstrappers callable from test code.
- *
- * No upstream source or attribution is committed to this repository. All
- * upstream artefacts live under .tools/upstream-todo-tree/, which is listed
- * in both .gitignore and .vscodeignore.
- */
+/** Load pinned upstream source and bundles for parity comparisons. */
 
 var Module = require( 'module' );
 var child_process = require( 'child_process' );
@@ -37,6 +15,7 @@ var BUILD_HASH_FILE = path.join( UPSTREAM_DIR, '.upstream-build-hash' );
 var COMPILED_BUNDLE_RELATIVE = path.join( 'dist', 'extension.js' );
 
 var checkoutEnsured = false;
+var dependenciesEnsured = false;
 var buildEnsured = false;
 var moduleCache = new Map();
 var sourceCache = new Map();
@@ -65,9 +44,7 @@ function runGit( args, options )
 
 function runCommand( command, args, cwd, extraEnv )
 {
-    // Webpack 5.74 (pinned by upstream) ships pre-OpenSSL-3 hashing helpers
-    // that throw ERR_OSSL_EVP_UNSUPPORTED on Node 17+; --openssl-legacy-provider
-    // is applied locally so it never leaks into the better-todo-tree build.
+    // Upstream webpack requires legacy OpenSSL hashing on Node 17 and newer.
     var baseEnv = Object.assign( {}, process.env, {
         npm_config_audit: 'false',
         npm_config_fund: 'false',
@@ -154,6 +131,17 @@ function buildHashMatches()
     return recorded === UPSTREAM_COMMIT;
 }
 
+function ensureUpstreamDependencies()
+{
+    if( dependenciesEnsured !== true )
+    {
+        ensureUpstreamCheckout();
+        runNpm( [ 'ci' ], UPSTREAM_DIR );
+        dependenciesEnsured = true;
+    }
+    return UPSTREAM_DIR;
+}
+
 function bundleExists()
 {
     return fs.existsSync( path.join( UPSTREAM_DIR, COMPILED_BUNDLE_RELATIVE ) );
@@ -166,17 +154,12 @@ function ensureUpstreamBuild()
         return path.join( UPSTREAM_DIR, COMPILED_BUNDLE_RELATIVE );
     }
 
-    ensureUpstreamCheckout();
+    ensureUpstreamDependencies();
 
     if( buildHashMatches() === true && bundleExists() === true )
     {
         buildEnsured = true;
         return path.join( UPSTREAM_DIR, COMPILED_BUNDLE_RELATIVE );
-    }
-
-    if( !fs.existsSync( path.join( UPSTREAM_DIR, 'node_modules' ) ) )
-    {
-        runNpm( [ 'ci' ], UPSTREAM_DIR );
     }
 
     // Upstream vscode:prepublish invokes buildCodiconNames.js via a
@@ -246,6 +229,7 @@ function compileWrapper( source, syntheticPath )
 
 function loadModule( relativePath, stubs )
 {
+    ensureUpstreamDependencies();
     var normalized = normalizeRelativePath( relativePath );
     var hasStubs = !!stubs && Object.keys( stubs ).length > 0;
 
@@ -273,7 +257,7 @@ function loadModule( relativePath, stubs )
             return loadModule( path.posix.join( path.posix.dirname( normalized ), request ) );
         }
 
-        return require( request );
+        return upstreamModule.require( request );
     }
 
     var compiled = compileWrapper( source, syntheticPath );
@@ -310,10 +294,20 @@ function loadCompiledBundle( stubs )
         {
             return stubs[ request ];
         }
-        return require( request );
+        return bundleModule.require( request );
     }
 
-    var compiled = vm.runInThisContext( Module.wrap( source ), { filename: bundlePath } );
+    var compiled = vm.runInNewContext( Module.wrap( source ), {
+        Buffer: Buffer,
+        console: console,
+        process: process,
+        setTimeout: setTimeout,
+        clearTimeout: clearTimeout,
+        setInterval: setInterval,
+        clearInterval: clearInterval,
+        setImmediate: setImmediate,
+        clearImmediate: clearImmediate
+    }, { filename: bundlePath } );
     compiled.call( bundleModule.exports, bundleModule.exports, bundleRequire, bundleModule, bundlePath, path.dirname( bundlePath ) );
 
     if( hasStubs !== true )
@@ -335,6 +329,7 @@ module.exports.UPSTREAM_REPO_URL = UPSTREAM_REPO_URL;
 module.exports.UPSTREAM_DIR = UPSTREAM_DIR;
 module.exports.COMPILED_BUNDLE_RELATIVE = COMPILED_BUNDLE_RELATIVE;
 module.exports.ensureUpstreamCheckout = ensureUpstreamCheckout;
+module.exports.ensureUpstreamDependencies = ensureUpstreamDependencies;
 module.exports.ensureUpstreamBuild = ensureUpstreamBuild;
 module.exports.loadModule = loadModule;
 module.exports.loadCompiledBundle = loadCompiledBundle;

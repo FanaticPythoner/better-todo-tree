@@ -1,0 +1,15 @@
+{
+    "todo-tree.general.tags": ["TODO", "FIXME"],
+    "todo-tree.general.automaticGitRefreshInterval": 0,
+    "todo-tree.general.periodicRefreshInterval": 0,
+    "todo-tree.tree.scanMode": "workspace only",
+    "todo-tree.tree.hideTreeWhenEmpty": false,
+    "todo-tree.filtering.includeGlobs": ["**/*.js"],
+    "todo-tree.highlights.useColourScheme": false,
+    "todo-tree.highlights.highlightDelay": 0,
+    "todo-tree.highlights.defaultHighlight": {
+        "type": "tag", "foreground": "#ffff66", "gutterIcon": true
+    },
+    "todo-tree.ripgrep.ripgrepMaxBuffer": 600,
+    "todo-tree.tree.showInExplorer": true
+}

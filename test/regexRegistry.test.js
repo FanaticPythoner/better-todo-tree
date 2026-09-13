@@ -10,10 +10,8 @@ QUnit.module( 'regex registry' );
 QUnit.test( 'manifest and runtime default regex sources share one registry output', function( assert )
 {
     var currentRegex = languageMatrix.findConfigurationProperty( 'better-todo-tree.regex.regex' );
-    var legacyRegex = languageMatrix.findConfigurationProperty( 'todo-tree.regex.regex' );
 
     assert.equal( regexRegistry.DEFAULT_REGEX_SOURCE, currentRegex.default );
-    assert.equal( regexRegistry.DEFAULT_REGEX_SOURCE, legacyRegex.default );
     assert.equal( utils.DEFAULT_REGEX_SOURCE, regexRegistry.DEFAULT_REGEX_SOURCE );
 } );
 

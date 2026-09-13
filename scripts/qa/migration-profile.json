@@ -1,0 +1,10 @@
+{
+    "todo-tree.general.tags": ["GLOBAL"],
+    "todo-tree.highlightDelay": 0,
+    "[python][javascript]": {
+        "todo-tree.regex.regex": "(SHARED)",
+        "editor.tabSize": 3
+    },
+    "better-todo-tree.general.periodicRefreshInterval": 0,
+    "better-todo-tree.general.automaticGitRefreshInterval": 0
+}

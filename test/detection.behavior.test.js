@@ -115,6 +115,107 @@ QUnit.module( "behavioral detection", function( hooks )
         utils.init( createConfig() );
     } );
 
+    QUnit.test( 'line offsets preserve UTF-16 positions and every newline boundary', function( assert )
+    {
+        [ '', '\n', '\n\n', 'a\r\nb\n', '😀\nTODO\r\n尾', 'a\rb', 'trailing\n' ].forEach( function( text )
+        {
+            var offset = 0;
+            var expected = text.split( '\n' ).map( function( line )
+            {
+                var start = offset;
+                offset += line.length + 1;
+                return start;
+            } );
+            assert.deepEqual( detection.createScanContext( createUri( '/tmp/offsets.js' ), text ).lineOffsets, expected );
+        } );
+    } );
+
+    QUnit.test( 'separated comment blocks retain complete ordered locations at scale', function( assert )
+    {
+        var count = 8000;
+        var text = Array.from( { length: count }, function( _, index )
+        {
+            return '// TODO item ' + index + '\nconst value' + index + ' = 0;';
+        } ).join( '\n' );
+        var results = detection.scanText( createUri( '/tmp/separated-comments.js' ), text );
+        assert.equal( results.length, count );
+        assert.deepEqual( results.map( function( result ) { return result.line; } ),
+            Array.from( { length: count }, function( _, index ) { return index * 2 + 1; } ) );
+        assert.equal( results[ count - 1 ].tagStartOffset, text.lastIndexOf( 'TODO' ) );
+        assert.equal( results[ count - 1 ].displayText, 'item ' + ( count - 1 ) );
+    } );
+
+    [ [ 'js', '// REVIEW snapshot' ],
+        [ 'vue', '<template><!-- REVIEW template --></template>\n<script>\n// REVIEW script\n</script>' ]
+    ].forEach( function( fixture )
+    {
+        QUnit.test( 'resource snapshot controls every default scan region: ' + fixture[ 0 ], function( assert )
+        {
+            var uri = createUri( '/tmp/resource-snapshot.' + fixture[ 0 ] );
+            var resourceConfig = Object.assign( {}, detection.resolveResourceConfig( uri ), { tags: [ 'REVIEW' ] } );
+            var reads = 0;
+            var context = detection.createScanContext( uri, fixture[ 1 ], { getResourceConfig: function()
+            {
+                reads++;
+                return resourceConfig;
+            } } );
+            var offsets = context.lineOffsets;
+            var results = detection.scanTextWithContext( context );
+            assert.equal( results.length, fixture[ 0 ] === 'js' ? 1 : 2 );
+            assert.true( results.every( function( result ) { return result.actualTag === 'REVIEW'; } ) );
+            assert.equal( context.text, fixture[ 1 ] );
+            assert.strictEqual( context.lineOffsets, offsets );
+            assert.equal( reads, 1 );
+        } );
+    } );
+
+    QUnit.test( 'resource snapshot supplies custom regex compilation', function( assert )
+    {
+        var uri = createUri( '/tmp/custom-snapshot.js' );
+        var resourceConfig = Object.assign( {}, detection.resolveResourceConfig( uri ), {
+            tags: [ 'REVIEW' ], regex: regexRegistry.captureSource( 'REVIEW' ), isDefaultRegex: false
+        } );
+        var context = detection.createScanContext( uri, 'REVIEW snapshot\n// TODO unrelated', {
+            getResourceConfig: function() { return resourceConfig; }
+        } );
+        var results = detection.scanTextWithContext( context );
+        assert.equal( results.length, 1 );
+        assert.equal( results[ 0 ].actualTag, 'REVIEW' );
+        assert.equal( results[ 0 ].line, 1 );
+    } );
+
+    [ 'js', 'tmpl' ].forEach( function( extension )
+    {
+        QUnit.test( 'regex scan resolves the comment trim pattern once per context: ' + extension, function( assert )
+        {
+            utils.init( createConfig( { regexSource: regexRegistry.TAG_CAPTURE_PLACEHOLDER } ) );
+            var uri = createUri( '/tmp/trim-pattern.' + extension );
+            var text = '// TODO first\n// TODO second\n// FIXME third';
+            var context = detection.createScanContext( uri, text );
+            var original = utils.resolveBlockCommentPattern;
+            var calls = 0;
+            utils.resolveBlockCommentPattern = function()
+            {
+                calls += 1;
+                return original.apply( utils, arguments );
+            };
+            try
+            {
+                var first = detection.scanTextWithContext( context );
+                assert.equal( first.length, 3 );
+                assert.equal( calls, 1 );
+                assert.deepEqual( detection.scanTextWithContext( context ), first );
+                assert.equal( calls, 1, 'resolved absence and resolved patterns both remain cached' );
+                detection.scanTextWithContext( detection.createScanContext( uri, text ) );
+                assert.equal( calls, 2, 'a new scan context resolves its own pattern' );
+            }
+            finally
+            {
+                utils.resolveBlockCommentPattern = original;
+            }
+        } );
+    } );
+
     QUnit.test( "default detection ignores tag-like identifiers", function( assert )
     {
         var results = detection.scanText( createUri( "/tmp/sample.js" ), [

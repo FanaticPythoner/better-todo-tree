@@ -7,8 +7,7 @@ const ripgrepTargetPlatforms = new Map([
     ['darwin-x64', Object.freeze({ os: 'darwin', arch: 'x64' })],
     ['darwin-arm64', Object.freeze({ os: 'darwin', arch: 'arm64' })],
     ['alpine-x64', Object.freeze({ os: 'linux', arch: 'x64' })],
-    ['alpine-arm64', Object.freeze({ os: 'linux', arch: 'arm64' })],
-    ['web', undefined]
+    ['alpine-arm64', Object.freeze({ os: 'linux', arch: 'arm64' })]
 ]);
 
 function platformDirectory(platform) {

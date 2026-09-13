@@ -159,8 +159,15 @@ function removeRuntimeArtifacts(scenarioDir) {
     });
 }
 
+function editorEnvironment() {
+    return Object.fromEntries(Object.entries(process.env).filter(([name]) => {
+        return name !== 'ELECTRON_RUN_AS_NODE';
+    }));
+}
+
 function runCommand(command, args, options) {
     const result = childProcess.spawnSync(command, args, Object.assign({
+        env: editorEnvironment(),
         encoding: 'utf8',
         stdio: [
             'ignore',
@@ -294,6 +301,14 @@ function restoreWorkspace(workspacePath) {
     }
 }
 
+function editorIsolationArgs(scenarioDir) {
+    return [
+        '--user-data-dir', path.join(scenarioDir, 'user-data'),
+        '--extensions-dir', path.join(scenarioDir, 'extensions'),
+        '--shared-data-dir', path.join(scenarioDir, 'shared-data')
+    ];
+}
+
 function installVsix(args, scenarioDir) {
     const userDataDir = path.join(scenarioDir, 'user-data');
     const extensionsDir = path.join(scenarioDir, 'extensions');
@@ -306,10 +321,7 @@ function installVsix(args, scenarioDir) {
     }));
 
     const install = runCommand(args.codePath, [
-        '--user-data-dir',
-        userDataDir,
-        '--extensions-dir',
-        extensionsDir,
+        ...editorIsolationArgs(scenarioDir),
         '--install-extension',
         args.vsixPath,
         '--force'
@@ -319,10 +331,7 @@ function installVsix(args, scenarioDir) {
     });
 
     const listed = runCommand(args.codePath, [
-        '--user-data-dir',
-        userDataDir,
-        '--extensions-dir',
-        extensionsDir,
+        ...editorIsolationArgs(scenarioDir),
         '--list-extensions',
         '--show-versions'
     ], {
@@ -439,8 +448,7 @@ function parseStatusExtensionHost(statusText) {
 
 function captureRuntimeState(args, scenarioDir, userDataDir) {
     const status = runCommand(args.codePath, [
-        '--user-data-dir',
-        userDataDir,
+        ...editorIsolationArgs(scenarioDir),
         '--status'
     ], {
         allowNonZero: true,
@@ -603,10 +611,7 @@ async function runScenario(args, rootOutDir, name, scenario, redactor) {
 
     try {
         child = childProcess.spawn(args.codePath, [
-            '--user-data-dir',
-            install.userDataDir,
-            '--extensions-dir',
-            install.extensionsDir,
+            ...editorIsolationArgs(scenarioDir),
             '--new-window',
             '--log',
             'trace',
@@ -616,6 +621,7 @@ async function runScenario(args, rootOutDir, name, scenario, redactor) {
             '--disable-telemetry',
             workspacePath
         ], {
+            env: editorEnvironment(),
             stdio: [
                 'ignore',
                 fs.openSync(path.join(scenarioDir, 'code.stdout.log'), 'w'),

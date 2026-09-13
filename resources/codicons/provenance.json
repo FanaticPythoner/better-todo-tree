@@ -1,0 +1,11 @@
+{
+  "package": "@vscode/codicons",
+  "version": "0.0.46-24",
+  "tarball": "https://registry.npmjs.org/@vscode/codicons/-/codicons-0.0.46-24.tgz",
+  "integrity": "sha512-KIDWUYxG6eh+DHRg+3G4bS487T+g1ZkLfB4HylOBbCcHsvLdfLMRM/m92DS1Ljhi8nglLr9ucwwWhHTEAC+DpA==",
+  "product_reference": "https://code.visualstudio.com/api/references/icons-in-labels",
+  "product_reference_sha256": "b3a50ba1c5009bf619c3d8b39315f302a6ec6b50f0b505c2a383c5a9df7e3e79",
+  "aliases": 934,
+  "glyphs": 639,
+  "product_aliases": 221
+}

@@ -31,15 +31,12 @@ function getUriFsPath( uri )
 function createLineOffsets( text )
 {
     var offsets = [ 0 ];
-    var index = 0;
+    var index = text.indexOf( '\n' );
 
-    while( index < text.length )
+    while( index !== -1 )
     {
-        if( text[ index ] === '\n' )
-        {
-            offsets.push( index + 1 );
-        }
-        index++;
+        offsets.push( index + 1 );
+        index = text.indexOf( '\n', index + 1 );
     }
 
     return offsets;
@@ -379,7 +376,7 @@ function toGlobalRegex( regex )
     return new RegExp( regex.source, flags );
 }
 
-var tagCaptureGroupIndexCache = new Map();
+var regexCaptureInfoCache = new Map();
 
 function countCapturingGroups( source, endIndex )
 {
@@ -439,23 +436,20 @@ function countCapturingGroups( source, endIndex )
     return count;
 }
 
-function getTagCaptureGroupIndex( regexSource )
+function getRegexCaptureInfo( regexSource )
 {
-    if( tagCaptureGroupIndexCache.has( regexSource ) )
+    if( regexCaptureInfoCache.has( regexSource ) )
     {
-        return tagCaptureGroupIndexCache.get( regexSource );
+        return regexCaptureInfoCache.get( regexSource );
     }
 
     var placeholderIndex = regexSource.indexOf( TAG_CAPTURE_PLACEHOLDER );
-    var captureGroupIndex = placeholderIndex === -1 ? undefined : countCapturingGroups( regexSource, placeholderIndex ) + 1;
-
-    tagCaptureGroupIndexCache.set( regexSource, captureGroupIndex );
-    return captureGroupIndex;
-}
-
-function regexHasCapturingGroups( regexSource )
-{
-    return countCapturingGroups( regexSource, regexSource.length ) > 0;
+    var info = {
+        tagCaptureGroupIndex: placeholderIndex === -1 ? undefined : countCapturingGroups( regexSource, placeholderIndex ) + 1,
+        hasCapturingGroups: placeholderIndex !== -1 || countCapturingGroups( regexSource, regexSource.length ) > 0
+    };
+    regexCaptureInfoCache.set( regexSource, info );
+    return info;
 }
 
 function requiresExactRipgrepMatch( context )
@@ -465,8 +459,7 @@ function requiresExactRipgrepMatch( context )
         return false;
     }
 
-    return context.resourceConfig.regex.indexOf( TAG_CAPTURE_PLACEHOLDER ) > -1 ||
-        regexHasCapturingGroups( context.resourceConfig.regex ) === true;
+    return getRegexCaptureInfo( context.resourceConfig.regex ).hasCapturingGroups;
 }
 
 function findTokenStart( text, startPattern, cursor )
@@ -551,7 +544,7 @@ function findExactRegexExecMatch( context, startOffset )
 
 function resolveTagCaptureRange( context, match, rawStartOffset )
 {
-    var tagCaptureGroupIndex = getTagCaptureGroupIndex( context.resourceConfig.regex );
+    var tagCaptureGroupIndex = getRegexCaptureInfo( context.resourceConfig.regex ).tagCaptureGroupIndex;
 
     if( tagCaptureGroupIndex === undefined )
     {
@@ -620,7 +613,12 @@ function extractRegexMatchText( context, matchText, preferredTagOffset )
 
 function resolveCommentEndTrimPattern( context )
 {
-    return utils.resolveBlockCommentPattern( context.patternFileName || getUriFsPath( context.uri ) ).pattern;
+    if( !Object.prototype.hasOwnProperty.call( context, 'commentEndTrimPattern' ) )
+    {
+        context.commentEndTrimPattern = utils.resolveBlockCommentPattern(
+            context.patternFileName || getUriFsPath( context.uri ) ).pattern;
+    }
+    return context.commentEndTrimPattern;
 }
 
 function createNormalizedMatchTextResult( text, endOffset )
@@ -790,8 +788,13 @@ function createScanContext( uri, text, snapshot, options )
     var resourceConfig = snapshot && typeof ( snapshot.getResourceConfig ) === 'function' ?
         snapshot.getResourceConfig( uri ) :
         resolveResourceConfig( uri );
+    return buildScanContext( uri, text, resourceConfig, options, snapshot );
+}
+
+function buildScanContext( uri, text, resourceConfig, options, snapshot )
+{
     var flags = resourceConfig.regexCaseSensitive === true ? '' : 'i';
-    var regexSource = options.regexSource || utils.getRegexSource( uri );
+    var regexSource = options.regexSource || utils.getRegexSource( uri, { resourceConfig: resourceConfig } );
     var skipExactRegex = resourceConfig.isDefaultRegex === true || options.skipExactRegex === true;
     var tagRegex = resourceConfig.regex.indexOf( TAG_PLACEHOLDER ) > -1 ?
         new RegExp( regexRegistry.captureSource( utils.getTagRegexSource( uri, resourceConfig.tags ) ), flags ) :
@@ -910,21 +913,15 @@ function isInsideMultiLineBlock( offset, multiLineBlocks )
 
 function collectCommentPatternMatches( uri, text, pattern, lineOffsets, resourceConfig, options )
 {
-    var results = [];
     var multiLineBlocks = scanMultiLineCommentBlocks( text, pattern );
-
-    multiLineBlocks.forEach( function( block )
+    var blocks = multiLineBlocks.map( function( block )
     {
-        var normalizedLines = createNormalizedCommentLines( block.wholeCommentText, block.startOffset, pattern, block.variant );
-        results = results.concat( collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resourceConfig, options ) );
-    } );
-
-    scanSingleLineCommentBlocks( text, pattern, multiLineBlocks ).forEach( function( normalizedLines )
+        return createNormalizedCommentLines( block.wholeCommentText, block.startOffset, pattern, block.variant );
+    } ).concat( scanSingleLineCommentBlocks( text, pattern, multiLineBlocks ) );
+    return blocks.flatMap( function( normalizedLines )
     {
-        results = results.concat( collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resourceConfig, options ) );
+        return collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resourceConfig, options );
     } );
-
-    return results;
 }
 
 function hasCommentPatternTokens( pattern )
@@ -947,12 +944,13 @@ function resolveMarkdownCommentPattern()
     return markdownCommentPattern;
 }
 
-function scanMarkdownText( uri, text, pattern, lineOffsets, resourceConfig )
+function scanMarkdownText( context )
 {
+    var uri = context.uri;
+    var text = context.text;
+    var lineOffsets = context.lineOffsets;
+    var resourceConfig = context.resourceConfig;
     var markdownCommentPattern = resolveMarkdownCommentPattern();
-    var context = createScanContext( uri, text, undefined, { regexSource: resourceConfig.regex } );
-    context.resourceConfig = resourceConfig;
-    context.lineOffsets = lineOffsets;
     var results = collectCommentPatternMatches( uri, text, markdownCommentPattern, lineOffsets, resourceConfig, { context: context } );
     var markdownTaskLines = createPassThroughLines( text ).filter( function( line )
     {
@@ -1059,7 +1057,7 @@ function findActualTag( tags, tag, caseSensitive )
 function collectLogicalCommentMatches( uri, normalizedLines, lineOffsets, resourceConfig, options )
 {
     var results = [];
-    var context = options && options.context ? options.context : createScanContext( uri, "", undefined, {
+    var context = options && options.context ? options.context : buildScanContext( uri, "", resourceConfig, {
         regexSource: resourceConfig.regex,
         patternFileName: options && options.patternFileName
     } );
@@ -1286,7 +1284,7 @@ function createShiftedNestedResult( result, charOffset, lineOffsets )
     return shifted;
 }
 
-function scanEmbeddedDocumentRegions( uri, text, resourceConfig, lineOffsets, embeddedDocument )
+function scanEmbeddedDocumentRegions( uri, resourceConfig, lineOffsets, embeddedDocument )
 {
     if( !embeddedDocument || !Array.isArray( embeddedDocument.regions ) )
     {
@@ -1326,17 +1324,16 @@ function scanCommentPatternText( uri, text, resourceConfig, patternFileName, opt
     } );
     var patternLookupName = patternFileName || ( embeddedDocument && embeddedDocument.basePatternFileName ) || fsPath;
     var pattern = utils.getCommentPattern( patternLookupName );
-    var lineOffsets = createLineOffsets( text );
-    var context = createScanContext( uri, text, undefined, {
+    var context = options.context ? Object.assign( {}, options.context ) : buildScanContext( uri, text, resourceConfig, {
         patternFileName: patternFileName,
         regexSource: resourceConfig.regex,
         languageId: options.languageId
     } );
+    var lineOffsets = context.lineOffsets;
     var scanText = embeddedDocument ? createTextWithMaskedRanges( text, embeddedDocument.ranges ) : text;
     var results;
 
     context.resourceConfig = resourceConfig;
-    context.lineOffsets = lineOffsets;
     context.text = scanText;
 
     if( pattern === undefined )
@@ -1347,7 +1344,7 @@ function scanCommentPatternText( uri, text, resourceConfig, patternFileName, opt
     {
         if( path.extname( patternLookupName ).toLowerCase() === '.md' || pattern.name === 'Markdown' )
         {
-            results = scanMarkdownText( uri, scanText, pattern, lineOffsets, resourceConfig );
+            results = scanMarkdownText( context );
         }
         else
         {
@@ -1366,7 +1363,7 @@ function scanCommentPatternText( uri, text, resourceConfig, patternFileName, opt
         } );
     }
 
-    return sortResultsByLocation( results.concat( scanEmbeddedDocumentRegions( uri, text, resourceConfig, lineOffsets, embeddedDocument ) ) );
+    return sortResultsByLocation( results.concat( scanEmbeddedDocumentRegions( uri, resourceConfig, lineOffsets, embeddedDocument ) ) );
 }
 
 function normalizeRegexExecMatchWithContext( context, match )
@@ -1852,7 +1849,8 @@ function scanTextWithContext( context )
     if( context.resourceConfig.isDefaultRegex === true )
     {
         return scanCommentPatternText( context.uri, context.text, context.resourceConfig, context.patternFileName, {
-            languageId: context.languageId
+            languageId: context.languageId,
+            context: context
         } );
     }
 

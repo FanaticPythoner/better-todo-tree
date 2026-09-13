@@ -301,11 +301,6 @@ function removeLineComments( text, fileName )
     return result;
 }
 
-function getTagRegex()
-{
-    return getTagRegexSource();
-}
-
 function escapeRegexLiteral( value )
 {
     return regexRegistry.escapeRegexLiteral( value );
@@ -509,13 +504,14 @@ function updateBeforeAndAfter( result, text, matchOffset, uri, options )
     return result;
 }
 
-function getRegexSource( uri )
+function getRegexSource( uri, options )
 {
-    var regex = resolveResourceConfig( uri ).regex;
+    var resourceConfig = resolveResourceConfig( uri, options );
+    var regex = resourceConfig.regex;
     if( regex.indexOf( TAG_CAPTURE_PLACEHOLDER ) > -1 )
     {
         regex = regex.split( TAG_CAPTURE_PLACEHOLDER ).join(
-            regexRegistry.captureSource( getTagRegexSource( uri, resolveResourceConfig( uri ).tags ) )
+            regexRegistry.captureSource( getTagRegexSource( uri, resourceConfig.tags ) )
         );
     }
 
@@ -544,17 +540,7 @@ function getRegexForEditorSearch( global, uri, options )
         flags += 'd';
     }
 
-    var source = options.regexSource || ( function()
-    {
-        var regex = resourceConfig.regex;
-        if( regex.indexOf( TAG_CAPTURE_PLACEHOLDER ) > -1 )
-        {
-            regex = regex.split( TAG_CAPTURE_PLACEHOLDER ).join(
-                regexRegistry.captureSource( getTagRegexSource( uri, resourceConfig.tags ) )
-            );
-        }
-        return regex;
-    }() );
+    var source = options.regexSource || getRegexSource( uri, { resourceConfig: resourceConfig } );
     return RegExp( source, flags );
 }
 
@@ -753,18 +739,7 @@ function relativeGlobPath( value, root )
 
 function uniqueValues( values )
 {
-    var seen = {};
-
-    return values.filter( function( value )
-    {
-        if( seen[ value ] === true )
-        {
-            return false;
-        }
-
-        seen[ value ] = true;
-        return true;
-    } );
+    return Array.from( new Set( values ) );
 }
 
 function filterGlobBodies( glob )

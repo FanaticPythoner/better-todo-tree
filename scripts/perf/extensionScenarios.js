@@ -589,6 +589,7 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
         {
             this.event = function() {};
             this.fire = function() {};
+            this.dispose = function() {};
         }
 
         function TreeItem( label )
@@ -714,7 +715,6 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
             },
             ripgrep: {
                 ripgrepArgs: '',
-                ripgrepMaxBuffer: 200,
                 usePatternFile: false
             }
         }, undefined, configurationUpdates );
@@ -768,7 +768,6 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
         sections[ 'better-todo-tree.regex' ] = sections[ 'todo-tree.regex' ];
         sections[ 'todo-tree.ripgrep' ] = createConfigurationSection( {
             ripgrepArgs: '',
-            ripgrepMaxBuffer: 200,
             usePatternFile: false
         }, undefined, configurationUpdates );
         sections[ 'better-todo-tree.ripgrep' ] = sections[ 'todo-tree.ripgrep' ];
@@ -852,6 +851,16 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
             },
             window: {
                 visibleTextEditors: options.visibleTextEditors || [],
+                tabGroups: {
+                    get all()
+                    {
+                        return [ { tabs: ( options.visibleTextEditors || [] ).map( function( editor )
+                        {
+                            return { input: { uri: editor.document.uri } };
+                        } ) } ];
+                    },
+                    onDidChangeTabs: function( listener ) { return registerListener( windowListeners, 'tabs', listener ); }
+                },
                 activeTextEditor: options.activeTextEditor,
                 activeNotebookEditor: undefined,
                 visibleNotebookEditors: [],
@@ -914,6 +923,8 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
                 showQuickPick: function() { return Promise.resolve(); },
                 showTextDocument: function() { return Promise.resolve(); },
                 onDidChangeActiveTextEditor: function( listener ) { return registerListener( workspaceListeners, 'activeEditor', listener ); },
+                onDidChangeVisibleTextEditors: function( listener ) { return registerListener( windowListeners, 'visibleTextEditors', listener ); },
+                onDidChangeWindowState: function( listener ) { return registerListener( windowListeners, 'windowState', listener ); },
                 onDidChangeVisibleNotebookEditors: function( listener ) { return registerListener( windowListeners, 'visibleNotebookEditors', listener ); }
             },
             warningMessages: warningMessages,
@@ -1086,7 +1097,17 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
         var configuredTags = resolveConfiguredTags( options );
         var highlightSettings = resolveHighlightSettings( options );
         var vscodeStub = createVscodeStub( options );
-        var extensionIdentity = deps.loadCurrentModule( 'src/extensionIdentity.js', {
+        if( moduleLoader === deps.loadCurrentModule )
+        {
+            var getHarnessConfiguration = vscodeStub.workspace.getConfiguration;
+            vscodeStub.workspace.getConfiguration = function( section, uri )
+            {
+                return section === 'todo-tree' ? createConfigurationSection( {} ) : getHarnessConfiguration( section, uri );
+            };
+        }
+        var identityLoader = moduleLoader.hasFile && moduleLoader.hasFile( 'src/extensionIdentity.js' ) ?
+            moduleLoader : deps.loadCurrentModule;
+        var extensionIdentity = identityLoader( 'src/extensionIdentity.js', {
             vscode: vscodeStub
         } );
         var context = {

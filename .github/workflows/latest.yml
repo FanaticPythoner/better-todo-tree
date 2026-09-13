@@ -22,6 +22,7 @@ jobs:
       release_ref: ${{ steps.meta.outputs.release_ref }}
       release_sha: ${{ steps.meta.outputs.release_sha }}
       release_short_sha: ${{ steps.meta.outputs.release_short_sha }}
+      targets: ${{ steps.targets.outputs.targets }}
 
     steps:
       - name: Check out repository
@@ -52,6 +53,10 @@ jobs:
           echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "release_short_sha=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve platform targets
+        id: targets
+        run: echo "targets=$(node -p "JSON.stringify(require('./scripts/release/targets.json'))")" >> "$GITHUB_OUTPUT"
+
       - name: Run test suite
         run: npm test
 
@@ -63,7 +68,7 @@ jobs:
     uses: ./.github/workflows/reusable-build-vsix.yml
     with:
       ref: ${{ needs.preflight.outputs.release_ref }}
-      targets: '["win32-x64","win32-arm64","linux-x64","linux-arm64","linux-armhf","darwin-x64","darwin-arm64","alpine-x64","alpine-arm64","web"]'
+      targets: ${{ needs.preflight.outputs.targets }}
     secrets: inherit
 
   github-release:

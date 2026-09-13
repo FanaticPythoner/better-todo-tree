@@ -1,0 +1,38 @@
+{
+    "better-todo-tree.general.debug": true,
+    "better-todo-tree.general.periodicRefreshInterval": 0,
+    "better-todo-tree.general.automaticGitRefreshInterval": 0,
+    "better-todo-tree.tree.scanAtStartup": true,
+    "better-todo-tree.tree.scanMode": "workspace",
+    "better-todo-tree.tree.showCountsInTree": false,
+    "better-todo-tree.tree.showBadges": false,
+    "better-todo-tree.tree.disableCompactFolders": false,
+    "better-todo-tree.filtering.scopes": [
+        {
+            "name": "qapython",
+            "includeGlobs": [
+                "**/*.py"
+            ],
+            "excludeGlobs": []
+        }
+    ],
+    "better-todo-tree.highlights.customHighlight": {
+        "TODO": {
+            "foreground": "#00b3b3",
+            "type": "tag",
+            "textDecoration": "underline"
+        },
+        "FIXME": {
+            "foreground": "#e85dba",
+            "type": "tag"
+        }
+    },
+    "todo-tree.highlights.useColourScheme": false,
+    "todo-tree.tags": [
+        "TODO",
+        "FIXME",
+        "BUG",
+        "HACK"
+    ],
+    "todo-tree.filtering.includeGlobs": []
+}

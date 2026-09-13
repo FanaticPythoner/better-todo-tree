@@ -7,6 +7,8 @@ var issue888Helpers = require( './issue888Helpers.js' );
 
 function createVscodeStub( highlightConfiguration, decorationLog )
 {
+    var visibleTextEditorsListener;
+
     function Position( line, character )
     {
         this.line = line;
@@ -29,10 +31,16 @@ function createVscodeStub( highlightConfiguration, decorationLog )
         Position: Position,
         Range: Range,
         window: {
+            visibleTextEditors: [],
             createTextEditorDecorationType: function( options )
             {
                 decorationLog.push( options );
                 return options;
+            },
+            onDidChangeVisibleTextEditors: function( listener )
+            {
+                visibleTextEditorsListener = listener;
+                return { dispose: function() {} };
             }
         },
         workspace: {
@@ -50,6 +58,11 @@ function createVscodeStub( highlightConfiguration, decorationLog )
                     }
                 };
             }
+        },
+        setVisibleTextEditors: function( editors )
+        {
+            this.window.visibleTextEditors = editors;
+            visibleTextEditorsListener( editors );
         }
     };
 }
@@ -228,6 +241,21 @@ function createActualDetectionHighlightHarness( options )
 QUnit.module( "behavioral highlights", function( hooks )
 {
     var originalVscode;
+
+    QUnit.test( "prototype-named custom tags retain every highlight range", function( assert )
+    {
+        var harness = createActualDetectionHighlightHarness( {
+            tags: [ 'constructor', '__proto__', 'toString' ],
+            type: 'tag',
+            text: '// constructor first\n// __proto__ second\n// toString third'
+        } );
+
+        assert.equal( harness.recorded.length, 3 );
+        assert.deepEqual( harness.recorded.map( function( ranges )
+        {
+            return ranges.map( function( item ) { return item.range.start.line; } );
+        } ), [ [ 0 ], [ 1 ], [ 2 ] ] );
+    } );
 
     hooks.beforeEach( function()
     {
@@ -412,7 +440,7 @@ QUnit.module( "behavioral highlights", function( hooks )
         assert.strictEqual( decoration.dark.color, undefined );
     } );
 
-    QUnit.test( "issue #58 default colour scheme emits visible editor highlights", function( assert )
+    QUnit.test( "issue #58 explicit colour scheme emits visible editor highlights", function( assert )
     {
         var decorationLog = [];
         var config = createAttributeConfig( {
@@ -471,6 +499,74 @@ QUnit.module( "behavioral highlights", function( hooks )
         assert.equal( decoration.dark.backgroundColor, 'red' );
         assert.equal( decoration.light.color, 'white' );
         assert.equal( decoration.dark.color, 'white' );
+    } );
+
+    QUnit.test( "issue #110 foreground-only custom highlights receive no implicit background", function( assert )
+    {
+        var decorationLog = [];
+        var config = createAttributeConfig( {
+            tagList: [ 'TODO' ],
+            foregroundColourScheme: function()
+            {
+                return [ 'white' ];
+            },
+            backgroundColourScheme: function()
+            {
+                return [ 'red' ];
+            },
+            customHighlight: function()
+            {
+                return {
+                    TODO: {
+                        foreground: '#008888',
+                        type: 'tag',
+                        textDecoration: 'underline'
+                    }
+                };
+            }
+        } );
+
+        actualUtils.init( config );
+        actualAttributes.init( config );
+
+        var highlights = helpers.loadWithStubs( '../src/highlights.js', {
+            vscode: createVscodeStub( { enabled: true }, decorationLog ),
+            './config.js': {
+                customHighlight: config.customHighlight.bind( config ),
+                subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); },
+                tagGroup: function() { return undefined; }
+            },
+            './utils.js': actualUtils,
+            './attributes.js': actualAttributes,
+            './icons.js': {
+                getGutterIcon: function()
+                {
+                    return { dark: '/tmp/gutter-dark.svg', light: '/tmp/gutter-light.svg' };
+                }
+            },
+            './detection.js': {
+                scanDocument: function()
+                {
+                    return [];
+                }
+            },
+            './extensionIdentity.js': {
+                getSetting: function( setting, defaultValue )
+                {
+                    return defaultValue;
+                }
+            }
+        } );
+
+        highlights.init( { subscriptions: { push: function() {} } }, function() {} );
+
+        var decoration = highlights.getDecoration( 'TODO' );
+
+        assert.equal( decoration.light.color, '#008888' );
+        assert.equal( decoration.dark.color, '#008888' );
+        assert.strictEqual( decoration.light.backgroundColor, undefined );
+        assert.strictEqual( decoration.dark.backgroundColor, undefined );
+        assert.equal( decoration.textDecoration, 'underline' );
     } );
 
     QUnit.test( "issue #75 identical yellow backgrounds use identical black foregrounds", function( assert )
@@ -957,6 +1053,92 @@ QUnit.module( "behavioral highlights", function( hooks )
         assert.equal( recorded[ 0 ][ 0 ].range.end.character, 2 );
     } );
 
+    QUnit.test( "delayed highlights skip editors removed without a visibility event", function( assert )
+    {
+        var done = assert.async();
+        var scanCount = 0;
+        var vscodeStub = createVscodeStub( { enabled: true }, [] );
+        var highlights = helpers.loadWithStubs( '../src/highlights.js', {
+            vscode: vscodeStub,
+            './config.js': {
+                tagGroup: function() { return undefined; }
+            },
+            './detection.js': {
+                scanDocument: function()
+                {
+                    scanCount++;
+                    return [];
+                }
+            },
+            './extensionIdentity.js': {
+                getSetting: function( setting, defaultValue )
+                {
+                    return setting === 'highlights.highlightDelay' ? 5 : defaultValue;
+                }
+            }
+        } );
+        var editor = {
+            viewColumn: 1,
+            document: createDocument( '// TODO body' ),
+            setDecorations: function() {}
+        };
+
+        highlights.init( { subscriptions: { push: function() {} } }, function() {} );
+        vscodeStub.window.visibleTextEditors = [ editor ];
+        highlights.triggerHighlight( editor );
+        vscodeStub.window.visibleTextEditors = [];
+
+        setTimeout( function()
+        {
+            assert.equal( scanCount, 0 );
+            highlights.resetCaches();
+            done();
+        }, 25 );
+    } );
+
+    QUnit.test( "visibility changes cancel pending highlights for removed editors", function( assert )
+    {
+        var done = assert.async();
+        var scanCount = 0;
+        var vscodeStub = createVscodeStub( { enabled: true }, [] );
+        var highlights = helpers.loadWithStubs( '../src/highlights.js', {
+            vscode: vscodeStub,
+            './config.js': {
+                tagGroup: function() { return undefined; }
+            },
+            './detection.js': {
+                scanDocument: function()
+                {
+                    scanCount++;
+                    return [];
+                }
+            },
+            './extensionIdentity.js': {
+                getSetting: function( setting, defaultValue )
+                {
+                    return setting === 'highlights.highlightDelay' ? 5 : defaultValue;
+                }
+            }
+        } );
+        var editor = {
+            viewColumn: 1,
+            document: createDocument( '// TODO body' ),
+            setDecorations: function() {}
+        };
+
+        highlights.init( { subscriptions: { push: function() {} } }, function() {} );
+        vscodeStub.window.visibleTextEditors = [ editor ];
+        highlights.triggerHighlight( editor );
+        vscodeStub.setVisibleTextEditors( [] );
+
+        setTimeout( function()
+        {
+            assert.equal( scanCount, 0 );
+            highlights.resetCaches();
+            done();
+        }, 25 );
+    } );
+
     QUnit.test( "repeated highlights reuse cached decoration types for unchanged content", function( assert )
     {
         var creationCount = 0;
@@ -975,10 +1157,15 @@ QUnit.module( "behavioral highlights", function( hooks )
                     this.end = end;
                 },
                 window: {
+                    visibleTextEditors: [],
                     createTextEditorDecorationType: function( options )
                     {
                         creationCount++;
                         return options;
+                    },
+                    onDidChangeVisibleTextEditors: function()
+                    {
+                        return { dispose: function() {} };
                     }
                 }
             },

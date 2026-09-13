@@ -422,7 +422,7 @@ function locateTreeChildNode( rootNode, pathElements, tag, subTag )
 
 function cloneTagCounts( counts )
 {
-    return Object.assign( {}, counts );
+    return Object.fromEntries( Object.entries( counts ) );
 }
 
 function addTagCounts( target, counts )
@@ -523,14 +523,15 @@ class TreeNodeProvider
         expandedNodes = _context.workspaceState.get( 'expandedNodes', {} );
         this._documentEntries = new Map();
         this._nodesByFsPath = new Map();
-        this._statusBarCounts = {};
-        this._activityBarCounts = {};
+        this._statusBarCounts = Object.create( null );
+        this._activityBarCounts = Object.create( null );
         this._statusBarCountsByFile = new Map();
         this._pendingCountUris = new Set();
         this._dirtyRoots = new Set();
         this._rootListDirty = false;
         this._pendingRefreshRoots = undefined;
         this._expandedStateWriteHandle = undefined;
+        this._disposed = false;
     }
 
     getChildren( node )
@@ -1023,8 +1024,8 @@ class TreeNodeProvider
 
         this._subtractDocumentCounts( entry );
 
-        var statusBarCounts = {};
-        var activityBarCounts = {};
+        var statusBarCounts = Object.create( null );
+        var activityBarCounts = Object.create( null );
 
         entry.todos.forEach( function( todoNode )
         {
@@ -1168,8 +1169,8 @@ class TreeNodeProvider
         addWorkspaceFolders();
         this._documentEntries.clear();
         this._nodesByFsPath.clear();
-        this._statusBarCounts = {};
-        this._activityBarCounts = {};
+        this._statusBarCounts = Object.create( null );
+        this._activityBarCounts = Object.create( null );
         this._statusBarCountsByFile.clear();
         this._pendingCountUris.clear();
         this._dirtyRoots.clear();
@@ -1455,16 +1456,16 @@ class TreeNodeProvider
         return children === undefined ? nodes : children;
     }
 
-    getElement( filename, found, children )
+    getElement( filename )
     {
         var indexedNodes = Array.from( this._nodesByFsPath.get( filename ) || [] ).filter( isVisible );
 
         if( indexedNodes.length > 0 )
         {
-            var pathNode = indexedNodes.find( isPathNode ) || indexedNodes[ 0 ];
-            found( pathNode );
-            return;
+            return indexedNodes.find( isPathNode ) || indexedNodes[ 0 ];
         }
+
+        return undefined;
     }
 
     setExpanded( path, expanded )
@@ -1495,20 +1496,38 @@ class TreeNodeProvider
 
     exportChildren( parent, children )
     {
+        var tagsOnly = config.shouldShowTagsOnly() === true;
+        var format = config.labelFormat();
+        var labelCounts = new Map();
+        function exportLabel( child )
+        {
+            return ( tagsOnly ? child.fsPath + ' ' : '' ) + 'line ' + ( child.line + 1 );
+        }
+        children.forEach( function( child )
+        {
+            if( child.type !== PATH && !child.notExported )
+            {
+                var label = exportLabel( child );
+                labelCounts.set( label, ( labelCounts.get( label ) || 0 ) + 1 );
+            }
+        } );
         children.forEach( function( child )
         {
             if( child.type === PATH )
             {
-                parent[ child.label ] = {};
+                parent[ child.label ] = Object.create( null );
                 this.exportChildren( parent[ child.label ], this.getChildren( child ) );
             }
             else if( !child.notExported )
             {
-                var format = config.labelFormat();
-                var itemLabel = "line " + ( child.line + 1 );
-                if( config.shouldShowTagsOnly() === true )
+                var itemLabel = exportLabel( child );
+                if( labelCounts.get( itemLabel ) > 1 )
                 {
-                    itemLabel = child.fsPath + " " + itemLabel;
+                    itemLabel += ', column ' + child.column;
+                    if( child.sourceId )
+                    {
+                        itemLabel += ', source ' + child.sourceId;
+                    }
                 }
                 parent[ itemLabel ] = child.continuationText && child.continuationText.length > 0 ?
                     child.fullText :
@@ -1522,7 +1541,7 @@ class TreeNodeProvider
 
     exportTree()
     {
-        var exported = {};
+        var exported = Object.create( null );
         var children = this.getChildren();
         exported = this.exportChildren( exported, children );
         return exported;
@@ -1583,7 +1602,15 @@ class TreeNodeProvider
 
     dispose()
     {
+        if( this._disposed === true )
+        {
+            return;
+        }
+
+        this._disposed = true;
         clearTimeout( this._expandedStateWriteHandle );
+        this._expandedStateWriteHandle = undefined;
+        this._onDidChangeTreeData.dispose();
     }
 }
 

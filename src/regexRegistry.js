@@ -968,7 +968,6 @@ var DEFAULT_DEFINITION = Object.freeze( {
         homeUsersAbsolutePath: '\\/(?:home|Users)\\/[^\\s"\')]+',
         diagnosticPathTail: '(?:[/\\\\][^\\s"\')]+)*',
         hexColourNoise: '[^\\da-fA-F]',
-        iconNameNoise: '[^0-9a-zA-Z]',
         octiconNameNoise: '[^a-z0-9]',
         codiconName: '[a-z0-9-]+',
         codicon: function( builder )
@@ -1038,15 +1037,6 @@ var DEFAULT_DEFINITION = Object.freeze( {
                 builder.fragment( 'tagEndAnchor' )
             ] );
         },
-        typescriptFileExtension: function( builder )
-        {
-            return builder.sequence( [
-                builder.fragment( 'escapedDot' ),
-                'ts',
-                builder.fragment( 'tagEndAnchor' )
-            ] );
-        },
-        nodeModulesPath: 'node_modules',
         nlsToken: function( builder )
         {
             return builder.sequence( [

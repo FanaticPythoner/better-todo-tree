@@ -58,11 +58,12 @@ function currentFilePath( relativePath )
     return path.join( repoRoot, relativePath );
 }
 
-function loadModuleFromSource( filename, source, stubs, timerStubs )
+function loadModuleFromSource( filename, source, stubs, timerStubs, baselineContext )
 {
     var localModule = new Module( filename, module );
     var originalLoad = Module._load;
     var previousTimers = global.__betterTodoTreePerfTimers;
+    var previousBaselineTimers = baselineContext && baselineContext.__betterTodoTreePerfTimers;
     var prologue = timerStubs ? [
         'var setTimeout = global.__betterTodoTreePerfTimers.setTimeout;',
         'var clearTimeout = global.__betterTodoTreePerfTimers.clearTimeout;',
@@ -79,6 +80,10 @@ function loadModuleFromSource( filename, source, stubs, timerStubs )
         {
             return stubs[ request ];
         }
+        if( baselineContext && request === 'regexp-match-indices' )
+        {
+            return baselineContext.loadDependency( request );
+        }
 
         return originalLoad.call( this, request, parent, isMain );
     };
@@ -86,9 +91,14 @@ function loadModuleFromSource( filename, source, stubs, timerStubs )
     try
     {
         global.__betterTodoTreePerfTimers = timerStubs;
+        if( baselineContext )
+        {
+            baselineContext.__betterTodoTreePerfTimers = timerStubs;
+        }
 
         var wrapped = Module.wrap( prologue + source );
-        var compiled = vm.runInThisContext( wrapped, { filename: filename } );
+        var compiled = baselineContext ? vm.runInContext( wrapped, baselineContext, { filename: filename } ) :
+            vm.runInThisContext( wrapped, { filename: filename } );
         compiled.call(
             localModule.exports,
             localModule.exports,
@@ -106,6 +116,10 @@ function loadModuleFromSource( filename, source, stubs, timerStubs )
     {
         Module._load = originalLoad;
         global.__betterTodoTreePerfTimers = previousTimers;
+        if( baselineContext )
+        {
+            baselineContext.__betterTodoTreePerfTimers = previousBaselineTimers;
+        }
     }
 }
 
@@ -117,7 +131,7 @@ function loadCurrentModule( relativePath, stubs, timerStubs )
     return loadModuleFromSource( filename, source, stubs, timerStubs );
 }
 
-function loadRefModule( relativePath, ref, stubs, timerStubs )
+function loadRefModule( relativePath, ref, stubs, timerStubs, baselineContext )
 {
     var filename = currentFilePath( relativePath );
     var source = childProcess.execFileSync( 'git', [ 'show', ref + ':' + relativePath ], {
@@ -125,15 +139,62 @@ function loadRefModule( relativePath, ref, stubs, timerStubs )
         encoding: 'utf8'
     } );
 
-    return loadModuleFromSource( filename + '#' + ref, source, stubs, timerStubs );
+    return loadModuleFromSource( filename + '#' + ref, source, stubs, timerStubs, baselineContext );
 }
 
 function createBaselineModuleLoader( baselineRef )
 {
-    return function( relativePath, stubs, timerStubs )
-    {
-        return loadRefModule( relativePath, baselineRef, stubs, timerStubs );
+    var sandbox = {
+        Buffer: Buffer, console: console, process: process,
+        setTimeout: setTimeout, clearTimeout: clearTimeout,
+        setInterval: setInterval, clearInterval: clearInterval,
+        setImmediate: setImmediate, clearImmediate: clearImmediate
     };
+    sandbox.global = sandbox;
+    var baselineContext = vm.createContext( sandbox );
+    var dependencyCache = new Map();
+    var dependencyRequire = Module.createRequire( path.join( repoRoot, '.tools', 'upstream-todo-tree', 'package.json' ) );
+
+    function loadDependencyFile( filename )
+    {
+        if( Module.builtinModules.indexOf( filename ) !== -1 || filename.indexOf( 'node:' ) === 0 )
+        {
+            return require( filename );
+        }
+        if( dependencyCache.has( filename ) )
+        {
+            return dependencyCache.get( filename ).exports;
+        }
+        var localModule = { exports: {} };
+        dependencyCache.set( filename, localModule );
+        var source = fs.readFileSync( filename, 'utf8' );
+        if( path.extname( filename ) === '.json' )
+        {
+            localModule.exports = JSON.parse( source );
+        }
+        else
+        {
+            var resolve = Module.createRequire( filename ).resolve;
+            var compiled = vm.runInContext( Module.wrap( source ), baselineContext, { filename: filename } );
+            compiled( localModule.exports, function( request )
+            {
+                return loadDependencyFile( resolve( request ) );
+            }, localModule, filename, path.dirname( filename ) );
+        }
+        return localModule.exports;
+    }
+    baselineContext.loadDependency = function( request )
+    {
+        return loadDependencyFile( dependencyRequire.resolve( request ) );
+    };
+    var loader = function( relativePath, stubs, timerStubs )
+    {
+        return loadRefModule( relativePath, baselineRef, stubs, timerStubs, baselineContext );
+    };
+    var sourceFiles = new Set( childProcess.execFileSync( 'git', [ 'ls-tree', '-r', '--name-only', baselineRef ],
+        { cwd: repoRoot, encoding: 'utf8' } ).trim().split( '\n' ) );
+    loader.hasFile = function( relativePath ) { return sourceFiles.has( relativePath ); };
+    return loader;
 }
 
 function createUri( fsPath )
@@ -971,6 +1032,7 @@ function createTreeVscodeStub()
                 this._listener( value );
             }
         }.bind( this );
+        this.dispose = function() {};
     }
 
     function TreeItem( label )
@@ -1326,6 +1388,11 @@ function createHighlightModule(relativePath)
                 this.end = end;
             },
             window: {
+                visibleTextEditors: [],
+                onDidChangeVisibleTextEditors: function()
+                {
+                    return { dispose: function() {} };
+                },
                 createTextEditorDecorationType: function( options )
                 {
                     creationCount.value++;
@@ -1421,12 +1488,6 @@ function createBaselineHighlightModule( baselineLoader )
     }
 
     var moduleExports = baselineLoader( 'src/highlights.js', {
-        'regexp-match-indices': {
-            shim: function()
-            {
-                return function() {};
-            }
-        },
         vscode: {
             ThemeColor: function( name ) { this.name = name; },
             Position: function( line, character )
@@ -1440,6 +1501,11 @@ function createBaselineHighlightModule( baselineLoader )
                 this.end = end;
             },
             window: {
+                visibleTextEditors: [],
+                onDidChangeVisibleTextEditors: function()
+                {
+                    return { dispose: function() {} };
+                },
                 createTextEditorDecorationType: function( options )
                 {
                     creationCount.value++;

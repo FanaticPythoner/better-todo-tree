@@ -119,7 +119,24 @@ QUnit.test( 'registry refactor preserves extracted baseline regex behavior', fun
 
     assert.equal( audit.currentHardcodedRegexEntries.length, 0 );
     assert.equal( audit.sourceCoverage.missing.length, 0 );
+    assert.equal( audit.sourceCoverage.covered + audit.sourceCoverage.retired.length,
+        audit.sourceCoverage.total );
     assert.equal( audit.behaviorParity.failures.length, 0 );
     assert.ok( audit.metrics.baselineRegexEntries > 0 );
     assert.equal( audit.metrics.behaviorParityPassed, audit.metrics.behaviorParityTotal );
+} );
+
+QUnit.test( 'retirement cannot conceal a missing runtime regex', function( assert )
+{
+    var harness = require( '../scripts/evidence/regexRegistryEquivalenceHarness.js' );
+    var retired = require( '../scripts/evidence/retired-regexes.json' )[ 0 ];
+    var result = harness.compareSourceCoverage( [ {
+        source: retired.source,
+        flags: retired.flags,
+        count: 1,
+        refs: [ 'src/extension.js:1' ]
+    } ] );
+
+    assert.equal( result.missing.length, 1 );
+    assert.equal( result.retired.length, 0 );
 } );
