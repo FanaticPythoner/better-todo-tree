@@ -546,6 +546,28 @@ QUnit.test( 'trusted PR workflow builds every verified platform VSIX after all g
     assert.ok( buildWorkflow.indexOf( 'node scripts/ci/delete-pr-vsix-staging.mjs' ) !== -1 );
 } );
 
+QUnit.test( 'staging cleanup requires an upload receipt across publish outcomes', function( assert )
+{
+    var workflow = readWorkflow( 'pr-vsix-build.yml' );
+    var staging = getWorkflowStepBlock( workflow, 'Stage platform VSIX files' );
+    assert.ok( staging.includes( 'id: staging' ) );
+    assert.ok( workflow.includes( 'staging-artifact-id: ${{ steps.staging.outputs.artifact-id }}' ) );
+    var cleanup = workflow.slice( workflow.indexOf( '  cleanup-staging:' ) );
+    var condition = cleanup.split( '\n' ).find( function( line ) { return line.startsWith( '    if: ' ); } )
+        .slice( '    if: '.length );
+    var shouldClean = new Function( 'always', 'artifactId', 'publishResult', 'return ' + condition
+        .replaceAll( 'needs.test-build.outputs.staging-artifact-id', 'artifactId' )
+        .replaceAll( 'needs.publish.result', 'publishResult' ) );
+    [ 'success', 'failure', 'cancelled', 'skipped' ].forEach( function( publishResult )
+    {
+        [ '', '400' ].forEach( function( artifactId )
+        {
+            assert.strictEqual( shouldClean( function() { return true; }, artifactId, publishResult ),
+                artifactId !== '', publishResult + '/' + ( artifactId || 'no upload' ) );
+        } );
+    } );
+} );
+
 QUnit.test( 'trusted orchestration isolates and cancels only one PR generation', function( assert )
 {
     var ciWorkflow = readWorkflow( 'ci.yml' );
