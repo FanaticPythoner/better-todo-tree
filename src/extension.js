@@ -4732,6 +4732,10 @@ function activate( context )
         {
             options = options || {};
             var revealPromise = Promise.resolve();
+            if( tree.shouldIgnoreTrackFileReveal( todoTreeView.selection, uri && uri.fsPath, options ) )
+            {
+                return revealPromise;
+            }
             provider.getElement( uri.fsPath, function( element )
             {
                 if( todoTreeView.visible === true )
@@ -5352,10 +5356,13 @@ function activate( context )
             } );
         } );
 
-        registerCommandPair( 'revealInFile', function( uri, selection )
+        registerCommandPair( 'revealInFile', function( uri, selection, trackedPath )
         {
             return runCommandOperation( 'reveal todo in file', function()
             {
+                var trackPath = trackedPath || ( uri && uri.fsPath );
+                selectedDocument = trackPath;
+
                 function flashLine()
                 {
                     var editor = vscode.window.activeTextEditor;
@@ -5391,7 +5398,16 @@ function activate( context )
                     }, 150 );
                 }
 
-                return vscode.commands.executeCommand( 'vscode.open', uri, selection ).then( flashLine );
+                return vscode.commands.executeCommand( 'vscode.open', uri, selection ).then( flashLine ).finally( function()
+                {
+                    setTimeout( function()
+                    {
+                        if( selectedDocument === trackPath )
+                        {
+                            selectedDocument = undefined;
+                        }
+                    }, 0 );
+                } );
             } );
         } );
 
