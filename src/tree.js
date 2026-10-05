@@ -285,6 +285,21 @@ function createTodoNode( result )
     return todo;
 }
 
+function shouldIgnoreTrackFileReveal( selection, filePath, options )
+{
+    options = options || {};
+
+    if( options.select !== false || !filePath )
+    {
+        return false;
+    }
+
+    return ( selection || [] ).some( function( element )
+    {
+        return element && element.fsPath === filePath;
+    } );
+}
+
 function locateWorkspaceNode( filename )
 {
     var result;
@@ -758,7 +773,8 @@ class TreeNodeProvider
                     command: identity.COMMANDS.revealInFile,
                     arguments: [
                         node.uri ? node.uri : vscode.Uri.file( node.fsPath ),
-                        { selection: todoSelection }
+                        { selection: todoSelection },
+                        node.fsPath
                     ]
                 };
             }
@@ -1589,3 +1605,4 @@ class TreeNodeProvider
 
 exports.TreeNodeProvider = TreeNodeProvider;
 exports.locateWorkspaceNode = locateWorkspaceNode;
+exports.shouldIgnoreTrackFileReveal = shouldIgnoreTrackFileReveal;
