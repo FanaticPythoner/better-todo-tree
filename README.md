@@ -131,6 +131,9 @@ Both `defaultHighlight` and `customHighlight` allow for the following settings:
 - `tag-and-comment` - highlights the comment characters (or the start of the match) and the tag
 - `tag-and-subTag` - as above, but allows the sub tag to be highlight too (with colours defined in custom highlights)
 - `text-and-comment` - highlights the comment characters (or the start of the match), the tag and the text after the tag
+- `padded-tag` - highlights the tag and one space before and after if it exists
+- `trailed-tag` - hilights the tag and any non-alphanumeric characters after the tag until an space is found
+- `padded-trailed-tag` - as above, but includes one space before and after too if it exists
 - `line` - highlights the entire line containing the tag
 - `whole-line` - highlights the entire line containing the tag to the full width of the editor
 - `capture-groups:n,m...` - highlights capture groups from the regex, where 'n' is the index into the regex

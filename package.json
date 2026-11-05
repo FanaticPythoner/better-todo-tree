@@ -1299,6 +1299,9 @@
                                         "tag-and-comment",
                                         "tag-and-subTag",
                                         "text-and-comment",
+                                        "padded-tag",
+                                        "trailed-tag",
+                                        "padded-trailed-tag",
                                         "line",
                                         "whole-line",
                                         "none"
@@ -1400,6 +1403,9 @@
                                         "tag-and-comment",
                                         "tag-and-subTag",
                                         "text-and-comment",
+                                        "padded-tag",
+                                        "trailed-tag",
+                                        "padded-trailed-tag",
                                         "line",
                                         "whole-line",
                                         "none"
@@ -1482,6 +1488,9 @@
                                     "tag-and-comment",
                                     "tag-and-subTag",
                                     "text-and-comment",
+                                    "padded-tag",
+                                    "trailed-tag",
+                                    "padded-trailed-tag",
                                     "line",
                                     "whole-line",
                                     "none"
@@ -1561,6 +1570,9 @@
                                     "tag-and-comment",
                                     "tag-and-subTag",
                                     "text-and-comment",
+                                    "padded-tag",
+                                    "trailed-tag",
+                                    "padded-trailed-tag",
                                     "line",
                                     "whole-line",
                                     "none"
