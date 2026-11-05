@@ -367,6 +367,50 @@ function highlight( editor )
                     {
                         addDecoration( tag, match.commentStartOffset, match.tagEndOffset );
                     }
+                    else if( type === 'padded-tag' )
+                    {
+                        var start = match.tagStartOffset;
+                        var end = match.tagEndOffset;
+                        var text = editor.document.getText();
+
+                        if( start > 0 && /[ \t]/.test( text[ start - 1 ] ) )
+                        {
+                            start--;
+                        }
+
+                        if( end < text.length && /[ \t]/.test( text[ end ] ) )
+                        {
+                            end++;
+                        }
+
+                        addDecoration( tag, start, end );
+                    }
+                    else if( type === 'trailed-tag' || type === 'padded-trailed-tag' )
+                    {
+                        var start = match.tagStartOffset;
+                        var end = match.tagEndOffset;
+                        var text = editor.document.getText();
+
+                        while( end < text.length && /[^a-zA-Z0-9 \t]/.test( text[ end ] ) )
+                        {
+                            end++;
+                        }
+
+                        if( type === 'padded-trailed-tag' )
+                        {
+                            if( start > 0 && /[ \t]/.test( text[ start - 1 ] ) )
+                            {
+                                start--;
+                            }
+
+                            if( end < text.length && /[ \t]/.test( text[ end ] ) )
+                            {
+                                end++;
+                            }
+                        }
+
+                        addDecoration( tag, start, end );
+                    }
                     else if( type === 'line' || type === 'whole-line' )
                     {
                         var tagLine = editor.document.positionAt( match.tagStartOffset ).line;

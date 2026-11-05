@@ -238,6 +238,66 @@ QUnit.test( "tag-and-subTag highlights the tag and extracted subTag separately",
     assert.equal( harness.recorded[ 1 ].ranges[ 0 ].range.end.character, 11 );
 } );
 
+QUnit.test( "padded-tag highlights from one space before to one space after the tag", function( assert )
+{
+    var harness = createHarness( {
+        type: 'padded-tag',
+        text: '// TODO body',
+        matches: [ createMatch( {
+            commentStartOffset: 0,
+            commentEndOffset: 12,
+            matchStartOffset: 3,
+            matchEndOffset: 12,
+            tagStartOffset: 3,
+            tagEndOffset: 7
+        } ) ]
+    } );
+
+    assert.equal( harness.recorded.length, 1 );
+    assert.equal( harness.recorded[ 0 ].ranges[ 0 ].range.start.character, 2 );
+    assert.equal( harness.recorded[ 0 ].ranges[ 0 ].range.end.character, 8 );
+} );
+
+QUnit.test( "trailed-tag highlights from the tag start to the last non-alphanumeric character after", function( assert )
+{
+    var harness = createHarness( {
+        type: 'trailed-tag',
+        text: '// TODO:: body',
+        matches: [ createMatch( {
+            commentStartOffset: 0,
+            commentEndOffset: 12,
+            matchStartOffset: 3,
+            matchEndOffset: 12,
+            tagStartOffset: 3,
+            tagEndOffset: 7
+        } ) ]
+    } );
+
+    assert.equal( harness.recorded.length, 1 );
+    assert.equal( harness.recorded[ 0 ].ranges[ 0 ].range.start.character, 3 );
+    assert.equal( harness.recorded[ 0 ].ranges[ 0 ].range.end.character, 9 );
+} );
+
+QUnit.test( "padded-trailed-tag highlights from one space before the tag to one space after the last non-alphanumeric character following the tag", function( assert )
+{
+    var harness = createHarness( {
+        type: 'padded-trailed-tag',
+        text: '// TODO:: body',
+        matches: [ createMatch( {
+            commentStartOffset: 0,
+            commentEndOffset: 12,
+            matchStartOffset: 3,
+            matchEndOffset: 12,
+            tagStartOffset: 3,
+            tagEndOffset: 7
+        } ) ]
+    } );
+
+    assert.equal( harness.recorded.length, 1 );
+    assert.equal( harness.recorded[ 0 ].ranges[ 0 ].range.start.character, 2 );
+    assert.equal( harness.recorded[ 0 ].ranges[ 0 ].range.end.character, 10 );
+} );
+
 QUnit.test( "capture-groups highlights only the requested groups", function( assert )
 {
     var harness = createHarness( {
