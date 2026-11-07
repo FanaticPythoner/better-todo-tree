@@ -148,11 +148,15 @@ function createDecoration( tag )
     var decorationOptions = {
         borderRadius: getBorderRadius( tag ),
         isWholeLine: getType( tag ) === 'whole-line',
-        fontWeight: getFontWeight( tag ),
-        fontStyle: getFontStyle( tag ),
-        textDecoration: getTextDecoration( tag ),
         gutterIconPath: showInGutter( tag ) ? icons.getGutterIcon( context, tag, debug ).dark : undefined
     };
+
+    // Only pass font options that change the rendering. 'normal' and '' are the
+    // CSS defaults, and some VS Code builds (e.g. 1.145) drop the whole decoration
+    // when fontWeight or fontStyle is present at all.
+    setIfStyled( decorationOptions, 'fontWeight', getFontWeight( tag ) );
+    setIfStyled( decorationOptions, 'fontStyle', getFontStyle( tag ) );
+    setIfStyled( decorationOptions, 'textDecoration', getTextDecoration( tag ) );
 
     if( lane !== undefined )
     {
@@ -176,6 +180,20 @@ function createDecoration( tag )
     decorationOptions.dark = { backgroundColor: darkBackgroundColour, color: darkForegroundColour };
 
     return vscode.window.createTextEditorDecorationType( decorationOptions );
+}
+
+function setIfStyled( options, key, value )
+{
+    if( value === undefined || value === null )
+    {
+        return;
+    }
+
+    var text = String( value ).trim();
+    if( text.length > 0 && text.toLowerCase() !== 'normal' )
+    {
+        options[ key ] = value;
+    }
 }
 
 function getDecoration( tag )
