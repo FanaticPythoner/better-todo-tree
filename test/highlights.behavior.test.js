@@ -291,6 +291,70 @@ QUnit.module( "behavioral highlights", function( hooks )
         assert.equal( decoration.gutterIconPath, '/tmp/gutter-dark.svg' );
     } );
 
+    QUnit.test( "default font styles are omitted from decoration options while explicit styles are kept", function( assert )
+    {
+        function loadWithFontAttributes( fontAttributes )
+        {
+            return helpers.loadWithStubs( '../src/highlights.js', {
+                vscode: createVscodeStub( { highlight: 'tag', enabled: true }, [] ),
+                './config.js': {
+                    customHighlight: function() { return {}; },
+                    subTagRegex: function() { return regexRegistry.pattern( 'subTagPrefixCapture' ); }
+                },
+                './utils.js': {
+                    isHexColour: function() { return false; },
+                    isRgbColour: function() { return false; },
+                    isValidColour: function() { return true; },
+                    isThemeColour: function() { return false; },
+                    hexToRgba: function( value ) { return value; },
+                    complementaryColour: function() { return '#ffffff'; },
+                    setRgbAlpha: function( value ) { return value; }
+                },
+                './attributes.js': {
+                    getForeground: function() { return undefined; },
+                    getBackground: function() { return undefined; },
+                    hasCustomHighlight: function() { return false; },
+                    getAttribute: function( tag, attribute, defaultValue )
+                    {
+                        return Object.prototype.hasOwnProperty.call( fontAttributes, attribute ) ? fontAttributes[ attribute ] : defaultValue;
+                    }
+                },
+                './icons.js': {
+                    getGutterIcon: function() { return { dark: '/tmp/gutter-dark.svg', light: '/tmp/gutter-light.svg' }; }
+                },
+                './detection.js': {
+                    scanDocument: function() { return []; }
+                },
+                './extensionIdentity.js': {
+                    getSetting: function( setting, defaultValue ) { return defaultValue; }
+                }
+            } );
+        }
+
+        var defaults = loadWithFontAttributes( {} );
+        defaults.init( { subscriptions: { push: function() {} } }, function() {} );
+        var defaultDecoration = defaults.getDecoration( 'TODO' );
+
+        assert.notOk( Object.prototype.hasOwnProperty.call( defaultDecoration, 'fontWeight' ), 'default fontWeight is not passed' );
+        assert.notOk( Object.prototype.hasOwnProperty.call( defaultDecoration, 'fontStyle' ), 'default fontStyle is not passed' );
+        assert.notOk( Object.prototype.hasOwnProperty.call( defaultDecoration, 'textDecoration' ), 'empty textDecoration is not passed' );
+
+        var blanks = loadWithFontAttributes( { fontWeight: '', fontStyle: ' Normal ', textDecoration: '' } );
+        blanks.init( { subscriptions: { push: function() {} } }, function() {} );
+        var blankDecoration = blanks.getDecoration( 'TODO' );
+
+        assert.notOk( Object.prototype.hasOwnProperty.call( blankDecoration, 'fontWeight' ), 'empty fontWeight is not passed' );
+        assert.notOk( Object.prototype.hasOwnProperty.call( blankDecoration, 'fontStyle' ), 'normal fontStyle is not passed' );
+
+        var styled = loadWithFontAttributes( { fontWeight: 'bold', fontStyle: 'italic', textDecoration: 'underline' } );
+        styled.init( { subscriptions: { push: function() {} } }, function() {} );
+        var styledDecoration = styled.getDecoration( 'TODO' );
+
+        assert.equal( styledDecoration.fontWeight, 'bold' );
+        assert.equal( styledDecoration.fontStyle, 'italic' );
+        assert.equal( styledDecoration.textDecoration, 'underline' );
+    } );
+
     QUnit.test( "empty highlight colours use selection highlight background with inherited text colour", function( assert )
     {
         var decorationLog = [];
