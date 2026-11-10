@@ -2118,6 +2118,18 @@
                         "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
                         "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
                     },
+                    "better-todo-tree.tree.doNotSortWorkspaceRootFolders": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.doNotSortWorkspaceRootFolders.markdownDescription%",
+                        "type": "boolean"
+                    },
+                    "todo-tree.tree.doNotSortWorkspaceRootFolders": {
+                        "default": false,
+                        "markdownDescription": "%better-todo-tree.configuration.tree.doNotSortWorkspaceRootFolders.markdownDescription%",
+                        "type": "boolean",
+                        "deprecationMessage": "%todo-tree.configuration.legacyNamespace.deprecationMessage%",
+                        "markdownDeprecationMessage": "%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%"
+                    },
                     "better-todo-tree.tree.sort": {
                         "default": true,
                         "markdownDescription": "%better-todo-tree.configuration.tree.sort.markdownDescription%",

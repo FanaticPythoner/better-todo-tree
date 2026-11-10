@@ -365,6 +365,11 @@ function shouldSortTree()
     return identity.getSetting( 'tree.sort', true );
 }
 
+function shouldNotSortWorkspaceRootFolders()
+{
+    return identity.getSetting( 'tree.doNotSortWorkspaceRootFolders', false );
+}
+
 function scanMode()
 {
     return identity.getSetting( 'tree.scanMode', 'workspace' );
@@ -457,6 +462,7 @@ module.exports.shouldHideFromTree = shouldHideFromTree;
 module.exports.shouldHideFromStatusBar = shouldHideFromStatusBar;
 module.exports.shouldHideFromActivityBar = shouldHideFromActivityBar;
 module.exports.shouldSortTree = shouldSortTree;
+module.exports.shouldNotSortWorkspaceRootFolders = shouldNotSortWorkspaceRootFolders;
 module.exports.scanMode = scanMode;
 module.exports.shouldShowScanModeInTree = shouldShowScanModeInTree;
 module.exports.shouldUseColourScheme = shouldUseColourScheme;

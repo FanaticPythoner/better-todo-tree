@@ -1162,6 +1162,7 @@ module.exports.buildExtensionScenarioDefinitions = function( deps )
             shouldHideFromStatusBar: function() { return false; },
             shouldHideFromActivityBar: function() { return false; },
             shouldSortTree: function() { return true; },
+            shouldNotSortWorkspaceRootFolders: function() { return false; },
             shouldSortTagsOnlyViewAlphabetically: function() { return false; },
             showBadges: function() { return false; },
             shouldUseColourScheme: function() { return highlightSettings.useColourScheme === true; },

@@ -230,6 +230,21 @@ QUnit.test( 'legacy settings remain present and deprecated', function( assert )
     assert.equal( legacySetting.markdownDeprecationMessage, '%todo-tree.configuration.legacyNamespace.markdownDeprecationMessage%' );
 } );
 
+QUnit.test( 'workspace root order setting is a localized opt-in checkbox', function( assert )
+{
+    [ 'better-todo-tree', 'todo-tree' ].forEach( function( namespace )
+    {
+        var setting = getConfigurationProperty( namespace + '.tree.doNotSortWorkspaceRootFolders' );
+        assert.strictEqual( setting.default, false );
+        assert.equal( setting.type, 'boolean' );
+        [ 'package.nls.json', 'package.nls.zh-cn.json' ].forEach( function( fileName )
+        {
+            var key = setting.markdownDescription.slice( 1, -1 );
+            assert.ok( readPackageNls( fileName )[ key ], fileName + ' provides the setting description' );
+        } );
+    } );
+} );
+
 QUnit.test( 'issue #905 filtering defaults keep Go files included without any file-type allowlist', function( assert )
 {
     var currentIncludeGlobs = getConfigurationProperty( 'better-todo-tree.filtering.includeGlobs' );

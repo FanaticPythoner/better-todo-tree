@@ -288,6 +288,8 @@
     "better-todo-tree.configuration.tree.showScanOpenFilesOrWorkspaceButton.deprecationMessage": "This setting is no longer used, please use \"better-todo-tree.tree.scanMode\" instead.",
     "todo-tree.configuration.tree.showTagsFromOpenFilesOnly.deprecationMessage": "This setting is no longer used, please use \"better-todo-tree.tree.scanMode\" instead.",
     "better-todo-tree.configuration.tree.showTagsFromOpenFilesOnly.deprecationMessage": "This setting is no longer used, please use \"better-todo-tree.tree.scanMode\" instead.",
+    "better-todo-tree.configuration.tree.doNotSortWorkspaceRootFolders.markdownDescription": "Keep workspace root folders in the order defined in the workspace instead of sorting them by absolute path. Sorting within each root folder is unchanged.",
+    "todo-tree.configuration.tree.doNotSortWorkspaceRootFolders.markdownDescription": "Keep workspace root folders in the order defined in the workspace instead of sorting them by absolute path. Sorting within each root folder is unchanged.",
     "todo-tree.configuration.tree.sort.markdownDescription": "ripgrep searches with multiple threads. The tree is sorted after population for stable display. Set to false for ripgrep sort arguments.",
     "better-todo-tree.configuration.tree.sort.markdownDescription": "ripgrep searches with multiple threads. The tree is sorted after population for stable display. Set to false for ripgrep sort arguments.",
     "todo-tree.configuration.tree.sortTagsOnlyViewAlphabetically.markdownDescription": "Sort items in the tags only view alphabetically instead of by file and line number.",

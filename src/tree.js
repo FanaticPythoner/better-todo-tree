@@ -133,10 +133,24 @@ var sortTagsOnlyViewByTagOrder = function( a, b )
     } );
 };
 
-function createWorkspaceRootNode( folder )
+var sortByWorkspaceFolderOrder = function( a, b )
+{
+    if( a.isWorkspaceNode && b.isWorkspaceNode )
+    {
+        return a.workspaceFolderIndex - b.workspaceFolderIndex;
+    }
+    if( a.isWorkspaceNode || b.isWorkspaceNode )
+    {
+        return a.isWorkspaceNode ? -1 : 1;
+    }
+    return sortByFilenameAndLine( a, b );
+};
+
+function createWorkspaceRootNode( folder, index )
 {
     var node = {
         isWorkspaceNode: true,
+        workspaceFolderIndex: index,
         type: PATH,
         label: folder.uri.scheme === 'file' ? folder.name : folder.uri.authority,
         nodes: [],
@@ -456,9 +470,9 @@ function addWorkspaceFolders()
 {
     if( workspaceFolders && config.shouldShowTagsOnly() === false )
     {
-        workspaceFolders.map( function( folder )
+        workspaceFolders.map( function( folder, index )
         {
-            nodes.push( createWorkspaceRootNode( folder ) );
+            nodes.push( createWorkspaceRootNode( folder, index ) );
         } );
     }
 }
@@ -1576,7 +1590,8 @@ class TreeNodeProvider
             }
             else
             {
-                children.sort( sortByFilenameAndLine );
+                children.sort( children === nodes && config.shouldNotSortWorkspaceRootFolders() ?
+                    sortByWorkspaceFolderOrder : sortByFilenameAndLine );
             }
         }
     }
