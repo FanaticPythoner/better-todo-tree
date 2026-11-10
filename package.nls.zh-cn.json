@@ -288,6 +288,8 @@
     "better-todo-tree.configuration.tree.showScanOpenFilesOrWorkspaceButton.deprecationMessage": "该设置不再使用，请使用 \"better-todo-tree.tree.scanMode\" 替代。",
     "todo-tree.configuration.tree.showTagsFromOpenFilesOnly.deprecationMessage": "This setting is no longer used, please use \"better-todo-tree.tree.scanMode\" instead.",
     "better-todo-tree.configuration.tree.showTagsFromOpenFilesOnly.deprecationMessage": "This setting is no longer used, please use \"better-todo-tree.tree.scanMode\" instead.",
+    "better-todo-tree.configuration.tree.doNotSortWorkspaceRootFolders.markdownDescription": "按照工作区中定义的顺序显示工作区根文件夹，而不是按绝对路径排序。各根文件夹内部的排序保持不变。",
+    "todo-tree.configuration.tree.doNotSortWorkspaceRootFolders.markdownDescription": "按照工作区中定义的顺序显示工作区根文件夹，而不是按绝对路径排序。各根文件夹内部的排序保持不变。",
     "todo-tree.configuration.tree.sort.markdownDescription": "使用多线程进行 ripgrep 搜索以提升性能。此时，当所有搜索结束后再进行排序。如果希望使用 ripgrep 的排序参数，可以将此项设置为 false。",
     "better-todo-tree.configuration.tree.sort.markdownDescription": "使用多线程进行 ripgrep 搜索以提升性能。此时，当所有搜索结束后再进行排序。如果希望使用 ripgrep 的排序参数，可以将此项设置为 false。",
     "todo-tree.configuration.tree.sortTagsOnlyViewAlphabetically.markdownDescription": "在仅显示标签视图中，待办事项按字母排序。若不选择此项，则待办事项按所在文件和行号排序。",

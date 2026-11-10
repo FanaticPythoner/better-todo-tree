@@ -137,6 +137,14 @@ function createDirectoryEntry( name )
 
 QUnit.module( 'behavioral config' );
 
+QUnit.test( 'workspace root order is opt-in', function( assert )
+{
+    assert.strictEqual( loadConfigModule().shouldNotSortWorkspaceRootFolders(), false );
+    assert.strictEqual( loadConfigModule( {
+        settingValues: { 'tree.doNotSortWorkspaceRootFolders': true }
+    } ).shouldNotSortWorkspaceRootFolders(), true );
+} );
+
 QUnit.test( 'regex reads only language-overridable regex source with a resource URI', function( assert )
 {
     var uri = { toString: function() { return '/workspace/source.vue'; } };

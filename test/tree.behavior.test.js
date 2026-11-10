@@ -121,6 +121,7 @@ function createConfig( overrides )
         shouldHideFromStatusBar: function() { return false; },
         shouldHideFromActivityBar: function() { return false; },
         shouldSortTree: function() { return true; },
+        shouldNotSortWorkspaceRootFolders: function() { return false; },
         shouldSortTagsOnlyViewAlphabetically: function() { return false; },
         showFilterCaseSensitive: function() { return false; },
         tagGroup: function() { return undefined; }
@@ -298,10 +299,111 @@ QUnit.module( "behavioral tree", function()
         assert.equal( todoNode.id.indexOf( 'notebook-cell:0:' ) > -1, true );
     } );
 
+    [ 'tree', 'flat', 'grouped' ].forEach( function( view )
+    {
+        QUnit.test( view + " view can preserve workspace root order while sorting descendants", function( assert )
+        {
+            var preserveOrder = false;
+            var configStub = createConfig( {
+                shouldNotSortWorkspaceRootFolders: function() { return preserveOrder; },
+                shouldFlatten: function() { return view === 'flat'; },
+                shouldGroupByTag: function() { return view === 'grouped'; }
+            } );
+            var tree = loadTreeModule( configStub );
+            var provider = new tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+            var folders = [ '/projects/z-app', '/projects/a-lib' ].map( function( fsPath, index )
+            {
+                return {
+                    name: index === 0 ? 'First project' : 'Second project',
+                    uri: { scheme: 'file', fsPath: fsPath }
+                };
+            } );
+
+            function replaceFile( filePath )
+            {
+                var result = createResult( filePath, 'TODO', 'item' );
+                provider.replaceDocument( result.uri, [ result ] );
+            }
+
+            function rootPaths()
+            {
+                return provider.getChildren().map( function( node ) { return node.fsPath; } );
+            }
+
+            function assertDescendantOrder()
+            {
+                provider.getChildren().forEach( function( root )
+                {
+                    var parent = view === 'grouped' ? provider.getChildren( root )[ 0 ] : root;
+                    assert.deepEqual( provider.getChildren( parent ).map( function( node ) { return node.label; } ),
+                        [ 'a.js', 'b.js', 'c.js' ], root.label + ' files remain sorted' );
+                } );
+            }
+
+            provider.clear( folders );
+            folders.forEach( function( folder )
+            {
+                [ 'c.js', 'a.js', 'b.js' ].forEach( function( filename )
+                {
+                    replaceFile( folder.uri.fsPath + '/' + filename );
+                } );
+            } );
+            provider.finalizePendingChanges( undefined, { fullSort: true } );
+            assert.deepEqual( rootPaths(), [ '/projects/a-lib', '/projects/z-app' ], 'default path sorting' );
+
+            preserveOrder = true;
+            provider.sort();
+            assert.deepEqual( rootPaths(), [ '/projects/z-app', '/projects/a-lib' ], 'workspace order restored after a previous sort' );
+            assertDescendantOrder();
+
+            replaceFile( '/projects/z-app/b.js' );
+            provider.finalizePendingChanges( undefined, { fullSort: false } );
+            assert.deepEqual( rootPaths(), [ '/projects/z-app', '/projects/a-lib' ], 'incremental update preserves workspace order' );
+            assertDescendantOrder();
+
+            replaceFile( '/external/z.js' );
+            replaceFile( '/external/a.js' );
+            provider.finalizePendingChanges( undefined, { fullSort: true } );
+            var externalPaths = view === 'grouped' ? [ 'TODO' ] : [ '/external/a.js', '/external/z.js' ];
+            assert.deepEqual( rootPaths(), [ '/projects/z-app', '/projects/a-lib' ].concat( externalPaths ),
+                'files outside the workspace remain sorted after workspace roots' );
+            if( view === 'grouped' )
+            {
+                assert.deepEqual( provider.getChildren( provider.getChildren()[ 2 ] ).map( function( node ) { return node.fsPath; } ),
+                    [ '/external/a.js', '/external/z.js' ], 'external files remain sorted inside their tag group' );
+            }
+
+            preserveOrder = false;
+            provider.sort();
+            assert.deepEqual( rootPaths(), [ '/projects/a-lib', '/projects/z-app' ].concat( externalPaths ),
+                'disabling the option restores path sorting' );
+        } );
+    } );
+
+    QUnit.test( "workspace order option does not enable sorting when tree sorting is disabled", function( assert )
+    {
+        var tree = loadTreeModule( createConfig( {
+            shouldSortTree: function() { return false; },
+            shouldNotSortWorkspaceRootFolders: function() { return true; }
+        } ) );
+        var provider = new tree.TreeNodeProvider( { workspaceState: createWorkspaceState() }, function() {}, function() {} );
+        provider.clear( [ { name: 'workspace', uri: { scheme: 'file', fsPath: '/workspace' } } ] );
+        [ 'c.js', 'a.js', 'b.js' ].forEach( function( filename )
+        {
+            var result = createResult( '/workspace/' + filename, 'TODO', 'item' );
+            provider.replaceDocument( result.uri, [ result ] );
+        } );
+        provider.finalizePendingChanges( undefined, { fullSort: true } );
+
+        assert.deepEqual( provider.getChildren( provider.getChildren()[ 0 ] ).map( function( node ) { return node.label; } ),
+            [ 'c.js', 'a.js', 'b.js' ] );
+    } );
+
     QUnit.test( "tag grouped roots follow configured tag order", function( assert )
     {
         var configStub = createConfig( {
             shouldShowTagsOnly: function() { return true; },
+            shouldNotSortWorkspaceRootFolders: function() { return true; },
             shouldGroupByTag: function() { return true; }
         } );
         var tree = loadTreeModule( configStub );

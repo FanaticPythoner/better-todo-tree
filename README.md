@@ -455,6 +455,9 @@ Set to true if you want new views with tags only by default.
 **better-todo-tree.tree.sortTagsOnlyViewAlphabetically** (`false`)</br>
 Sort items in the tags only view alphabetically instead of in order of the tags list.
 
+**better-todo-tree.tree.doNotSortWorkspaceRootFolders** (`false`)</br>
+Keep workspace root folders in the order defined in the workspace instead of sorting them by absolute path. Sorting within each root folder is unchanged.
+
 **better-todo-tree.tree.showCountsInTree** (`false`)</br>
 Set to true to show counts of TODOs in the tree.
 
